@@ -1,3 +1,9 @@
+<p>
+  <a href="https://xuebao.us/">
+    <img src="assets/brand/xuebao-banner-zh.png" width="1280" alt="雪豹 AI 为本项目提供开发支持：满血模型 · 稳定服务；GPT 倍率 0.2，Claude 倍率 0.35，国模聚合，DeepSeek 低至 3 折；每邀请一人奖励 $0.5，上不封顶！">
+  </a>
+</p>
+
 > **语言 / Language:** 中文 · [English](README.en.md)
 
 # MOTO GPS · Waveshare Edition
