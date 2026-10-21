@@ -20,3 +20,5 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T02:12:47+09:00 **TODO** — Resume: run the full native suite before starting the next seam.
 - 2026-10-21T21:10:20+09:00 **NOTE** — File lives at `docs/todo.md`; root `todo.md` collides with upstream `TODO.md` on case-insensitive macOS APFS. Upstream `TODO.md` was restored from HEAD.
 - 2026-10-21T21:10:40+09:00 **DONE** — Synced fork `JAHSEH618/moto-gps` and branch `feat/gta-attitude`. `main` is at `c8bdacc`; the feature branch is at `aad79fd`.
+- 2026-10-21T21:14:31+09:00 **DONE** — Phase 1 / S2: building footprint interior fill. Ref `2026-10-21T02:09:20+09:00`. Hard-edged scanline spans; debug dump removed; native suite 9/9 green.
+- 2026-10-21T21:14:31+09:00 **TODO** — Phase 1 / S2: full-canvas map layer, HUD repositioning, bottom vignette.
