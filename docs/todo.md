@@ -35,3 +35,5 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T21:25:09+09:00 **TODO** — Phase 2: QMI8658 axis mapping + sensor/bridge wiring; iOS BLE decode; telemetry gating.
 - 2026-10-21T21:26:07+09:00 **DONE** — Phase 2: attitude fields in `NavSnapshot` / `moto_ui_state_t` and presenter sanitisation.
 - 2026-10-21T21:26:07+09:00 **TODO** — Phase 2: PERF / LEAN page UI backed by the attitude block.
+- 2026-10-21T21:28:54+09:00 **DONE** — Phase 2: PERF / LEAN pages, page order and BLE/ESP32/Web/iOS page mappings. Ref `2026-10-21T21:26:07+09:00`.
+- 2026-10-21T21:28:54+09:00 **TODO** — Phase 2: feed the attitude block from the IMU bridge; wire the 0-100 timer/best to Performance Run results; use the `DeviceSettings` target and Lean full scale.

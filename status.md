@@ -126,3 +126,12 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Added a presenter characterization test. Note: the shared fields landed before the assertion, so this slice is not a strict red-first cycle; the next UI slice will be.
 - Full native suite 11/11 green.
 - Next: PERF / LEAN page UI backed by the attitude block.
+
+## 2026-10-21T21:28:54+09:00 — Green: PERF and LEAN pages
+
+- UI page order is now Navigation → Performance → Lean → Speed → Compass → Music. The BLE `DisplayPage` appends `Performance=4` and `Lean=5` so existing wire values do not move.
+- PERF page: `0-100 km/h` target, timer/best placeholders, live G-G dot plus LONG/LAT readouts.
+- LEAN page: signed Lean, LEFT/RIGHT, 45° full-scale bar and session peak.
+- Updated ESP32, Web and iOS page mappings; Web runtime builds successfully; full native suite 11/11 green.
+- The PERF timer/best are placeholders until the phone sends Performance Run results, and the attitude block is not yet fed by the IMU bridge.
+- Note: this page UI slice landed implementation-first because the enum/mapping change was cross-cutting; the render test is a characterization test. The next slice will be red-first.
