@@ -354,6 +354,29 @@ void test_all_message_round_trips() {
   }
 }
 
+void test_home_shortcut_command() {
+  // The wire value is part of the contract with the firmware; a renumber
+  // silently breaks older devices.
+  CHECK(static_cast<std::uint8_t>(DeviceCommandKind::HomeShortcut) == 20);
+
+  DeviceCommand value = command_fixture();
+  value.kind = DeviceCommandKind::HomeShortcut;
+  value.page = DisplayPage::Navigation;
+  value.x = kUnknownTouchCoordinate;
+  value.y = kUnknownTouchCoordinate;
+
+  const Bytes encoded = encode_or_fail(Message{value});
+  const MessageResult decoded =
+      decode_message(MessageType::DeviceCommand, ByteView(encoded.data(), encoded.size()));
+  CHECK(decoded.ok());
+  if (decoded.ok()) {
+    const auto& round_tripped = std::get<DeviceCommand>(decoded.value);
+    CHECK(round_tripped.kind == DeviceCommandKind::HomeShortcut);
+    CHECK(round_tripped.page == DisplayPage::Navigation);
+    CHECK(round_tripped == value);
+  }
+}
+
 void test_golden_vectors() {
   const auto expected = read_golden();
   const Bytes connection = encode_or_fail(Message{connection_fixture()});
@@ -626,6 +649,7 @@ int main(int argc, char** argv) {
   test_uuid_contract();
   test_crc_and_sequence_primitives();
   test_all_message_round_trips();
+  test_home_shortcut_command();
   test_golden_vectors();
   test_attitude_sample_validation();
   test_fragmentation_and_reassembly();

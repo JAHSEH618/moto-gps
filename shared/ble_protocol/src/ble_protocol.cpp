@@ -262,6 +262,7 @@ bool valid_command_kind(DeviceCommandKind kind) {
     case DeviceCommandKind::MusicTogglePlayback:
     case DeviceCommandKind::MusicNext:
     case DeviceCommandKind::MusicLike:
+    case DeviceCommandKind::HomeShortcut:
       return true;
   }
   return false;
