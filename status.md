@@ -135,3 +135,13 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Updated ESP32, Web and iOS page mappings; Web runtime builds successfully; full native suite 11/11 green.
 - The PERF timer/best are placeholders until the phone sends Performance Run results, and the attitude block is not yet fed by the IMU bridge.
 - Note: this page UI slice landed implementation-first because the enum/mapping change was cross-cutting; the render test is a characterization test. The next slice will be red-first.
+
+## 2026-10-21T21:30:47+09:00 — Green: IMU attitude reaches the bridge and pages
+
+- Added `sensor_to_bike` fixed-basis mapper with aligned, rotated and degenerate-basis tests.
+- `MotionHeadingSensor` now computes an `AttitudeEstimate` at 125 Hz and passes it alongside the heading rate; `app_main` forwards it to the bridge.
+- `PhoneNavBridge` stores the attitude block and presents motion even before the phone heading fusion is anchored; the bridge test confirms Lean/pitch/longitudinal/lateral values reach the UI state.
+- Full native suite 11/11 green.
+- The mount basis is a placeholder (screen-right = QMI X, screen-up = QMI Y). Board axis regression and Lean zero calibration are still pending.
+- The ESP-IDF firmware build was not run in this environment; `motion_heading_sensor.cpp` and `app_main.cpp` need an `idf.py build` plus hardware validation.
+- Next: BLE attitude telemetry sending + iOS decode, the 0-100 run pipeline, and the settings page/NVS/Home/Settings gate.
