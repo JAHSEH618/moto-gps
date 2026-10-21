@@ -24,3 +24,5 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T21:14:31+09:00 **TODO** — Phase 1 / S2: full-canvas map layer, HUD repositioning, bottom vignette.
 - 2026-10-21T21:15:28+09:00 **DONE** — Phase 1 / S2: full-canvas map layer and centred vehicle marker. HUD overlay and bottom vignette remain for the theme/visual slice.
 - 2026-10-21T21:15:28+09:00 **TODO** — Phase 1: build/run the Web preview and add the day/night theme palette.
+- 2026-10-21T21:21:18+09:00 **DONE** — Phase 1 / S2: GTA day/night palette and theme API. Web runtime builds; manual browser check remains.
+- 2026-10-21T21:21:18+09:00 **TODO** — Phase 1 / S3: `DeviceSettings` defaults, clamp and encode/decode.
