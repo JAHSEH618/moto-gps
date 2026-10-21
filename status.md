@@ -83,3 +83,12 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Added `test_the_map_covers_the_bottom_of_the_round_canvas`; `nav_ui_render_tests` green and the full native suite is 9/9 green.
 - HUD elements remain in the lower third and now overlay the map. The bottom vignette and the day/night palette are still pending.
 - Next: build the Web preview, then add the day/night theme palette.
+
+## 2026-10-21T21:21:18+09:00 — Green: GTA day/night map palettes
+
+- Added `moto_ui_theme_t` and `moto_nav_ui_set_theme` to the shared UI API.
+- Added `MapPalette` for Official, GTA Day and GTA Night; roads, buildings, route and the scanline fill read the active palette.
+- Added a full-screen map land background object so the Radar theme does not recolor the speed/compass/music pages.
+- Added `test_day_and_night_themes_render_different_map_colors`; full native suite 9/9 green.
+- Web runtime builds successfully. Headless Chrome screenshots are blocked by `CVDisplayLinkCreateWithCGDisplay` in this environment; visual inspection remains manual in the browser.
+- Next: `DeviceSettings` pure model (defaults, clamp, encode/decode).
