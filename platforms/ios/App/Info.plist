@@ -32,6 +32,12 @@
 	<string>导航开始后，MOTO GPS 需要在锁屏或切换应用时继续更新骑行位置。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>MOTO GPS 需要定位来规划路线并更新骑行位置。</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>BarlowCondensed-SemiBold.ttf</string>
+		<string>BarlowCondensed-ExtraBold.ttf</string>
+		<string>Anton-Regular.ttf</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
