@@ -68,6 +68,13 @@ if(TARGET lvgl)
   # reports says nothing about the device. Run in the board's shape instead.
   set(MOTO_NATIVE_LVGL_HEAP_BYTES "65536" CACHE STRING
       "LVGL internal heap for native render tests; 65536 matches the board")
+  # A cached value survives the default changing, and an 8 MiB pool is how the
+  # last heap "defect" was measured against a shape the firmware never has.
+  if(NOT MOTO_NATIVE_LVGL_HEAP_BYTES STREQUAL "65536")
+    message(WARNING
+      "MOTO_NATIVE_LVGL_HEAP_BYTES=${MOTO_NATIVE_LVGL_HEAP_BYTES} is not the "
+      "board's 64 KiB pool; the render suite no longer models the device")
+  endif()
   # LV_USE_TEST compiles lv_test_indev.c, the only way a test can send a real
   # LV_EVENT_GESTURE. It must be PUBLIC: the flag also adds members to
   # lv_global_t, so every translation unit that includes lvgl.h has to agree.
