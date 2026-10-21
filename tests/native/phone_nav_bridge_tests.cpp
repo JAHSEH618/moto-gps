@@ -625,11 +625,91 @@ void test_imu_attitude_reaches_the_lean_page() {
         0.01F);
 }
 
+void test_home_location_projects_onto_the_radar() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  bridge.on_link_state(true);
+
+  moto::ble::NavigationSnapshot navigation;
+  navigation.state = moto::ble::NavigationState::Navigating;
+  navigation.network = moto::ble::NetworkState::Online;
+  navigation.flags = moto::ble::NavigationHasRouteView;
+  navigation.route_token = 77;
+  navigation.route_generation = 1;
+  navigation.heading_cdeg = 0;
+  CHECK(bridge.on_message(make_message(navigation, 60)) ==
+        moto::ble::AckStatus::Ok);
+
+  moto::ble::RouteGeometry geometry;
+  geometry.route_token = 77;
+  geometry.route_generation = 1;
+  geometry.total_point_count = 2;
+  geometry.view_origin = {36'670'000, 117'130'000};
+  geometry.points = {
+      geometry.view_origin,
+      {36'670'000, 117'131'000},
+  };
+  CHECK(bridge.on_message(make_message(geometry, 61)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+
+  // Home is ~300 m east of the rider; the transform is rider-centred and
+  // heading-up, so it must land right of centre on the same row.
+  moto::ble::HomeLocation home;
+  home.revision = 4;
+  home.has_home = true;
+  home.position = {36'670'000, 117'133'500};
+  CHECK(bridge.on_message(make_message(home, 62)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_has_home() == 1);
+  CHECK(moto::test::phone_nav_bridge_last_home_x() >
+        MOTO_UI_CANVAS_WIDTH / 2);
+  CHECK(std::abs(moto::test::phone_nav_bridge_last_home_y() -
+                 MOTO_UI_CANVAS_HEIGHT / 2) <= 1);
+
+  // A replayed older revision must not resurrect the previous address.
+  moto::ble::HomeLocation cleared = home;
+  cleared.revision = 5;
+  cleared.has_home = false;
+  CHECK(bridge.on_message(make_message(cleared, 63)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_has_home() == 0);
+
+  CHECK(bridge.on_message(make_message(home, 64)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_has_home() == 0);
+
+  // A WGS84 home would land hundreds of metres away, so the decoder refuses
+  // it instead of drawing a wrong blip.
+  moto::ble::HomeLocation wgs84 = home;
+  wgs84.revision = 6;
+  wgs84.coordinate_system = moto::ble::CoordinateSystem::Wgs84;
+  const auto encoded = moto::ble::encode_message(moto::ble::Message{home});
+  CHECK(encoded.ok());
+  if (encoded.ok()) {
+    // The encoder refuses WGS84, so flip the frame byte to prove the decoder
+    // rejects a peer that sends one.
+    moto::ble::Bytes payload = encoded.value;
+    payload[1] = static_cast<std::uint8_t>(
+        moto::ble::CoordinateSystem::Wgs84);
+    moto::ble::ReassembledMessage tampered;
+    tampered.type = moto::ble::MessageType::HomeLocation;
+    tampered.sequence = 65;
+    tampered.payload = payload;
+    CHECK(bridge.on_message(tampered) == moto::ble::AckStatus::Failed);
+  }
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_has_home() == 0);
+}
+
 }  // namespace
 
 int main() {
-  test_sender_is_called_without_bridge_state_lock();
-  test_home_shortcut_sends_the_intent();
+  test_sender_is_called_without_bridge_state_lock();  test_home_shortcut_sends_the_intent();
   test_navigation_and_touch_updates_are_serialized();
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();
   test_phone_connection_lifecycle_reaches_the_ui();
@@ -639,6 +719,7 @@ int main() {
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();
   test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored();
   test_imu_attitude_reaches_the_lean_page();
+  test_home_location_projects_onto_the_radar();
 
   if (failures != 0) {
     std::cerr << failures << " phone navigation bridge checks failed\n";

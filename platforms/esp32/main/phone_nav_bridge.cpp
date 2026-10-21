@@ -549,6 +549,7 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           {
             const std::lock_guard<std::mutex> lock(state_mutex_);
             phone_session_id_ = value.session_id;
+            home_revision_ = 0;
             music_page_enabled_ = media;
             switch (value.state) {
               case moto::ble::ConnectionState::Ready:
@@ -585,6 +586,8 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           consume_media(value);
         } else if constexpr (std::is_same_v<T, moto::ble::MapScene>) {
           return consume_map_scene(value);
+        } else if constexpr (std::is_same_v<T, moto::ble::HomeLocation>) {
+          consume_home_location(value);
         } else if constexpr (std::is_same_v<T, moto::ble::Ack>) {
           ESP_LOGD(kTag, "phone ack sequence=%u command=%u status=%u",
                    value.acknowledged_sequence, value.command_id,
@@ -898,6 +901,29 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
            static_cast<unsigned>(building_point_count));
   present_navigation();
   return moto::ble::AckStatus::Ok;
+}
+
+void PhoneNavBridge::consume_home_location(
+    const moto::ble::HomeLocation& input) {
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    // A replayed or reordered message must not resurrect an address the rider
+    // has already replaced. The phone bumps the revision on every change, and
+    // a new BLE session resets it below.
+    if (input.revision <= home_revision_) {
+      return;
+    }
+    home_revision_ = input.revision;
+    auto& target = phone_snapshot_locked();
+    target.has_home = input.has_home;
+    if (input.has_home) {
+      target.home = {
+          static_cast<double>(input.position.latitude_e6) / 1'000'000.0,
+          static_cast<double>(input.position.longitude_e6) / 1'000'000.0,
+      };
+    }
+  }
+  present_navigation();
 }
 
 void PhoneNavBridge::apply_geometry_locked(moto::nav::NavSnapshot& target) {

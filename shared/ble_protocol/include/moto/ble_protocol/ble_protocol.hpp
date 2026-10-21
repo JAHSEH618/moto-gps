@@ -117,6 +117,7 @@ enum class MessageType : std::uint8_t {
   MediaState = 0x13,
   MapScene = 0x14,
   AttitudeSample = 0x15,
+  HomeLocation = 0x16,
   DeviceCommand = 0x20,
 };
 
@@ -275,6 +276,10 @@ enum Capability : std::uint32_t {
   CapabilityCommandAck = 1U << 6U,
   CapabilityMapScene = 1U << 7U,
   CapabilityAttitudeTelemetry = 1U << 8U,
+  // The device can draw a saved home on its minimap. The phone only sends
+  // HomeLocation to a peer that advertises this, so an older firmware is not
+  // sent a message type it has never seen.
+  CapabilityHomeLocation = 1U << 9U,
 };
 
 struct ConnectionStatus {
@@ -529,6 +534,22 @@ struct MapScene {
   bool operator==(const MapScene& rhs) const noexcept;
 };
 
+// The saved home address, sent by the phone when it changes and after every
+// handshake. It is deliberately its own message rather than a MapScene field:
+// the blip must survive a scene that has no map window (no offline tiles) and
+// the value is not tied to a route or a scene revision. Devices that do not
+// advertise CapabilityHomeLocation reject the type and keep working.
+struct HomeLocation {
+  CoordinateSystem coordinate_system = CoordinateSystem::Gcj02;
+  // Monotonic; a reordered or replayed message must not resurrect an old
+  // address. Zero is only used by "never received".
+  std::uint32_t revision = 0;
+  bool has_home = false;
+  GeoPointE6 position;
+
+  bool operator==(const HomeLocation& rhs) const noexcept;
+};
+
 enum class DeviceCommandKind : std::uint8_t {
   PageSelected = 0,
   Tap = 1,
@@ -579,6 +600,7 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              MediaState,
                              MapScene,
                              AttitudeSample,
+                             HomeLocation,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;

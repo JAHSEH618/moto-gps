@@ -482,6 +482,23 @@ Error validate(const DeviceCommand& value) {
   return value.command_id == 0 ? Error::OutOfRange : Error::None;
 }
 
+Error validate(const HomeLocation& value) {
+  // The device draws in the provider frame. Sending WGS84 here would put the
+  // blip a few hundred metres away, so the wire contract allows GCJ-02 only.
+  if (value.coordinate_system != CoordinateSystem::Gcj02) {
+    return valid_coordinate_system(value.coordinate_system)
+               ? Error::OutOfRange
+               : Error::InvalidEnum;
+  }
+  if (value.revision == 0) {
+    return Error::OutOfRange;
+  }
+  if (value.has_home && !valid_geo_point(value.position)) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 Error validate(const AttitudeSample& value) {
   if (value.lean_cdeg < -18'000 || value.lean_cdeg > 18'000 ||
       value.pitch_cdeg < -9'000 || value.pitch_cdeg > 9'000 ||
@@ -618,6 +635,12 @@ BytesResult encode_payload(const T& value) {
       writer.u8(static_cast<std::uint8_t>(building.building_class));
       write_points(building.points);
     }
+  } else if constexpr (std::is_same_v<T, HomeLocation>) {
+    writer.u8(static_cast<std::uint8_t>(value.coordinate_system));
+    writer.u8(value.has_home ? 1U : 0U);
+    writer.u32(value.revision);
+    writer.s32(value.position.latitude_e6);
+    writer.s32(value.position.longitude_e6);
   } else if constexpr (std::is_same_v<T, AttitudeSample>) {
     writer.u32(value.monotonic_ms);
     writer.u16(static_cast<std::uint16_t>(value.lean_cdeg));
@@ -1498,6 +1521,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::MediaState;
         } else if constexpr (std::is_same_v<T, MapScene>) {
           return MessageType::MapScene;
+        } else if constexpr (std::is_same_v<T, HomeLocation>) {
+          return MessageType::HomeLocation;
         } else if constexpr (std::is_same_v<T, AttitudeSample>) {
           return MessageType::AttitudeSample;
         } else {
@@ -1526,6 +1551,25 @@ MessageResult decode_attitude_sample(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool HomeLocation::operator==(const HomeLocation& rhs) const noexcept {
+  return std::tie(coordinate_system, revision, has_home, position) ==
+         std::tie(rhs.coordinate_system, rhs.revision, rhs.has_home,
+                  rhs.position);
+}
+
+MessageResult decode_home_location(ByteView payload) {
+  Reader reader(payload);
+  HomeLocation value;
+  if (begin_payload(reader)) {
+    value.coordinate_system = static_cast<CoordinateSystem>(reader.u8());
+    value.has_home = reader.u8() != 0;
+    value.revision = reader.u32();
+    value.position = {reader.s32(), reader.s32()};
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -1542,6 +1586,8 @@ MessageResult decode_message(MessageType type, ByteView payload) {
     case MessageType::MapScene: return decode_map_scene(payload);
     case MessageType::AttitudeSample:
       return decode_attitude_sample(payload);
+    case MessageType::HomeLocation:
+      return decode_home_location(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

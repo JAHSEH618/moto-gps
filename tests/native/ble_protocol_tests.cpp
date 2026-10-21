@@ -127,6 +127,15 @@ AttitudeSample attitude_fixture() {
   return value;
 }
 
+HomeLocation home_fixture() {
+  HomeLocation value;
+  value.coordinate_system = CoordinateSystem::Gcj02;
+  value.revision = 3;
+  value.has_home = true;
+  value.position = {36'674'512, 117'122'880};
+  return value;
+}
+
 MapScene map_scene_fixture() {
   MapScene value;
   value.scene_revision = 7;
@@ -273,6 +282,7 @@ void dump_golden() {
   const Bytes geometry = encode_or_fail(Message{geometry_fixture()});
   const Bytes command = encode_or_fail(Message{command_fixture()});
   const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
+  const Bytes home = encode_or_fail(Message{home_fixture()});
   std::cout << "connection.payload=" << hex(ByteView(connection)) << '\n';
   std::cout << "connection.frame="
             << frame_hex(fragment_or_fail(MessageType::ConnectionStatus, 1,
@@ -287,6 +297,7 @@ void dump_golden() {
                                           AckRequested | Urgent))
             << '\n';
   std::cout << "attitude.payload=" << hex(ByteView(attitude)) << '\n';
+  std::cout << "home.payload=" << hex(ByteView(home)) << '\n';
 }
 
 void test_uuid_contract() {
@@ -337,6 +348,7 @@ void test_all_message_round_trips() {
       Message{media_fixture()},
       Message{map_scene_fixture()},
       Message{attitude_fixture()},
+      Message{home_fixture()},
       Message{command_fixture()},
   };
   for (const Message& message : messages) {
@@ -384,6 +396,7 @@ void test_golden_vectors() {
   const Bytes geometry = encode_or_fail(Message{geometry_fixture()});
   const Bytes command = encode_or_fail(Message{command_fixture()});
   const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
+  const Bytes home = encode_or_fail(Message{home_fixture()});
 
   CHECK(expected.at("connection.payload") == hex(ByteView(connection)));
   CHECK(expected.at("connection.frame") ==
@@ -397,6 +410,7 @@ void test_golden_vectors() {
                                    command, 20,
                                    AckRequested | Urgent)));
   CHECK(expected.at("attitude.payload") == hex(ByteView(attitude)));
+  CHECK(expected.at("home.payload") == hex(ByteView(home)));
 }
 
 void test_attitude_sample_validation() {
@@ -410,6 +424,39 @@ void test_attitude_sample_validation() {
   value = attitude_fixture();
   value.lateral_mg = 4'001;
   CHECK(!encode_message(Message{value}).ok());
+}
+
+void test_home_location_validation() {
+  CHECK(encode_message(Message{home_fixture()}).ok());
+
+  // A cleared home is a valid message: the phone must be able to withdraw it.
+  HomeLocation cleared = home_fixture();
+  cleared.has_home = false;
+  cleared.position = {0, 0};
+  CHECK(encode_message(Message{cleared}).ok());
+
+  // The device cannot convert frames, so a WGS84 home is refused instead of
+  // being drawn a few hundred metres away.
+  HomeLocation wgs84 = home_fixture();
+  wgs84.coordinate_system = CoordinateSystem::Wgs84;
+  CHECK(!encode_message(Message{wgs84}).ok());
+
+  // Revision zero means "never received" and must not appear on the wire.
+  HomeLocation no_revision = home_fixture();
+  no_revision.revision = 0;
+  CHECK(!encode_message(Message{no_revision}).ok());
+
+  HomeLocation out_of_range = home_fixture();
+  out_of_range.position.latitude_e6 = 90'000'001;
+  CHECK(!encode_message(Message{out_of_range}).ok());
+
+  const Bytes encoded = encode_or_fail(Message{home_fixture()});
+  const MessageResult decoded =
+      decode_message(MessageType::HomeLocation, ByteView(encoded));
+  CHECK(decoded.ok());
+  if (decoded.ok()) {
+    CHECK(std::get<HomeLocation>(decoded.value) == home_fixture());
+  }
 }
 
 void test_fragmentation_and_reassembly() {
@@ -652,6 +699,7 @@ int main(int argc, char** argv) {
   test_home_shortcut_command();
   test_golden_vectors();
   test_attitude_sample_validation();
+  test_home_location_validation();
   test_fragmentation_and_reassembly();
   test_full_map_scene_budget_and_reassembly();
   test_crc_duplicate_gap_conflict_and_timeout();

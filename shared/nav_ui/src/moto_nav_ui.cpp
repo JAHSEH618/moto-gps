@@ -81,6 +81,12 @@ constexpr std::uint32_t kConnectionSuccessHoldMs = 920;
 // Home is only reachable while the bike is effectively stopped; see
 // home_shortcut_event().
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
+// Home blip geometry, in design pixels like every other HUD measurement.
+constexpr int kHomeBlipSizeDesign = 14;
+// The panel is round: anything past this radius is cropped by the glass, so
+// the blip is hidden rather than drawn into a corner nobody can see.
+constexpr int32_t kHomeBlipSafeRadiusPx =
+    (MOTO_UI_CANVAS_WIDTH / 2) - 28;
 
 enum class LifecycleVisual : std::uint8_t {
     Hidden = 0,
@@ -150,6 +156,7 @@ struct Ui {
     std::uint32_t nav_road_scene_revision = 0;
     lv_obj_t *nav_route_shadow = nullptr;
     lv_obj_t *nav_route = nullptr;
+    lv_obj_t *nav_home_blip = nullptr;
     MapPolyline nav_route_shadow_line{};
     MapPolyline nav_route_line{};
     lv_point_precise_t nav_route_points[MOTO_UI_ROUTE_POINT_CAPACITY]{};
@@ -333,6 +340,58 @@ void draw_vehicle_marker(lv_event_t *event) {
                      static_cast<lv_value_precise_t>(area.y1 + px(30))};
     triangle.p[2] = {static_cast<lv_value_precise_t>(area.x1 + px(28)),
                      static_cast<lv_value_precise_t>(area.y1 + px(30))};
+    lv_draw_triangle(layer, &triangle);
+}
+
+void draw_home_blip(lv_event_t *event) {
+    // Same ink-on-white treatment as the rider arrow: the device has no light
+    // map theme, so the blip never has to invert. The black outline keeps it
+    // legible over both cream roads and dark blocks.
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const lv_value_precise_t left = area.x1;
+    const lv_value_precise_t top = area.y1;
+    const lv_value_precise_t right = area.x2;
+    const lv_value_precise_t bottom = area.y2;
+    const lv_value_precise_t centre = (left + right) / 2;
+    const lv_value_precise_t roof = top + (bottom - top) * 0.45;
+
+    lv_draw_rect_dsc_t body;
+    lv_draw_rect_dsc_init(&body);
+    body.radius = 0;
+    body.bg_opa = LV_OPA_COVER;
+    body.border_width = 0;
+    lv_area_t body_area{static_cast<int32_t>(left),
+                        static_cast<int32_t>(roof),
+                        static_cast<int32_t>(right),
+                        static_cast<int32_t>(bottom)};
+
+    lv_draw_triangle_dsc_t triangle;
+    lv_draw_triangle_dsc_init(&triangle);
+    triangle.opa = LV_OPA_COVER;
+
+    // Outline pass.
+    body.bg_color = kBlack;
+    lv_draw_rect(layer, &body, &body_area);
+    triangle.color = kBlack;
+    triangle.p[0] = {centre, top};
+    triangle.p[1] = {left, roof + 1};
+    triangle.p[2] = {right, roof + 1};
+    lv_draw_triangle(layer, &triangle);
+
+    // Inner pass, inset so a hard 2 px edge remains on every side.
+    body.bg_color = kWhite;
+    body_area.x1 += 2;
+    body_area.x2 -= 2;
+    body_area.y1 += 2;
+    body_area.y2 -= 2;
+    lv_draw_rect(layer, &body, &body_area);
+    triangle.color = kWhite;
+    triangle.p[0] = {centre, top + 4};
+    triangle.p[1] = {left + 3, roof + 1};
+    triangle.p[2] = {right - 3, roof + 1};
     lv_draw_triangle(layer, &triangle);
 }
 
@@ -1530,6 +1589,7 @@ void update_nav_status(const moto_ui_state_t *state) {
 // Defined with the navigation page; declared here because the gate is applied
 // from update_navigation().
 void update_home_shortcut();
+void update_home_blip(const moto_ui_state_t *state);
 
 void update_navigation(const moto_ui_state_t *state) {
     update_building_geometry(state);
@@ -1548,6 +1608,7 @@ void update_navigation(const moto_ui_state_t *state) {
         state->route_request_in_flight != 0;
     set_navigation_guidance_visible(has_guidance);
     update_home_shortcut();
+    update_home_blip(state);
     refresh_lifecycle();
     if(!has_guidance) return;
 
@@ -1767,6 +1828,25 @@ void update_home_shortcut() {
     }
 }
 
+void update_home_blip(const moto_ui_state_t *state) {
+    if(ui.nav_home_blip == nullptr) return;
+    bool visible = state->has_home != 0;
+    if(visible) {
+        const int32_t dx = state->home_x - MOTO_UI_CANVAS_WIDTH / 2;
+        const int32_t dy = state->home_y - MOTO_UI_CANVAS_HEIGHT / 2;
+        visible = dx * dx + dy * dy <=
+                  kHomeBlipSafeRadiusPx * kHomeBlipSafeRadiusPx;
+    }
+    if(!visible) {
+        lv_obj_add_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const int size = px(kHomeBlipSizeDesign);
+    lv_obj_set_pos(ui.nav_home_blip, state->home_x - size / 2,
+                   state->home_y - size / 2);
+    lv_obj_remove_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
+}
+
 void create_navigation_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_NAVIGATION];
     ui.nav_map = make_layer(page);
@@ -1847,6 +1927,19 @@ void create_navigation_page() {
     ui.nav_route_motion_timer = lv_timer_create(route_motion_tick,
                                                  kRouteMotionFrameMs,
                                                  nullptr);
+
+    // Home blip. It is created before the rider arrow so the arrow wins when
+    // both land on the same spot, which is exactly what arriving home looks
+    // like. Hidden until the phone sends a saved home.
+    ui.nav_home_blip = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_home_blip);
+    lv_obj_set_size(ui.nav_home_blip, px(kHomeBlipSizeDesign),
+                    px(kHomeBlipSizeDesign));
+    lv_obj_clear_flag(ui.nav_home_blip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_name_static(ui.nav_home_blip, "moto-home-blip");
+    lv_obj_add_event_cb(ui.nav_home_blip, draw_home_blip,
+                        LV_EVENT_DRAW_MAIN_END, nullptr);
+    lv_obj_add_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
 
     ui.nav_marker = lv_obj_create(ui.nav_map);
     lv_obj_remove_style_all(ui.nav_marker);
