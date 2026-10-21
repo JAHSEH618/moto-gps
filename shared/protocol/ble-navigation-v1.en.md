@@ -191,6 +191,7 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x12` | TrafficDeviation | phone→device | when traffic or off-route state changes |
 | `0x13` | MediaState | phone→device | track / playback change, progress at most 1 Hz |
 | `0x14` | MapScene | phone→device | after about 100 m of travel, on crossing an offline tile, or on a route change |
+| `0x15` | AttitudeSample | device→phone | 10 Hz during Ride / Performance Run recording, no Ack |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -210,7 +211,8 @@ u16 heartbeat_interval_ms  >=250
 ```
 
 Capability bits: bit0 navigation, bit1 route geometry, bit2 traffic, bit3 media state, bit4
-touch commands, bit5 music commands, bit6 command ACK, bit7 map scene.
+touch commands, bit5 music commands, bit6 command ACK, bit7 map scene,
+bit8 attitude telemetry.
 
 ### 6.2 Heartbeat (`0x02`, fixed 11 bytes)
 
@@ -442,6 +444,20 @@ already normalised, so the phone must not infer the direction from the coordinat
 The phone deduplicates by `(session_id, command_id)`; success, failure and duplicates all get an
 Ack reply. A UI action must be ACKed Ok only after a successful commit.
 
+### 6.10 AttitudeSample (`0x15`, fixed 13 bytes)
+
+Low-rate device→phone attitude telemetry. It is sent only while a Ride or a
+Performance Run is recording, carries no Ack, and only carries valid estimates.
+
+```text
+u8  revision
+u32 monotonic_ms        device monotonic clock
+i16 lean_cdeg           right lean positive, 0.01 deg
+i16 pitch_cdeg          nose-up positive, 0.01 deg
+i16 longitudinal_mg     forward positive, milli-g; braking negative
+i16 lateral_mg          right positive, milli-g
+```
+
 ## 7. Display Snapshot to the shared NavSnapshot
 
 The adapter must do value conversion and must not operate on `moto_ui_state_t` directly. The
@@ -514,6 +530,12 @@ ACK_REQUESTED+URGENT:
 ```text
 b701200d341200000d000112341203ffffff6793
 b701200e341208000d00ff40302010ef35
+```
+
+AttitudeSample payload:
+
+```text
+0178563412b80b06ffcefe4102
 ```
 
 The machine-readable complete vectors are authoritative in the fixture. Changing any v1 byte

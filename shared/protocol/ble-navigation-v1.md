@@ -163,6 +163,7 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x12` | TrafficDeviation | 手机→设备 | 交通或偏航变化时 |
 | `0x13` | MediaState | 手机→设备 | 曲目/播放变化，进度最高 1 Hz |
 | `0x14` | MapScene | 手机→设备 | 前进约 100 m、跨离线分块或路线改变时 |
+| `0x15` | AttitudeSample | 设备→手机 | Ride / Performance Run 记录期间 10 Hz，无 ACK |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -182,7 +183,8 @@ u16 heartbeat_interval_ms  >=250
 ```
 
 能力位：bit0 navigation、bit1 route geometry、bit2 traffic、bit3 media state、
-bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene。
+bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene、
+bit8 attitude telemetry。
 
 ### 6.2 Heartbeat (`0x02`, 固定 11 字节)
 
@@ -400,6 +402,20 @@ kind：0 PageSelected、1 Tap、2 LongPress、3 SwipeLeft、4 SwipeRight、5 Swi
 手机以 `(session_id, command_id)` 去重；成功、失败或重复都回复 Ack。UI 动作必须在
 成功提交后才 ACK Ok。
 
+### 6.10 AttitudeSample (`0x15`, 固定 13 字节)
+
+设备→手机的低频姿态遥测。只在 Ride 或 Performance Run 记录期间发送，不带
+ACK；只发送 `valid=true` 的估计值。
+
+```text
+u8  revision
+u32 monotonic_ms        设备单调时钟
+i16 lean_cdeg           右倾为正，0.01°
+i16 pitch_cdeg          抬头为正，0.01°
+i16 longitudinal_mg     前向为正，毫 g；刹车为负
+i16 lateral_mg          右向为正，毫 g
+```
+
 ## 7. Display Snapshot 到共享 NavSnapshot
 
 适配器必须做值转换，不得直接操作 `moto_ui_state_t`。推荐映射如下：
@@ -465,6 +481,12 @@ ACK_REQUESTED+URGENT 的两个分片：
 ```text
 b701200d341200000d000112341203ffffff6793
 b701200e341208000d00ff40302010ef35
+```
+
+AttitudeSample payload：
+
+```text
+0178563412b80b06ffcefe4102
 ```
 
 机器可读的完整向量以 fixture 为准。修改任何 v1 字节都应先解释兼容性影响，并由
