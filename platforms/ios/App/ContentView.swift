@@ -16,18 +16,37 @@ struct ContentView: View {
     @State private var showsMapDownloads = false
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
+    @Environment(\.colorScheme) private var systemColorScheme
+    /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
+    /// so an environment lookup here would resolve to the default palette.
+    private var palette: MotoPalette { theme.palette }
+
+    /// Vice at night, Heat in daylight. The device owns the choice once the BLE
+    /// theme lands; until then the system appearance is the truthful signal.
+    private var theme: MotoThemeName {
+        systemColorScheme == .dark ? .vice : .heat
+    }
 
     var body: some View {
         NavigationStack(path: navigationPath) {
-            homeScreen
-                .navigationDestination(for: MotoScreen.self) { screen in
-                    switch screen {
-                    case .routePreview: routePreviewScreen
-                    case .activeNavigation: activeNavigationScreen
-                    }
+            HomeScreen(
+                model: model,
+                homeStore: model.homeStore,
+                showsDeviceDetails: $showsDeviceDetails,
+                showsGatewaySettings: $showsGatewaySettings,
+                showsMapDownloads: $showsMapDownloads,
+                showsDataUse: $showsDataUse,
+                openSystemSettings: openSystemSettings
+            )
+            .navigationDestination(for: MotoScreen.self) { screen in
+                switch screen {
+                case .routePreview: routePreviewScreen
+                case .activeNavigation: activeNavigationScreen
                 }
+            }
         }
-        .tint(.blue)
+        .motoTheme(theme)
+        .tint(theme.palette.accent)
         .onChange(of: model.destinationQuery) { _, _ in model.destinationQueryDidChange() }
         .onChange(of: model.selectedPlace) { _, place in
             if place != nil { searchFocused = false }
@@ -453,75 +472,99 @@ struct ContentView: View {
     // MARK: - Ride in progress
 
     private var activeNavigationScreen: some View {
-        List {
-            Section {
-                VStack(spacing: 14) {
-                    Image(systemName: navigationSymbol)
-                        .font(.system(size: 36, weight: .medium))
-                        .foregroundStyle(model.navigationFailure == nil ? Color.blue : .orange)
-                        .frame(width: 76, height: 76)
-                        .background(Color.blue.opacity(0.08), in: Circle())
-                        .accessibilityHidden(true)
-                    Text(navigationTitle)
-                        .font(.title2.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                    Text(navigationDetail)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-            }
-            .listRowBackground(Color.clear)
-            Section {
-                Label {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(model.isDemoActive ? "演示目的地" : "目的地")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.secondary)
-                        Text(model.activeDestinationName).font(.headline)
+        ZStack {
+            MotoScreenBackground()
+            ScrollView {
+                VStack(spacing: MotoMetrics.s4) {
+                    MotoInstructionCard(
+                        destination: model.activeDestinationName,
+                        instruction: navigationTitle,
+                        detail: navigationDetail,
+                        symbol: navigationSymbol
+                    )
+
+                    HStack(alignment: .top, spacing: MotoMetrics.s4) {
+                        MotoRadar(size: 196, route: [])
+                        VStack(alignment: .leading, spacing: MotoMetrics.s4) {
+                            MotoStatCell(label: "left", value: remainingDistance, token: .displayMD)
+                            MotoStatCell(label: "eta", value: remainingDuration, token: .displayMD, tone: .accent)
+                        }
+                        .padding(.top, MotoMetrics.s2)
                     }
-                } icon: {
-                    Image(systemName: "flag.checkered").foregroundStyle(.blue)
-                }
-                .padding(.vertical, 6)
-                if dynamicTypeSize.isAccessibilitySize {
-                    rideMetric("剩余时间", value: remainingDuration)
-                    rideMetric("剩余路程", value: remainingDistance)
-                } else {
-                    HStack(spacing: 24) {
-                        rideMetric("剩余时间", value: remainingDuration)
-                        rideMetric("剩余路程", value: remainingDistance)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(spacing: 0) {
+                        rideStatusLine("手机定位", locationStatus, ok: model.navigation.hasUsableFix)
+                        MotoRule()
+                        rideStatusLine("路况", trafficStatus, ok: true)
+                        MotoRule()
+                        Button { showsMapDownloads = true } label: {
+                            HStack {
+                                Text("管理离线地图")
+                                    .font(.system(.subheadline, weight: .medium))
+                                    .foregroundStyle(palette.ink)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(.caption2, weight: .bold))
+                                    .foregroundStyle(palette.inkMuted)
+                            }
+                            .frame(minHeight: MotoMetrics.minTapTarget)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("ride-offline-maps-button")
+                        MotoRule()
+                        SurroundingMapStatusRow(store: model.surroundingMap)
+                    }
+
+                    if model.isDemoActive {
+                        MotoLabel(text: "demo · 模拟位置与行驶", tone: .muted, token: .micro)
                     }
                 }
-            }
-            Section("导航状态") {
-                deviceSummaryButton
-                statusRow("手机定位", symbol: "location", value: locationStatus,
-                          color: model.navigation.hasUsableFix ? .green : .secondary)
-                statusRow("路况", symbol: "car.side", value: trafficStatus, color: .secondary)
-                SurroundingMapStatusRow(store: model.surroundingMap)
-                Button("管理离线地图") { showsMapDownloads = true }
-            }
-            if model.isDemoActive {
-                Section {
-                    Label("演示中的位置与行驶过程为模拟数据。", systemImage: "info.circle")
-                        .font(.footnote)
-                        .foregroundStyle(Color.secondary)
-                } footer: {
-                    Text("道路数据 © OpenStreetMap contributors")
-                }
+                .padding(.horizontal, MotoMetrics.s4)
+                .padding(.vertical, MotoMetrics.s4)
             }
         }
-        .listStyle(.insetGrouped)
-        .navigationTitle(model.isDemoActive ? "演示导航" : "导航中")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { deviceToolbarButton }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            MotoStatusBand(
+                linkText: model.deviceReady ? "link" : "no link",
+                linkTone: model.deviceReady ? .ok : .abort,
+                fixText: model.navigation.hasUsableFix ? "fix" : "no fix"
+            ) {
+                Button { showsDeviceDetails = true } label: {
+                    Image(systemName: "circle.circle")
+                        .font(.system(.footnote, weight: .medium))
+                        .foregroundStyle(palette.inkMuted)
+                        .frame(width: MotoMetrics.minTapTarget, height: MotoMetrics.minTapTarget - 10)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("我的圆屏")
+                .accessibilityValue(deviceStatus)
+                .accessibilityIdentifier("device-details-button")
+            }
         }
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom, spacing: 0) { navigationActionBar }
+    }
+
+    private func rideStatusLine(_ title: String, _ value: String, ok: Bool) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(.subheadline))
+                .foregroundStyle(palette.inkMuted)
+            Spacer()
+            HStack(spacing: MotoMetrics.s2) {
+                Circle()
+                    .fill(ok ? palette.ok : palette.inkMuted)
+                    .frame(width: 6, height: 6)
+                Text(value)
+                    .font(.system(.subheadline, weight: .medium))
+                    .foregroundStyle(palette.ink)
+            }
+        }
+        .frame(minHeight: MotoMetrics.minTapTarget)
+        .accessibilityElement(children: .combine)
     }
 
     private func rideMetric(_ title: String, value: String) -> some View {
@@ -539,31 +582,31 @@ struct ContentView: View {
     }
 
     private var navigationActionBar: some View {
-        VStack(spacing: 10) {
-            Button(action: model.toggleNavigation) {
-                HStack(spacing: 9) {
-                    if model.isPlanningRoutePreview {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: model.isNavigationActive ? "stop.fill" : "location.fill")
-                    }
-                    Text(model.primaryActionTitle).fixedSize(horizontal: false, vertical: true)
+        Button(action: model.toggleNavigation) {
+            HStack(spacing: MotoMetrics.s2) {
+                if model.isPlanningRoutePreview {
+                    ProgressView().tint(palette.bg)
+                } else {
+                    Image(systemName: model.isNavigationActive ? "stop.fill" : "location.fill")
+                        .font(.system(.footnote, weight: .bold))
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 34)
-                .padding(.vertical, 4)
+                Text(model.isNavigationActive ? "结束导航" : model.primaryActionTitle)
+                    .font(.system(.headline, weight: .bold))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.roundedRectangle(radius: 16))
-            .controlSize(.large)
-            .tint(model.isNavigationActive ? .red : .blue)
-            .disabled(!model.isNavigationActive && (model.selectedPlace == nil || model.isPlanningRoutePreview))
-            .accessibilityIdentifier("primary-navigation-action")
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .foregroundStyle(palette.bg)
+            .background(model.isNavigationActive ? palette.abort : palette.accent)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-        .background(.bar)
+        .buttonStyle(.plain)
+        .disabled(!model.isNavigationActive && (model.selectedPlace == nil || model.isPlanningRoutePreview))
+        .opacity(model.isNavigationActive || model.selectedPlace != nil ? 1 : 0.4)
+        .accessibilityIdentifier("primary-navigation-action")
+        .padding(.horizontal, MotoMetrics.s4)
+        .padding(.top, MotoMetrics.s3)
+        .padding(.bottom, MotoMetrics.s2)
+        .background(palette.bg)
     }
 
     // MARK: - Device sheet

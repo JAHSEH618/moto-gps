@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
 
     @Published var destinationQuery = ""
     @Published private(set) var placeResults: [PlaceSearchResult] = []
+    /// Home address. Owned here so the BLE command handler and the UI share one
+    /// source of truth.
+    let homeStore = HomeLocationStore()
     @Published private(set) var selectedPlace: PlaceSearchResult?
     @Published private(set) var recentPlaces: [PlaceSearchResult] = []
     @Published private(set) var isSearchingPlaces = false
@@ -64,6 +67,9 @@ final class AppModel: ObservableObject {
                     : .unsupported
             case 16 ... 19:
                 return self.mediaController.handleDeviceCommand(kind: command.kind)
+            case 20:
+                // Device tapped its home glyph. The address lives on the phone.
+                return self.routeHome()
             default:
                 return .unsupported
             }
@@ -261,6 +267,16 @@ final class AppModel: ObservableObject {
         searchLocation.refresh()
         let query = destinationQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         schedulePlaceSearch(query: query, delay: .zero)
+    }
+
+    /// Route to the saved home address. Called from the home button in the app
+    /// and from the device's home glyph over BLE.
+    @discardableResult
+    func routeHome() -> BLECommandDisposition {
+        guard let place = homeStore.place else { return .invalidState }
+        guard !isUpdatingGateway else { return .invalidState }
+        selectPlace(place)
+        return .accepted
     }
 
     func selectPlace(_ place: PlaceSearchResult) {

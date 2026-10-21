@@ -67,6 +67,14 @@ final class AppleMusicRemoteController: NSObject {
             object: player
         )
 
+        // Screenshot / UI-automation runs cannot answer the system prompt, and the
+        // simulator has no Music library to authorize. Skip the request; the
+        // controller still publishes its state and stays read-only.
+        if ProcessInfo.processInfo.arguments.contains("--moto-no-media-auth") {
+            publishCurrentState()
+            return
+        }
+
         switch MPMediaLibrary.authorizationStatus() {
         case .authorized:
             publishCurrentState()

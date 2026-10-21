@@ -12,6 +12,8 @@ and this must not be interpreted as adding a noncommercial restriction to that m
 | LVGL | `third_party/lvgl` submodule, commit `85aa60d18b3d5e5588d7b247abf90198f07c8a63` | MIT; see the submodule's `LICENCE.txt` and `LICENSES/LVGL-MIT.txt` |
 | Waveshare BSP / CO5300 initialisation | Component Registry `waveshare/esp32_s3_touch_amoled_1_75c` 3.0.0; board-level derived file `platforms/esp32/main/board_port_waveshare_1_75c.cpp` | Apache-2.0; see `LICENSES/Waveshare-Apache-2.0.txt`; that derived file keeps Apache-2.0 |
 | Source Han Sans SC font subset | `shared/nav_ui/assets/moto_font_nav_16.c`, generated from the fonts in the LVGL tools directory | SIL OFL 1.1; see `LICENSES/SourceHanSansSC-OFL.txt` |
+| Barlow Condensed font (SemiBold / ExtraBold) | `assets/fonts/BarlowCondensed-*.ttf`, sourced from Google Fonts `ofl/barlowcondensed` | SIL OFL 1.1; see `LICENSES/BarlowCondensed-OFL.txt` |
+| Anton font (Regular) | `assets/fonts/Anton-Regular.ttf`, sourced from Google Fonts `ofl/anton` | SIL OFL 1.1; see `LICENSES/Anton-OFL.txt` |
 | Montserrat built-in font | LVGL's built-in font resources | SIL OFL 1.1; see `LICENSES/Montserrat-OFL.txt` |
 | OpenStreetMap data / derived database | `shared/offline_map/jinan-v1.sqlite` and its SQL/manifest; the route/road/building geometry in `shared/demo_fixture`; the map data in the generated C++ / Swift constants | ODbL 1.0, © OpenStreetMap contributors |
 | Nodemailer | Mail service dependency in `website/server`, pinned in `package-lock.json`; [upstream](https://nodemailer.com/) | MIT-0; license included in the dependency package |

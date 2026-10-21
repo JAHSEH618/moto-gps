@@ -30,6 +30,14 @@ targets:
         buildPhase: resources
       - path: ../../shared/offline_map/jinan-v1.sqlite
         buildPhase: resources
+      - path: ../../assets/fonts/BarlowCondensed-SemiBold.ttf
+        buildPhase: resources
+      - path: ../../assets/fonts/BarlowCondensed-ExtraBold.ttf
+        buildPhase: resources
+      - path: ../../assets/fonts/Anton-Regular.ttf
+        buildPhase: resources
+      - path: ../../assets/fonts/OFL.txt
+        buildPhase: resources
       - path: ../../NOTICE
         buildPhase: resources
       - path: ../../LICENSE.md
@@ -55,6 +63,10 @@ targets:
         NSLocationAlwaysAndWhenInUseUsageDescription: 导航开始后，MOTO GPS 需要在锁屏或切换应用时继续更新骑行位置。
         NSBluetoothAlwaysUsageDescription: MOTO GPS 使用蓝牙连接车把上的 ESP32-S3 圆屏设备。
         NSAppleMusicUsageDescription: MOTO GPS 需要读取并控制 Apple Music 播放，以便在车把圆屏上切歌和暂停。
+        UIAppFonts:
+          - BarlowCondensed-SemiBold.ttf
+          - BarlowCondensed-ExtraBold.ttf
+          - Anton-Regular.ttf
         UIBackgroundModes:
           - location
           - bluetooth-central
