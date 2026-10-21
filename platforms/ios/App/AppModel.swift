@@ -6,6 +6,9 @@ import MotoNavigationCore
 final class AppModel: ObservableObject {
     @Published private(set) var navigation = MotoNavCoreBridge().snapshot
     @Published private(set) var device = BLEDeviceSnapshot()
+    /// Latest IMU sample from the device. Cleared on disconnect and expired by
+    /// age, so a stalled link cannot leave a plausible lean on screen.
+    @Published private(set) var attitude = AttitudeTelemetry()
     @Published private(set) var navigationFailure: String?
     @Published private(set) var isNavigationActive = false
     @Published private(set) var isDemoActive = false
@@ -55,7 +58,13 @@ final class AppModel: ObservableObject {
         }
 
         bluetooth.onSnapshotChange = { [weak self] snapshot in
-            self?.device = snapshot
+            guard let self else { return }
+            self.device = snapshot
+            if case .connected = snapshot.connection { return }
+            self.attitude.clear()
+        }
+        bluetooth.onAttitudeSample = { [weak self] sample in
+            self?.attitude.receive(AttitudeSample(sample), at: Date())
         }
         bluetooth.onDeviceCommand = { [weak self] command in
             guard let self else { return .failed }
@@ -277,6 +286,12 @@ final class AppModel: ObservableObject {
         guard !isUpdatingGateway else { return .invalidState }
         selectPlace(place)
         return .accepted
+    }
+
+    /// The sample the ride screen may show, or `nil` when none has arrived yet
+    /// or the last one has expired.
+    func currentAttitude(at now: Date = Date()) -> AttitudeSample? {
+        attitude.sample(at: now)
     }
 
     func selectPlace(_ place: PlaceSearchResult) {

@@ -106,6 +106,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) uint8_t status;
 @end
 
+/// Lean / pitch / G sample from the device IMU (message 0x15). Centi-degrees
+/// and milli-g stay in their wire units; the Swift side owns display units.
+@interface MotoBLEAttitudeSample : NSObject
+@property(nonatomic, readonly) uint32_t monotonicMilliseconds;
+@property(nonatomic, readonly) int16_t leanCentiDegrees;
+@property(nonatomic, readonly) int16_t pitchCentiDegrees;
+@property(nonatomic, readonly) int16_t longitudinalMilliG;
+@property(nonatomic, readonly) int16_t lateralMilliG;
+@end
+
 /// One successfully decoded transport message, or one valid partial/duplicate
 /// frame. Sequence and ACK metadata stay attached to the shared decoder output.
 @interface MotoBLEInboundMessage : NSObject
@@ -116,6 +126,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, nullable) MotoBLEConnectionStatus *connectionStatus;
 @property(nonatomic, readonly, nullable) MotoBLEHeartbeat *heartbeat;
 @property(nonatomic, readonly, nullable) MotoBLEAcknowledgement *acknowledgement;
+@property(nonatomic, readonly, nullable) MotoBLEAttitudeSample *attitudeSample;
 @property(nonatomic, readonly, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 

@@ -361,6 +361,17 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @implementation MotoBLEHeartbeat
 @end
 
+@interface MotoBLEAttitudeSample ()
+@property(nonatomic, readwrite) uint32_t monotonicMilliseconds;
+@property(nonatomic, readwrite) int16_t leanCentiDegrees;
+@property(nonatomic, readwrite) int16_t pitchCentiDegrees;
+@property(nonatomic, readwrite) int16_t longitudinalMilliG;
+@property(nonatomic, readwrite) int16_t lateralMilliG;
+@end
+
+@implementation MotoBLEAttitudeSample
+@end
+
 @interface MotoBLEAcknowledgement ()
 @property(nonatomic, readwrite) uint16_t acknowledgedSequence;
 @property(nonatomic, readwrite) uint8_t status;
@@ -377,6 +388,7 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @property(nonatomic, readwrite, nullable) MotoBLEConnectionStatus *connectionStatus;
 @property(nonatomic, readwrite, nullable) MotoBLEHeartbeat *heartbeat;
 @property(nonatomic, readwrite, nullable) MotoBLEAcknowledgement *acknowledgement;
+@property(nonatomic, readwrite, nullable) MotoBLEAttitudeSample *attitudeSample;
 @property(nonatomic, readwrite, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -601,6 +613,18 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
     value.acknowledgedSequence = ack->acknowledged_sequence;
     value.status = static_cast<uint8_t>(ack->status);
     inbound.acknowledgement = value;
+    return inbound;
+  }
+
+  const auto *attitude = std::get_if<moto::ble::AttitudeSample>(&decoded.value);
+  if (attitude != nullptr) {
+    MotoBLEAttitudeSample *value = [[MotoBLEAttitudeSample alloc] init];
+    value.monotonicMilliseconds = attitude->monotonic_ms;
+    value.leanCentiDegrees = attitude->lean_cdeg;
+    value.pitchCentiDegrees = attitude->pitch_cdeg;
+    value.longitudinalMilliG = attitude->longitudinal_mg;
+    value.lateralMilliG = attitude->lateral_mg;
+    inbound.attitudeSample = value;
     return inbound;
   }
 
