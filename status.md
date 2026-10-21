@@ -109,3 +109,12 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Lean/pitch calibration offsets are applied; invalid gravity magnitude and non-finite inputs return `valid=false`.
 - Added `attitude_estimator_tests`; full native suite is now 11/11 green.
 - Next: map QMI8658 axes to the bike frame, wire the estimator into the sensor/bridge, and add the BLE `AttitudeSample` codec.
+
+## 2026-10-21T21:25:09+09:00 — Green: BLE AttitudeSample codec
+
+- Added `MessageType::AttitudeSample = 0x15` and `CapabilityAttitudeTelemetry = 1U << 8U`.
+- Payload is the standard revision byte plus `u32 monotonic_ms` and four `i16` fields (Lean, pitch, longitudinal mg, lateral mg) = 13 bytes.
+- Added validation (±180° Lean, ±90° pitch, ±4 g), round-trip tests, a golden payload (`0178563412b80b06ffcefe4102`) and an out-of-range rejection test.
+- Updated the Chinese and English v1 protocol docs with the new message table row, capability bit, section 6.10 and golden payload.
+- Full native suite is 11/11 green.
+- Next: map QMI8658 axes to the bike frame and wire the estimator into `MotionHeadingSensor` / `PhoneNavBridge`; then decode the sample in the iOS BLE bridge.
