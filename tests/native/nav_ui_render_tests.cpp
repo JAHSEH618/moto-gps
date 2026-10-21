@@ -103,6 +103,21 @@ Frame capture() {
   return Frame{frame_hash(), shadow_frame};
 }
 
+std::uint16_t rgb565(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+  return static_cast<std::uint16_t>(((r & 0xF8U) << 8U) |
+                                    ((g & 0xFCU) << 3U) |
+                                    (b >> 3U));
+}
+
+std::uint16_t pixel_at(int x, int y) {
+  const std::size_t offset =
+      (static_cast<std::size_t>(y) * kWidth + static_cast<std::size_t>(x)) *
+      (LV_COLOR_DEPTH / 8);
+  std::uint16_t pixel = 0;
+  std::memcpy(&pixel, shadow_frame.data() + offset, sizeof(pixel));
+  return pixel;
+}
+
 moto_ui_state_t base_state() {
   moto_ui_state_t state{};
   state.page = MOTO_UI_PAGE_NAVIGATION;
@@ -186,6 +201,42 @@ void test_frames_are_deterministic() {
   moto_nav_ui_set_page(MOTO_UI_PAGE_SPEED);
   const Frame speed_again = capture();
   CHECK(speed_again.hash == speed_page.hash);
+}
+
+void test_a_building_footprint_interior_is_filled() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  // Keep a route so the connection lifecycle overlay stays hidden; the
+  // route is drawn below the building and never crosses its interior.
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 280};
+  state.route_points[1] = {60, 280};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 4;
+  state.building_points[0] = {100, 100};
+  state.building_points[1] = {200, 100};
+  state.building_points[2] = {200, 200};
+  state.building_points[3] = {100, 200};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 4, 0};
+  moto_nav_ui_set_state(&state);
+  capture();
+
+  for(int y = 100; y <= 200; y += 25) {
+    for(int x = 100; x <= 200; x += 25) {
+      std::cerr << "(" << x << ',' << y << ")=0x" << std::hex
+                << pixel_at(x, y) << ' ';
+    }
+    std::cerr << std::dec << '\n';
+  }
+  std::cerr << "outside=0x" << std::hex << pixel_at(300, 150)
+            << " expected=0x" << rgb565(0x24, 0x29, 0x2C) << std::dec << '\n';
+  // The footprint interior must be a filled surface, not just an outline.
+  CHECK(pixel_at(150, 150) == rgb565(0x24, 0x29, 0x2C));
+  // The rest of the map must remain the page background.
+  CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
 }
 
 void test_clearing_geometry_leaves_no_residue() {
@@ -433,6 +484,7 @@ int main(int argc, char **argv) {
   CHECK(all_black);
 
   test_frames_are_deterministic();
+  test_a_building_footprint_interior_is_filled();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_phone_lifecycle_renders_deterministically();
