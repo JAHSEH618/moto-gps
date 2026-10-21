@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible problem in the Skill or static audit
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove secrets, private paths, personal data, proprietary assets, and simulator data before submitting.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and the expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest safe reproduction, platform, SDK, OS, device/simulator, and relevant accessibility settings.
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks already run
+      description: Include audit output, build/runtime checks, screenshots, or console errors with sensitive data removed.

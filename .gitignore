@@ -31,3 +31,7 @@ backups/
 
 # Local Cloudflare emulator state (also when tests run from the repository root)
 .wrangler/
+
+# Agent skills are tracked in .agents/skills with skills-lock.json; other agents
+# only get symlinks into that tree.
+.claude/skills/

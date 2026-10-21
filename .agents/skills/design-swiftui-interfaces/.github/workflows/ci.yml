@@ -1,0 +1,36 @@
+name: Validate Skill
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Compile Python scanner
+        run: python -m py_compile scripts/*.py
+
+      - name: Check source metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path('SKILL.md').read_text(encoding='utf-8')
+          assert re.search(r'^name:\s*design-swiftui-interfaces\s*$', text, re.M)
+          assert Path('LICENSE').is_file()
+          assert Path('README.md').is_file()
+          print('Skill metadata and release files passed.')
+          PY

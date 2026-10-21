@@ -1,0 +1,40 @@
+# Swift and Xcode build output
+.build/
+DerivedData/
+Build/
+Packages/
+SourcePackages/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Test and coverage output
+coverage/
+xcresult/
+*.xcresult
+screenshots/
+test-results/
+
+# Python caches used by the static audit
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editors and operating-system metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+
+# Release archives and generated bundles
+release/
+dist/
+build/
+*.zip
+*.tar
+*.tar.gz

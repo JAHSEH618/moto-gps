@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "design-swiftui-interfaces": {
+      "source": "ZHUOLIN0928/swiftui-interface-design-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "f4ad6779192cd014af19fd388ddf18dc6966378ce4d648c3ccd3d02d6b97c202"
+    },
+    "design-ui-ux-game": {
+      "source": "fcsouza/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ui-ux-game/SKILL.md",
+      "computedHash": "d39fdc9567bd411a4b7eaf3f3023e4ff4b6f90a28dff7cdd9f4e5cbfc8c86034"
+    },
+    "ios-design-agent-skill": {
+      "source": "vermont42/iOS-Design-Agent-Skill",
+      "sourceType": "github",
+      "skillPath": "ios-design-agent-skill/SKILL.md",
+      "computedHash": "d041b128fdf52d3dd1ff05b00860d02e79b533518d7a676b29323eb4a299fc53"
+    }
+  }
+}
