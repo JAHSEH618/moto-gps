@@ -328,3 +328,16 @@ The assert-handler change earned its keep immediately: `-DMOTO_NATIVE_LVGL_HEAP_
 **New finding — the tree does not fit the board's LVGL pool.** `MOTO_UI_HEAP=1` reports `total=8383200 free=8372880 max_used=75328`. The ESP32 build gets `CONFIG_LV_MEM_SIZE_KILOBYTES=64` (LVGL Kconfig default, not overridden in `sdkconfig.defaults`) with `LV_MEM_POOL_EXPAND_SIZE=0`, so `moto_nav_ui_create()` would assert on the device before any snapshot arrives. The 64 KiB native build reproduces it. This is a budget problem rather than a regression from this batch — the four ring devices are a small fraction of 75 KiB — and it is filed as a TODO rather than papered over by raising the number without measuring.
 
 **State.** Working tree carries 19 modified files and 3 new Swift files, nothing committed. The next step is no longer the render suite; it is the firmware build (still blocked on ESP-IDF) so the heap decision is made against a real `idf.py build`.
+
+## 2026-10-22T01:44:29+09:00 — Batch 1 committed and pushed
+
+**Two commits on `feat/gta-attitude`, `origin` now at `33a9a63`.**
+
+- `2473e82` *feat(nav_ui): make the rim a gauge and give teardown one exit* — 4 files, +571 −97. The ring, the north badge, the clamped safehouse blip, the three-second home hint, and the teardown gate that makes the suite that verifies them runnable.
+- `33a9a63` *feat(ble): send the saved home to the device and surface a refusal* — 19 files, +594 −93. `HomeLocationBroadcast`, the single WGS84 → GCJ-02 conversion in `MotoNavigationCore`, the bridge encoder with its golden vector, the capability gate and revision persistence, the Ack → `RenderHomeError` path, and the log entries for the batch.
+
+**The split is by surface, not by the gate / screen grouping I proposed first.** The two topics are interleaved line by line in `moto_nav_ui.cpp` — `teardown_ui()` deletes `nav_home_hint_timer`, which the ring work introduced — and the dependency runs one way: `phone_nav_bridge.cpp` calls `moto_nav_ui_show_home_error()`, declared by the UI commit. Gate-first would need a third commit for the bridge and would ship a commit that fixes a widget tree the next commit replaces. Device-then-wire gives two commits that each stand alone.
+
+**Verification at push.** The pre-push hook ran `scripts/verify.sh`: todo log clean, native **11/11**, Swift **41**, iOS app build succeeded. The 17 render cases ran as part of the native step; the hook is the gate that actually executes in this fork, since `origin` has no Actions.
+
+**Recorded, not fixed.** Two gaps are now explicit in the log. The LVGL pool high-water mark is 75,328 bytes against the board's 64 KiB, so `moto_nav_ui_create()` still needs a budget decision before the next firmware build. And the gesture dedupe added by this batch is guaranteed by construction rather than by a test, because the render harness has no indev to send a gesture through.
