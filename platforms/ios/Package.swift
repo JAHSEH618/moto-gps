@@ -10,10 +10,12 @@ let package = Package(
     ],
     products: [
         .library(name: "MotoNavigationCore", targets: ["MotoNavigationCore"]),
+        .library(name: "MotoRideCore", targets: ["MotoRideCore"]),
         .executable(name: "MotoNavigationCoreChecks", targets: ["MotoNavigationCoreChecks"]),
     ],
     targets: [
         .target(name: "MotoNavigationCore"),
+        .target(name: "MotoRideCore"),
         .executableTarget(
             name: "MotoNavigationCoreChecks",
             dependencies: ["MotoNavigationCore"]
@@ -21,6 +23,10 @@ let package = Package(
         .testTarget(
             name: "MotoNavigationCoreTests",
             dependencies: ["MotoNavigationCore"]
+        ),
+        .testTarget(
+            name: "MotoRideCoreTests",
+            dependencies: ["MotoRideCore"]
         ),
     ]
 )
