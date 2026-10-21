@@ -14,7 +14,8 @@ constexpr double kLegacyCanvasSize = 360.0;
 constexpr double kUiScale =
     static_cast<double>(MOTO_UI_CANVAS_WIDTH) / kLegacyCanvasSize;
 constexpr double kVehicleX = MOTO_UI_CANVAS_WIDTH / 2.0;
-constexpr double kVehicleY = 196.0 * kUiScale;
+constexpr double kVehicleY =
+    static_cast<double>(MOTO_UI_CANVAS_HEIGHT) / 2.0;
 // A navigation minimap is a spatial frame of reference, so it must not jump
 // between zoom levels as a maneuver counter crosses an arbitrary threshold.
 // This fixed street-scale view shows roughly 400 m ahead on the 466 px round
