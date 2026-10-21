@@ -63,6 +63,8 @@ NSString *TrafficName(moto::nav::TrafficLevel level) {
 NSString *DisplayPageName(moto::nav::DisplayPage page) {
   switch (page) {
     case moto::nav::DisplayPage::Navigation: return @"navigation";
+    case moto::nav::DisplayPage::Performance: return @"performance";
+    case moto::nav::DisplayPage::Lean: return @"lean";
     case moto::nav::DisplayPage::Speed: return @"speed";
     case moto::nav::DisplayPage::Compass: return @"compass";
     case moto::nav::DisplayPage::Music: return @"music";
@@ -309,6 +311,8 @@ struct BridgeStorage {
 
 - (NSArray<MotoNavCoreCommand *> *)selectDisplayPageName:(NSString *)pageName {
   auto page = moto::nav::DisplayPage::Navigation;
+  if ([pageName isEqualToString:@"performance"]) page = moto::nav::DisplayPage::Performance;
+  if ([pageName isEqualToString:@"lean"]) page = moto::nav::DisplayPage::Lean;
   if ([pageName isEqualToString:@"speed"]) page = moto::nav::DisplayPage::Speed;
   if ([pageName isEqualToString:@"compass"]) page = moto::nav::DisplayPage::Compass;
   if ([pageName isEqualToString:@"music"]) page = moto::nav::DisplayPage::Music;

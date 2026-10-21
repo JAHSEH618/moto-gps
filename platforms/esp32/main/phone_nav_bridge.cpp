@@ -212,6 +212,8 @@ moto::nav::DisplayPage map_page(moto::ble::DisplayPage page) {
   using Out = moto::nav::DisplayPage;
   switch (page) {
     case In::Navigation: return Out::Navigation;
+    case In::Performance: return Out::Performance;
+    case In::Lean: return Out::Lean;
     case In::Speed: return Out::Speed;
     case In::Compass: return Out::Compass;
     case In::Music: return Out::Music;
@@ -221,6 +223,9 @@ moto::nav::DisplayPage map_page(moto::ble::DisplayPage page) {
 
 moto::ble::DisplayPage map_page(moto_ui_page_t page) {
   switch (page) {
+    case MOTO_UI_PAGE_PERFORMANCE:
+      return moto::ble::DisplayPage::Performance;
+    case MOTO_UI_PAGE_LEAN: return moto::ble::DisplayPage::Lean;
     case MOTO_UI_PAGE_SPEED: return moto::ble::DisplayPage::Speed;
     case MOTO_UI_PAGE_COMPASS: return moto::ble::DisplayPage::Compass;
     case MOTO_UI_PAGE_MUSIC: return moto::ble::DisplayPage::Music;

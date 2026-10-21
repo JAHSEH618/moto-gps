@@ -193,6 +193,19 @@ struct Ui {
     lv_obj_t *speed_ticks[kSpeedTickCount]{};
     lv_point_precise_t speed_tick_points[kSpeedTickCount][2]{};
 
+    lv_obj_t *perf_target = nullptr;
+    lv_obj_t *perf_timer = nullptr;
+    lv_obj_t *perf_best = nullptr;
+    lv_obj_t *perf_long_g = nullptr;
+    lv_obj_t *perf_lat_g = nullptr;
+    lv_obj_t *perf_gg_dot = nullptr;
+    lv_obj_t *lean_value = nullptr;
+    lv_obj_t *lean_side = nullptr;
+    lv_obj_t *lean_peak = nullptr;
+    lv_obj_t *lean_bar_track = nullptr;
+    lv_obj_t *lean_bar_fill = nullptr;
+    float lean_peak_deg = 0.0F;
+
     lv_obj_t *compass_heading = nullptr;
     lv_obj_t *compass_cardinal = nullptr;
     lv_obj_t *compass_speed = nullptr;
@@ -1614,6 +1627,75 @@ void update_compass(const moto_ui_state_t *state) {
     }
 }
 
+void update_performance(const moto_ui_state_t *state) {
+    if(ui.perf_timer == nullptr) return;
+    if(state->has_attitude) {
+        char text[24];
+        std::snprintf(text, sizeof(text), "LONG %+0.2f g",
+                      static_cast<double>(state->longitudinal_g));
+        lv_label_set_text(ui.perf_long_g, text);
+        std::snprintf(text, sizeof(text), "LAT %+0.2f g",
+                      static_cast<double>(state->lateral_g));
+        lv_label_set_text(ui.perf_lat_g, text);
+
+        const int32_t centre_x = px(120) + px(60);
+        const int32_t centre_y = px(205) + px(60);
+        const int32_t radius = px(50);
+        const float lateral = std::clamp(
+            static_cast<float>(state->lateral_g) / 1.5F, -1.0F, 1.0F);
+        const float longitudinal = std::clamp(
+            static_cast<float>(state->longitudinal_g) / 1.5F, -1.0F, 1.0F);
+        lv_obj_set_pos(ui.perf_gg_dot,
+                       centre_x - px(5) + static_cast<int32_t>(lateral * radius),
+                       centre_y - px(5) - static_cast<int32_t>(longitudinal * radius));
+        lv_obj_remove_flag(ui.perf_gg_dot, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_label_set_text(ui.perf_long_g, "LONG --");
+        lv_label_set_text(ui.perf_lat_g, "LAT --");
+        lv_obj_add_flag(ui.perf_gg_dot, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void update_lean(const moto_ui_state_t *state) {
+    if(ui.lean_value == nullptr) return;
+    if(state->has_attitude) {
+        char text[16];
+        std::snprintf(text, sizeof(text), "%+0.0f°",
+                      static_cast<double>(state->lean_deg));
+        lv_label_set_text(ui.lean_value, text);
+        lv_label_set_text(ui.lean_side,
+                          state->lean_deg >= 0.0F ? "RIGHT" : "LEFT");
+
+        ui.lean_peak_deg = std::max(
+            ui.lean_peak_deg, std::fabs(static_cast<float>(state->lean_deg)));
+        std::snprintf(text, sizeof(text), "MAX %.0f°",
+                      static_cast<double>(ui.lean_peak_deg));
+        lv_label_set_text(ui.lean_peak, text);
+
+        constexpr float kFullScaleDeg = 45.0F;
+        const float magnitude = std::min(
+            std::fabs(static_cast<float>(state->lean_deg)) / kFullScaleDeg,
+            1.0F);
+        const int32_t width = static_cast<int32_t>(px(150) * magnitude);
+        const int32_t centre_x = px(30) + px(150);
+        const int32_t bar_y = px(275);
+        if(state->lean_deg >= 0.0F) {
+            lv_obj_set_pos(ui.lean_bar_fill, centre_x, bar_y);
+        } else {
+            lv_obj_set_pos(ui.lean_bar_fill, centre_x - width, bar_y);
+        }
+        lv_obj_set_width(ui.lean_bar_fill, width);
+        lv_obj_set_style_bg_color(ui.lean_bar_fill,
+                                  state->lean_deg >= 0.0F ? kIce : kAmber, 0);
+        lv_obj_remove_flag(ui.lean_bar_fill, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_label_set_text(ui.lean_value, "--");
+        lv_label_set_text(ui.lean_side, "NO IMU");
+        lv_obj_set_width(ui.lean_bar_fill, 0);
+        lv_obj_add_flag(ui.lean_bar_fill, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void update_music_view() {
     lv_label_set_text(ui.music_source, ui.music.connected ? ui.music_source_text : "PHONE NOT CONNECTED");
     lv_label_set_text(ui.music_title, ui.music_title_text);
@@ -1923,6 +2005,90 @@ void create_compass_page() {
     lv_obj_align(ui.compass_speed, LV_ALIGN_CENTER, 0, px(57));
 }
 
+void create_performance_page() {
+    lv_obj_t *page = ui.pages[MOTO_UI_PAGE_PERFORMANCE];
+    lv_obj_t *title = make_label(page, &lv_font_montserrat_16, kQuiet,
+                                 "PERFORMANCE");
+    lv_obj_set_style_text_letter_space(title, px(4), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, px(48));
+
+    ui.perf_target = make_label(page, &lv_font_montserrat_20, kQuiet,
+                                "0-100 km/h");
+    lv_obj_set_style_text_letter_space(ui.perf_target, px(2), 0);
+    lv_obj_align(ui.perf_target, LV_ALIGN_TOP_MID, 0, px(95));
+
+    ui.perf_timer = make_label(page, &lv_font_montserrat_48, kWhite, "--.-");
+    lv_obj_align(ui.perf_timer, LV_ALIGN_TOP_MID, 0, px(135));
+
+    ui.perf_best = make_label(page, &lv_font_montserrat_16, kQuiet,
+                              "BEST --.-");
+    lv_obj_set_style_text_letter_space(ui.perf_best, px(2), 0);
+    lv_obj_align(ui.perf_best, LV_ALIGN_TOP_MID, 0, px(205));
+
+    lv_obj_t *gg = lv_obj_create(page);
+    lv_obj_remove_style_all(gg);
+    lv_obj_set_size(gg, px(120), px(120));
+    lv_obj_set_pos(gg, px(120), px(205));
+    lv_obj_set_style_radius(gg, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_color(gg, kGraphite, 0);
+    lv_obj_set_style_border_width(gg, px(1), 0);
+    lv_obj_clear_flag(gg, LV_OBJ_FLAG_CLICKABLE);
+
+    ui.perf_gg_dot = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.perf_gg_dot);
+    lv_obj_set_size(ui.perf_gg_dot, px(10), px(10));
+    lv_obj_set_style_radius(ui.perf_gg_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ui.perf_gg_dot, kIce, 0);
+    lv_obj_set_style_bg_opa(ui.perf_gg_dot, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(ui.perf_gg_dot, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(ui.perf_gg_dot, px(120) + px(60) - px(5),
+                   px(205) + px(60) - px(5));
+
+    ui.perf_long_g = make_label(page, &lv_font_montserrat_16, kQuiet,
+                                "LONG --");
+    lv_obj_set_pos(ui.perf_long_g, px(18), px(240));
+    ui.perf_lat_g = make_label(page, &lv_font_montserrat_16, kQuiet,
+                               "LAT --");
+    lv_obj_set_pos(ui.perf_lat_g, px(282), px(240));
+}
+
+void create_lean_page() {
+    lv_obj_t *page = ui.pages[MOTO_UI_PAGE_LEAN];
+    lv_obj_t *title = make_label(page, &lv_font_montserrat_16, kQuiet, "LEAN");
+    lv_obj_set_style_text_letter_space(title, px(4), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, px(48));
+
+    ui.lean_value = make_label(page, &lv_font_montserrat_48, kWhite, "--");
+    lv_obj_align(ui.lean_value, LV_ALIGN_CENTER, 0, px(-40));
+    ui.lean_side = make_label(page, &lv_font_montserrat_20, kQuiet, "NO IMU");
+    lv_obj_set_style_text_letter_space(ui.lean_side, px(2), 0);
+    lv_obj_align(ui.lean_side, LV_ALIGN_CENTER, 0, px(15));
+
+    ui.lean_bar_track = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.lean_bar_track);
+    lv_obj_set_size(ui.lean_bar_track, px(300), px(6));
+    lv_obj_set_pos(ui.lean_bar_track, px(30), px(275));
+    lv_obj_set_style_radius(ui.lean_bar_track, px(3), 0);
+    lv_obj_set_style_bg_color(ui.lean_bar_track, kGraphite, 0);
+    lv_obj_set_style_bg_opa(ui.lean_bar_track, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(ui.lean_bar_track, LV_OBJ_FLAG_CLICKABLE);
+
+    ui.lean_bar_fill = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.lean_bar_fill);
+    lv_obj_set_height(ui.lean_bar_fill, px(6));
+    lv_obj_set_width(ui.lean_bar_fill, 0);
+    lv_obj_set_pos(ui.lean_bar_fill, px(30) + px(150), px(275));
+    lv_obj_set_style_radius(ui.lean_bar_fill, px(3), 0);
+    lv_obj_set_style_bg_color(ui.lean_bar_fill, kIce, 0);
+    lv_obj_set_style_bg_opa(ui.lean_bar_fill, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(ui.lean_bar_fill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(ui.lean_bar_fill, LV_OBJ_FLAG_HIDDEN);
+
+    ui.lean_peak = make_label(page, &lv_font_montserrat_16, kQuiet, "MAX 0°");
+    lv_obj_set_style_text_letter_space(ui.lean_peak, px(2), 0);
+    lv_obj_align(ui.lean_peak, LV_ALIGN_BOTTOM_MID, 0, px(-48));
+}
+
 void create_music_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_MUSIC];
     ui.music_source = make_label(page, &lv_font_montserrat_16, kQuiet, "APPLE MUSIC");
@@ -2140,6 +2306,8 @@ extern "C" void moto_nav_ui_create(void) {
         lv_obj_add_flag(ui.pages[i], LV_OBJ_FLAG_GESTURE_BUBBLE);
     }
     create_navigation_page();
+    create_performance_page();
+    create_lean_page();
     create_speed_page();
     create_compass_page();
     create_music_page();
@@ -2214,6 +2382,8 @@ void moto_nav_ui_set_state(const moto_ui_state_t *state) {
     // correct while avoiding three full page redraws per navigation update.
     switch(ui.page) {
         case MOTO_UI_PAGE_NAVIGATION: update_navigation(state); break;
+        case MOTO_UI_PAGE_PERFORMANCE: update_performance(state); break;
+        case MOTO_UI_PAGE_LEAN: update_lean(state); break;
         case MOTO_UI_PAGE_SPEED: update_speedometer(state); break;
         case MOTO_UI_PAGE_COMPASS: update_compass(state); break;
         case MOTO_UI_PAGE_MUSIC:
@@ -2232,6 +2402,10 @@ extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
         update_route_geometry(state);
     } else if(ui.page == MOTO_UI_PAGE_COMPASS) {
         update_compass(state);
+    } else if(ui.page == MOTO_UI_PAGE_LEAN) {
+        update_lean(state);
+    } else if(ui.page == MOTO_UI_PAGE_PERFORMANCE) {
+        update_performance(state);
     }
 }
 

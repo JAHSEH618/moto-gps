@@ -57,6 +57,8 @@ moto::ble::NetworkState NetworkStateFromName(NSString *name) {
 }
 
 moto::ble::DisplayPage DisplayPageFromName(NSString *name) {
+  if ([name isEqualToString:@"performance"]) return moto::ble::DisplayPage::Performance;
+  if ([name isEqualToString:@"lean"]) return moto::ble::DisplayPage::Lean;
   if ([name isEqualToString:@"speed"]) return moto::ble::DisplayPage::Speed;
   if ([name isEqualToString:@"compass"]) return moto::ble::DisplayPage::Compass;
   if ([name isEqualToString:@"music"]) return moto::ble::DisplayPage::Music;
