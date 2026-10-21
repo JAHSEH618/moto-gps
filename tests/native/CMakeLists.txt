@@ -115,6 +115,15 @@ target_include_directories(device_settings_tests PRIVATE
 )
 target_compile_features(device_settings_tests PRIVATE cxx_std_17)
 
+add_executable(attitude_estimator_tests
+  attitude_estimator_tests.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/attitude_estimator.cpp"
+)
+target_include_directories(attitude_estimator_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+)
+target_compile_features(attitude_estimator_tests PRIVATE cxx_std_17)
+
 find_package(Threads REQUIRED)
 add_executable(phone_nav_bridge_tests
   phone_nav_bridge_tests.cpp
@@ -146,4 +155,5 @@ add_test(NAME ble_protocol_tests COMMAND ble_protocol_tests)
 add_test(NAME connection_epoch_gate_tests COMMAND connection_epoch_gate_tests)
 add_test(NAME motion_heading_fusion_tests COMMAND motion_heading_fusion_tests)
 add_test(NAME device_settings_tests COMMAND device_settings_tests)
+add_test(NAME attitude_estimator_tests COMMAND attitude_estimator_tests)
 add_test(NAME phone_nav_bridge_tests COMMAND phone_nav_bridge_tests)
