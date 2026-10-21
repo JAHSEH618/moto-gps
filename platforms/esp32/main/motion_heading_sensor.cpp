@@ -1,4 +1,5 @@
 #include "motion_heading_sensor.h"
+#include "attitude_estimator.hpp"
 #include "motion_heading_axis.hpp"
 
 #include <algorithm>
@@ -24,6 +25,12 @@ constexpr int kCalibrationSamples = 120;
 constexpr std::uint64_t kCalibrationDeadlineMs = 4'000;
 constexpr float kMinimumGravity = 6.8F;
 constexpr float kMaximumGravity = 12.8F;
+
+// Board axis regression is still pending. These are the screen-right and
+// screen-up axes expressed in QMI sensor coordinates; the mount calibration
+// will replace them once the handlebar bracket is fixed.
+constexpr moto::motion::Vec3f kMountRight{1.0F, 0.0F, 0.0F};
+constexpr moto::motion::Vec3f kMountUp{0.0F, 1.0F, 0.0F};
 
 struct GravityEstimate {
   float x = 0.0F;
@@ -163,7 +170,19 @@ void MotionHeadingSensor::run() {
             accel > 8.2F && accel < 11.4F) {
           bias_dps += (raw_rate - bias_dps) * 0.0008F;
         }
-        callback_(corrected_rate, monotonic_ms(), callback_context_);
+        const moto::motion::Vec3f accel_sensor{
+            data.accelX, data.accelY, data.accelZ};
+        const moto::motion::Vec3f gravity_sensor{
+            gravity.x, gravity.y, gravity.z};
+        const moto::motion::AttitudeEstimate attitude =
+            moto::motion::estimate_attitude(
+                moto::motion::sensor_to_bike(accel_sensor, kMountRight,
+                                             kMountUp),
+                moto::motion::sensor_to_bike(gravity_sensor, kMountRight,
+                                             kMountUp),
+                moto::motion::AttitudeCalibration{});
+        callback_(corrected_rate, attitude, monotonic_ms(),
+                  callback_context_);
       }
     }
     if (result != ESP_OK && ++consecutive_failures == 25) {

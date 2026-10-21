@@ -14,7 +14,40 @@ bool finite(const Vec3f& value) {
          std::isfinite(value.z);
 }
 
+Vec3f cross(const Vec3f& a, const Vec3f& b) {
+  return {a.y * b.z - a.z * b.y,
+          a.z * b.x - a.x * b.z,
+          a.x * b.y - a.y * b.x};
+}
+
+float dot(const Vec3f& a, const Vec3f& b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+float length(const Vec3f& value) {
+  return std::sqrt(value.x * value.x + value.y * value.y +
+                   value.z * value.z);
+}
+
+Vec3f normalise(const Vec3f& value) {
+  const float magnitude = length(value);
+  if(!std::isfinite(magnitude) || magnitude < 0.01F) return {};
+  return {value.x / magnitude, value.y / magnitude, value.z / magnitude};
+}
+
 }  // namespace
+
+Vec3f sensor_to_bike(const Vec3f& sensor, const Vec3f& right,
+                     const Vec3f& up) {
+  if(!finite(sensor) || !finite(right) || !finite(up)) return {};
+  const Vec3f unit_right = normalise(right);
+  const Vec3f unit_up = normalise(up);
+  if(length(unit_right) < 0.5F || length(unit_up) < 0.5F) return {};
+  const Vec3f forward = normalise(cross(unit_up, unit_right));
+  if(length(forward) < 0.5F) return {};
+  return {dot(sensor, unit_right), dot(sensor, forward),
+          dot(sensor, unit_up)};
+}
 
 AttitudeEstimate estimate_attitude(const Vec3f& accel,
                                    const Vec3f& gravity_up,

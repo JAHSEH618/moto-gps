@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <mutex>
 
+#include "attitude_estimator.hpp"
 #include "moto/ble_protocol/ble_protocol.hpp"
 #include "moto_nav_presenter.hpp"
 #include "motion_heading_fusion.hpp"
@@ -33,7 +34,10 @@ class PhoneNavBridge {
   void render_pending_for_test();
 #endif
   void on_link_state(bool active);
-  void on_imu_sample(float heading_rate_dps, std::uint64_t sample_ms);
+  void on_imu_sample(
+      float heading_rate_dps,
+      const moto::motion::AttitudeEstimate& attitude,
+      std::uint64_t sample_ms);
   void update_demo(std::uint64_t now_ms);
   moto::ble::AckStatus on_message(
       const moto::ble::ReassembledMessage& message);

@@ -26,10 +26,12 @@ void update_phone_link(bool active, void* context) {
   static_cast<PhoneNavBridge*>(context)->on_link_state(active);
 }
 
-void update_motion_heading(float heading_rate_dps, std::uint64_t sample_ms,
-                           void* context) {
-  static_cast<PhoneNavBridge*>(context)->on_imu_sample(heading_rate_dps,
-                                                       sample_ms);
+void update_motion_heading(
+    float heading_rate_dps,
+    const moto::motion::AttitudeEstimate& attitude,
+    std::uint64_t sample_ms, void* context) {
+  static_cast<PhoneNavBridge*>(context)->on_imu_sample(
+      heading_rate_dps, attitude, sample_ms);
 }
 
 void demo_tick_task(void* context) {

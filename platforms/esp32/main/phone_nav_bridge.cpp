@@ -359,21 +359,39 @@ void PhoneNavBridge::on_link_state(bool active) {
   request_render(flags);
 }
 
-void PhoneNavBridge::on_imu_sample(float heading_rate_dps,
-                                   std::uint64_t sample_ms) {
+void PhoneNavBridge::on_imu_sample(
+    float heading_rate_dps,
+    const moto::motion::AttitudeEstimate& attitude,
+    std::uint64_t sample_ms) {
   bool should_present = false;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
-    if (demo_active_ ||
-        !heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
-      return;
+    snapshot_.has_attitude = attitude.valid;
+    if (attitude.valid) {
+      snapshot_.lean_deg = attitude.lean_deg;
+      snapshot_.pitch_deg = attitude.pitch_deg;
+      snapshot_.longitudinal_g = attitude.longitudinal_g;
+      snapshot_.lateral_g = attitude.lateral_g;
+    } else {
+      snapshot_.lean_deg = 0.0F;
+      snapshot_.pitch_deg = 0.0F;
+      snapshot_.longitudinal_g = 0.0F;
+      snapshot_.lateral_g = 0.0F;
     }
-    snapshot_.heading_deg = heading_fusion_.heading_deg();
+
+    if (!demo_active_ &&
+        heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
+      snapshot_.heading_deg = heading_fusion_.heading_deg();
+    }
+
     // The QMI8658 runs at 125 Hz. Reproject at the display's unified 40 Hz
     // cadence; requests still coalesce if one physical refresh runs long.
+    // Attitude pages do not need the phone heading fusion to be anchored, so
+    // a valid sample can present before the first course fix.
     if (sample_ms - last_motion_present_ms_ >= 25 &&
         (snapshot_.has_route_view ||
-         snapshot_.display_page == moto::nav::DisplayPage::Compass)) {
+         snapshot_.display_page == moto::nav::DisplayPage::Compass ||
+         snapshot_.has_attitude)) {
       // Preserve the 25 ms phase. Setting this to sample_ms quantizes every
       // interval to four 8 ms samples (32 ms), silently reducing 40 to 31 Hz.
       last_motion_present_ms_ +=
