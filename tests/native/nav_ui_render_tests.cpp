@@ -259,6 +259,39 @@ void test_the_map_covers_the_bottom_of_the_round_canvas() {
   CHECK(pixel_at(120, 380) == rgb565(0x24, 0x29, 0x2C));
 }
 
+void test_day_and_night_themes_render_different_map_colors() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 440};
+  state.route_points[1] = {60, 440};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 4;
+  state.building_points[0] = {100, 100};
+  state.building_points[1] = {200, 100};
+  state.building_points[2] = {200, 200};
+  state.building_points[3] = {100, 200};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 4, 0};
+
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  moto_nav_ui_set_state(&state);
+  capture();
+  // GTA day: building #4A2A32 on land #1A1F1A.
+  CHECK(pixel_at(150, 150) == rgb565(0x4A, 0x2A, 0x32));
+  CHECK(pixel_at(300, 150) == rgb565(0x1A, 0x1F, 0x1A));
+
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  capture();
+  // GTA night: building #1A2230 on the true-black night land.
+  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x22, 0x30));
+  CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
+
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+}
+
 void test_clearing_geometry_leaves_no_residue() {
   moto_ui_state_t with_route = base_state();
   fill_route(with_route, 18);
@@ -506,6 +539,7 @@ int main(int argc, char **argv) {
   test_frames_are_deterministic();
   test_a_building_footprint_interior_is_filled();
   test_the_map_covers_the_bottom_of_the_round_canvas();
+  test_day_and_night_themes_render_different_map_colors();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_phone_lifecycle_renders_deterministically();
