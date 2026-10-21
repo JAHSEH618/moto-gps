@@ -1622,7 +1622,8 @@ void create_navigation_page() {
     // phone guidance with the built-in fixture while riding.
     lv_obj_add_flag(ui.nav_map, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(ui.nav_map, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_height(ui.nav_map, px(232));
+    // The Radar owns the whole round canvas; the HUD is overlaid on top.
+    lv_obj_set_height(ui.nav_map, MOTO_UI_CANVAS_HEIGHT);
 
     // Footprint fills sit beneath the building outlines. A triangle fan from
     // the footprint centroid gives the GTA-style flat blocks without a
@@ -1631,7 +1632,7 @@ void create_navigation_page() {
     lv_obj_remove_style_all(ui.nav_building_fill);
     lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.nav_building_fill, MOTO_UI_CANVAS_WIDTH, px(232));
+    lv_obj_set_size(ui.nav_building_fill, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_pos(ui.nav_building_fill, 0, 0);
     lv_obj_add_event_cb(ui.nav_building_fill, draw_building_fills,
                         LV_EVENT_DRAW_MAIN, nullptr);
@@ -1643,7 +1644,7 @@ void create_navigation_page() {
         i < MOTO_UI_BUILDING_FOOTPRINT_CAPACITY; ++i) {
         ui.nav_buildings[i] = create_map_polyline(ui.nav_map,
                                                   ui.nav_building_lines[i]);
-        lv_obj_set_size(ui.nav_buildings[i], MOTO_UI_CANVAS_WIDTH, px(232));
+        lv_obj_set_size(ui.nav_buildings[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
         lv_obj_set_style_line_width(ui.nav_buildings[i], px(1), 0);
         lv_obj_set_style_line_color(ui.nav_buildings[i], kBuildingGray, 0);
         lv_obj_set_style_line_opa(ui.nav_buildings[i], LV_OPA_COVER, 0);
@@ -1657,7 +1658,7 @@ void create_navigation_page() {
     // future online provider must simplify its response to the same limit.
     for(std::uint8_t i = 0; i < MOTO_UI_ROAD_POLYLINE_CAPACITY; ++i) {
         ui.nav_roads[i] = create_map_polyline(ui.nav_map, ui.nav_road_lines[i]);
-        lv_obj_set_size(ui.nav_roads[i], MOTO_UI_CANVAS_WIDTH, px(232));
+        lv_obj_set_size(ui.nav_roads[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
         lv_obj_set_style_line_width(ui.nav_roads[i], px(3), 0);
         lv_obj_set_style_line_color(ui.nav_roads[i], kRoadGray, 0);
         lv_obj_set_style_line_opa(ui.nav_roads[i], LV_OPA_COVER, 0);
@@ -1666,12 +1667,12 @@ void create_navigation_page() {
     }
 
     ui.nav_route_shadow = create_map_polyline(ui.nav_map, ui.nav_route_shadow_line);
-    lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH, px(232));
+    lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_style_line_width(ui.nav_route_shadow, px(13), 0);
     lv_obj_set_style_line_color(ui.nav_route_shadow, kGraphite, 0);
     lv_obj_set_style_line_rounded(ui.nav_route_shadow, true, 0);
     ui.nav_route = create_map_polyline(ui.nav_map, ui.nav_route_line);
-    lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH, px(232));
+    lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_style_line_width(ui.nav_route, px(6), 0);
     lv_obj_set_style_line_color(ui.nav_route, kWhite, 0);
     lv_obj_set_style_line_rounded(ui.nav_route, true, 0);
@@ -1682,7 +1683,9 @@ void create_navigation_page() {
     ui.nav_marker = lv_obj_create(ui.nav_map);
     lv_obj_remove_style_all(ui.nav_marker);
     lv_obj_set_size(ui.nav_marker, px(35), px(37));
-    lv_obj_set_pos(ui.nav_marker, px(163), px(177));
+    // Keep the arrow's bounding-box centre on the presenter's (233,233)
+    // rider anchor; the marker used to sit at the old map-strip anchor.
+    lv_obj_set_pos(ui.nav_marker, px(163), px(162));
     lv_obj_clear_flag(ui.nav_marker, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui.nav_marker, draw_vehicle_marker,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
