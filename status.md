@@ -152,3 +152,76 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - The detector requires a one-second stationary hold, interpolates the start and target crossings, aborts on a >3 km/h speed drop, 30-second timeout or >2-second sensor gap, supports a configurable target (0-50 for the current scooter), and requires a fresh stationary hold between runs.
 - 8 detector tests pass; the full Swift package suite is 24 tests (16 navigation + 8 ride) green.
 - Next: wire the detector to raw CoreLocation speed, surface its live/result state on the PERF page, then add Ride recording/store/charts and the BLE telemetry/iOS decode path.
+
+## 2026-10-21T22:40:12+09:00 — iOS App target builds for the first time
+
+- Installed `xcodegen` 2.46.0, generated `platforms/ios/MotoGPS.xcodeproj`, and ran `xcodebuild -sdk iphonesimulator`: **BUILD SUCCEEDED**, 0 errors and 0 warnings (only an AppIntents metadata note).
+- The whole app target — `App/*.swift`, the ObjC++ bridges, `ESP32BLECentral`, the `DisplayPage` mappings that grew two cases — compiles. Risk "iOS App target 没编译" is retired.
+- Bundled fonts: `BarlowCondensed-SemiBold/ExtraBold` and `Anton-Regular`, registered through `UIAppFonts`; OFL licences copied to `LICENSES/`, notices updated in both languages.
+- `.build/` and `MotoGPS.xcodeproj` were already gitignored, so the working tree stays clean.
+
+## 2026-10-21T22:41:30+09:00 — Simulator screenshot loop established
+
+- Downloaded the iOS 27.1 runtime; it turns out to be **Duo-only**: every portrait device type (`iPhone 17/17 Pro/Air/18 Pro/16 Pro/16/15/SE3`) fails with `Incompatible device`, while `iPhone Duo` is created automatically.
+- The first boot rendered black (`Data Migration Failed`). `simctl erase` then reboot fixed the renderer; `simctl install` + `launch` + `io screenshot` now work, so SwiftUI can be verified visually from the agent.
+- Added a `--moto-no-media-auth` launch argument to `AppleMusicRemoteController`: a system prompt cannot be answered from automation and the simulator has no music library. Product behaviour on a real device is unchanged.
+- Downloaded the iOS 26.2 runtime (8.39 GB) in parallel for portrait devices and cross-version checks. The earlier 27.0 download was cancelled to save bandwidth.
+
+## 2026-10-21T22:43:05+09:00 — Docker is on OrbStack; image pulls are not
+
+- Both `/opt/homebrew/bin/docker` and OrbStack's `/usr/local/bin/docker` resolve to the `orbstack` context; the daemon reports `OrbStack overlayfs`, `linux/arm64`.
+- Pulls hang regardless of image: `hello-world` timed out after 180 s, `espressif/idf:v5.5.5` sat at 0 bytes for 5 minutes, and four mirrors (`docker.1ms.run`, `docker.m.daocloud.io`, `dockerproxy.net`, `hub.rat.dev`) showed the same. `curl` to `auth.docker.io` and `registry-1.docker.io` returns 200/401 normally, so the stall is OrbStack VM egress, not the context or the registry.
+- Pivoted the firmware gate to a native ESP-IDF 5.5.5 install (`~/esp-idf-5.5.5`); `github.com` and `dl.espressif.com` are reachable but the clone is very slow.
+
+## 2026-10-21T22:45:20+09:00 — Design system v1: two themes, one structure
+
+- Wrote `PRODUCT.md` (register: product; users, purpose, anti-references, five design principles) and `DESIGN.md` (theme switch, palettes, measured contrast, type scale, layout, circle motif, poster devices, HIG conformance, skill arbitration).
+- Two themes, picked by ambient light rather than taste: **Vice** (dark instrument console, amber) and **Heat** (sunlit paper, near-black ink, hot orange). Heat is deliberately light: a dark UI behind glass in direct sun becomes a mirror.
+- `MotoTheme.swift` holds the tokens: semantic text styles (`.body` 17, `.subheadline`, `.caption`/`.caption2` for the 11–12pt labels), `Font.custom(…, relativeTo:)` instead of fixed sizes, Increase Contrast variants for rules and secondary text, radius 0/2, no shadows.
+- Retired the idea of an in-app appearance switch: HIG says an app-specific appearance setting makes people change two places. The theme follows the device, and falls back to the system appearance when the link is down.
+- Wrote the arbitration for the four design skills in play (impeccable decides art direction, hallmark structure/anti-patterns, `design-swiftui-interfaces` SwiftUI correctness, `ios-design-agent-skill` iOS aesthetics), including three explicit rulings where they disagree.
+
+## 2026-10-21T22:47:40+09:00 — GTA grammar extracted from reference repositories
+
+- Studied `MickMelon/gta-sa-hud-react` (MIT code, 128 lines of components) and `Geckomacabre/GTA-VI-Inspired-HUD-for-FiveM` (FiveM resources, screenshots): outlined HUD type, 2px framed status bars, zero-padded counters, the two-tier turn card with a solid arrow tile, magenta route lines, the white speed-limit sign, and a framed minimap with semantic blips.
+- Font verdict from the `name` tables in the shipped font files: Chalet London 1960 (`© 2001 House Industries`, paid, embedding not included), Aharoni (`use … as permitted by the license terms for the product in which this font is included`), Pricedown (`© Typodermic`, retail family). None of them grants a non-commercial branch, and bundling a font in an app is redistribution. The reference repo's MIT licence covers code only.
+- Shipped **Anton** (OFL) as the wordmark face instead, with the outline reproduced as stacked zero-radius shadows. Recorded the whole mapping in `DESIGN.md` → "Reference grammar", including what was deliberately not copied.
+
+## 2026-10-21T22:49:55+09:00 — Home and ride screens rewritten
+
+- `HomeScreen.swift`: black slab status band with a 2px accent rule, 220pt radar carrying a street grid, seven building blocks, a park patch, water and a rider arrow, a 92pt Anton `GO` with a 2px ink outline and a hard drop, a solid accent command bar, and a numbered `01…06` pause-menu list.
+- `ContentView.activeNavigationScreen`: GTA VI-style two-tier instruction card with a magenta arrow tile, a 196pt radar, `LEFT` / `ETA` numerals, ruled status rows, and a square abort-coloured end bar replacing the system capsule.
+- Radar now reads as a minimap rather than a decorated disc; sweep changed from a hard pie slice to a gradient wedge rotating from twelve o'clock; screen grid gets a gradient mask so texture never sits under copy.
+- The numbered list, the accent command block, the inverted badge and the 2px rules are recorded as "poster devices" in `DESIGN.md` so the route-preview screen cannot drift back to "quiet instrument".
+
+## 2026-10-21T22:51:30+09:00 — Safehouse: home address, phone and protocol
+
+- Added `HomeLocationStore` (UserDefaults, `PlaceSearchResult` JSON) and `AppModel.routeHome()`. The address never leaves the phone.
+- BLE: `DeviceCommandKind::HomeShortcut = 20` in `shared/ble_protocol`, accepted by `valid_command_kind`, documented in the v1 protocol table, and covered by a new native test that pins the wire value and the round trip.
+- `AppModel` handles kind 20 by planning a route home and answering `Ack Ok`; an unset home answers `.invalidState` — the failure mode is visible instead of silent.
+- UI: a black slab house button beside `GO` (`SET HOME` / `HOME`), a safehouse glyph on the radar, a `06 家` menu row, and a `SET HOME ADDRESS` mode that turns the next picked search result into the saved home.
+
+## 2026-10-21T22:53:17+09:00 — Fixes and current verification state
+
+- Fixed a real palette bug: `ContentView` read `@Environment(\.motoPalette)` *above* the `.motoTheme(…)` modifier, so it resolved to the default dark palette and painted near-white text on the cream theme.
+- `platforms/web/shell/styles.css` had no `:focus-visible` rule at all (8 buttons, 0 focus styles) — added a 2px amber outline; `prefers-reduced-motion` and `aria-label` coverage were already fine.
+- Current state: native suite **11/11**; iOS App target builds with 0 warnings; static SwiftUI audit (`audit_swiftui_ui.py`) reports 30 MEDIUM and 0 HIGH/CRITICAL, and the six UI-level findings are in the code being replaced rather than patched.
+- Still open: the round-screen home button (shared `nav_ui` callback + LVGL glyph + bridge send + render test), the SA status-bar palette, the route-preview screen, and the firmware build (blocked on ESP-IDF).
+
+## 2026-10-21T22:56:22+09:00 — Append-only docs audited; two stale tasks closed
+
+- Audited `status.md` and `docs/todo.md` mechanically: 0 deleted lines in both files and every timestamp parses. Ordering is by file position, not by timestamp — this batch was written at 22:56:22 and appended after the `22:58:40` entries, so the first version of this bullet was wrong about timestamps "increasing", and the entry counts it quoted went stale on the next append.
+- One real defect: two `Resume:` tasks from `02:12:47` were still open even though the work landed at `21:14:31` (the debug dump was removed, the triangle fan was replaced by a scanline fill). Both are now closed by appending `DONE` entries that cite the original task and the status entry that recorded the work.
+- One bundled task split: `21:25:09` Phase 2 covered both the QMI axis wiring (done at `21:30:47`) and the iOS `AttitudeSample` decode (not started). A `NOTE` records the split and a new `TODO` tracks only the decode.
+- One convention deviation recorded: of the 28 `DONE` entries at that point, 7 were standalone work with no originating task (`Ref` not applicable), and 14 of the 21 closures restated the task instead of citing `Ref`. Back-filling would mean editing history, so the correction is a `NOTE` at the end of `docs/todo.md`, the rule that a closing `DONE` cites `Ref`, and `scripts/todo_status.mjs` to keep the open list derivable.
+- Docs now agree with the code: native 11/11, iOS build 0 warnings, and the open queue is the round-screen radar layer, the SA bar palette, the route-preview rewrite, the iOS attitude decode, and the firmware build.
+
+## 2026-10-21T23:02:20+09:00 — Audit checked against the files; the log now folds itself
+
+- Re-read the previous audit instead of trusting it. Three of its claims were wrong: the log had 36 open tasks rather than a stable entry count, timestamps are not monotonic (this batch was appended after the `22:58:40` entries), and the `Ref` deviation is 7 standalone completions plus 14 uncited closures, not "21 of 26".
+- Closed the third stale `Resume:` task (run the full native suite before the next seam), which the previous pass had missed; all three from `02:12:47` are now settled.
+- `scripts/todo_status.mjs` folds `docs/todo.md` into the open list, and `--check` fails when a `DONE` looks like it closes a task without citing it. Timestamps are not unique (22 batches share one), so a marker resolves by timestamp plus text similarity; a `NOTE` closes an uncited or bundled task with `Closes`/`Supersedes`. `checks.yml` runs the check, so a stale task can no longer accumulate quietly.
+- Resolved the log against the code, not against prose: 7 tasks closed (4 of them citing a named green test), 4 bundled entries superseded, and one genuinely untracked remainder split out — the PERF / LEAN pages still hard-code `kFullScaleDeg = 45` and the "0-100 km/h" label instead of reading `DeviceSettings`.
+- Open queue: 15 tasks, down from 36 that mixed done, dropped and forgotten work. `TODO.md` and `docs/todo.md` now state their roles and link to each other; both checklist languages got the same line.
+- Agent skills settled: `.agents/skills` and `skills-lock.json` are tracked, `.claude/skills` is a symlink mirror and is ignored.
+- Verification before the commit: native **11/11**, Swift **24/24** (16 navigation + 8 ride), and `xcodebuild -sdk iphonesimulator` reports BUILD SUCCEEDED with 0 errors and no warnings beyond the AppIntents metadata note.

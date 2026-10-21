@@ -4,6 +4,8 @@
 
 状态约定：`[ ]` 未开始，`[x]` 已完成。每项以 `(A)`、`(B)` 或 `(C)` 标明可移植等级；定义见 [可移植性契约](docs/PORTABILITY.md)。当前优先完成 Waveshare 1.75C + 原生 iOS App 样机；外壳设计和佳明卡口已按用户要求暂停，未经明确恢复指令不得推进、改图或打样。
 
+本文件只维护“还需要做什么”的勾选项；近期事件流、逐条完成记录与偏差审计见 [docs/todo.md](docs/todo.md)（append-only 日志），那份文件按追加顺序记录“发生了什么”。
+
 ## 当前冲刺：微雪实机 + iPhone
 
 - [x] **(A)** 将 Web、Presenter 和 ESP32 唯一 framebuffer 迁移到 466 × 466 RGB565

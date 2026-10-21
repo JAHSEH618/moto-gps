@@ -6,6 +6,8 @@
 
 Status convention: `[ ]` not started, `[x]` completed. Each item is marked with `(A)`, `(B)` or `(C)` for its portability level; the definitions are in the [portability contract](docs/PORTABILITY.en.md). The current priority is completing the Waveshare 1.75C + native iOS app prototype; the enclosure design and the Garmin mount are paused at the user's request, and must not be advanced, redrawn or prototyped without an explicit instruction to resume.
 
+This file tracks only the checklist of what is still wanted; the short-term event stream, per-item completion records and deviation audits live in [docs/todo.md](docs/todo.md) (append-only log), which records what happened in append order.
+
 ## Current sprint: Waveshare real hardware + iPhone
 
 - [x] **(A)** Migrate the Web, Presenter and ESP32 single framebuffer to 466 × 466 RGB565
