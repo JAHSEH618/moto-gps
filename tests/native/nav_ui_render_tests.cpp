@@ -233,6 +233,32 @@ void test_a_building_footprint_interior_is_filled() {
   CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
 }
 
+void test_the_map_covers_the_bottom_of_the_round_canvas() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  // A route keeps the lifecycle overlay hidden; the route itself sits at the
+  // bottom edge, away from the sampled building.
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 440};
+  state.route_points[1] = {60, 440};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 4;
+  state.building_points[0] = {80, 340};
+  state.building_points[1] = {180, 340};
+  state.building_points[2] = {180, 420};
+  state.building_points[3] = {80, 420};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 4, 0};
+  moto_nav_ui_set_state(&state);
+  capture();
+
+  // The old 232-design-pixel map strip ended around y=300; this row must be
+  // inside the full-screen Radar, not the page background.
+  CHECK(pixel_at(120, 380) == rgb565(0x24, 0x29, 0x2C));
+}
+
 void test_clearing_geometry_leaves_no_residue() {
   moto_ui_state_t with_route = base_state();
   fill_route(with_route, 18);
@@ -479,6 +505,7 @@ int main(int argc, char **argv) {
 
   test_frames_are_deterministic();
   test_a_building_footprint_interior_is_filled();
+  test_the_map_covers_the_bottom_of_the_round_canvas();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_phone_lifecycle_renders_deterministically();
