@@ -50,3 +50,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - macOS APFS is case-insensitive; creating root `todo.md` collided with the tracked upstream `TODO.md` and overwrote it on disk.
 - Restored upstream `TODO.md` from HEAD; the append-only todo log now lives at `docs/todo.md`.
 - No upstream TODO content was lost. The log content itself is unchanged.
+
+## 2026-10-21T21:10:40+09:00 — Fork and feature branch synced
+
+- `origin` now points to `https://github.com/JAHSEH618/moto-gps.git`; `upstream` retains the original `mx3353672833-debug/moto-gps-waveshare` repository.
+- Pushed `main` (c8bdacc, already up to date) and `feat/gta-attitude` to the fork.
+- Feature branch commits: `5065721` docs/glossary/ADRs/work logs, `da7fc81` full-screen radar anchor, `aad79fd` WIP building fill (intentionally red, temporary pixel debug dump).
+- Local `main` now tracks `origin/main`; local `feat/gta-attitude` tracks `origin/feat/gta-attitude`.
+- Working tree was clean before this log entry. Resume steps are unchanged: remove the debug dump, fix the triangle-fan seam, get the render test green, then run the full native suite.
