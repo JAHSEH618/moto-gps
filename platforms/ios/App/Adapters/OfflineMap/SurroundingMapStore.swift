@@ -385,6 +385,9 @@ final class SurroundingMapStore: ObservableObject {
     @Published private(set) var downloadMessage: String?
     @Published private(set) var packs: [MapDownloadPack] = []
     var onScene: ((OfflineMapSceneWindow) -> Void)?
+    /// Newest window handed to the terminal, retained so the phone's radar can
+    /// draw the same real streets instead of a decorative grid.
+    private(set) var latestWindow: OfflineMapSceneWindow?
 
     private let cache: MapTileCache
     private let fallback: (any OfflineMapSceneQuerying)?
@@ -625,6 +628,7 @@ final class SurroundingMapStore: ObservableObject {
                                                                        attributionURL: "https://www.openstreetmap.org/copyright",
                                                                        retrievedAt: "", bboxWGS84: nil))
         let window = InMemoryOfflineMapSceneIndex(document: document).query(around: origin, radiusM: 500, revision: revision)
+        latestWindow = window
         onScene?(window)
         return !window.roads.isEmpty || !window.buildings.isEmpty
     }

@@ -64,7 +64,9 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
     var radarTexture: RadarTexture {
         switch self {
         case .vice: return .scanlines(pitch: 4, opacity: 0.10)
-        case .heat: return .bands(height: 7, opacity: 0.10)
+        // Glare on paper turns thin bands into haze; Heat carries no texture
+        // inside the circle and lets the map blocks do the work.
+        case .heat: return .none
         }
     }
 
@@ -79,7 +81,6 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
 
 enum RadarTexture {
     case scanlines(pitch: CGFloat, opacity: Double)
-    case bands(height: CGFloat, opacity: Double)
     case none
 }
 
@@ -98,6 +99,9 @@ struct MotoPalette {
     let slab: Color
     let onSlab: Color
     let accent: Color
+    /// Text and glyphs on top of `accent`. Differs per theme because the
+    /// accent fill does: near-black on amber, near-black ink on orange.
+    let onAccent: Color
     /// Route stroke. Magenta on purpose: GTA draws the line in pink, not in the
     /// UI accent, so the line reads as data instead of as chrome.
     let route: Color
@@ -117,6 +121,7 @@ struct MotoPalette {
         slab: Color(hex: 0x101514),
         onSlab: Color(hex: 0xF2F4EE),
         accent: Color(hex: 0xFFB72E),
+        onAccent: Color(hex: 0x060808),
         route: Color(hex: 0xFF2D7A),
         link: Color(hex: 0x5CC7FF),
         ok: Color(hex: 0x73E6A4),
@@ -137,6 +142,7 @@ struct MotoPalette {
         slab: Color(hex: 0x17110D),
         onSlab: Color(hex: 0xF6E7CE),
         accent: Color(hex: 0xE8500F),
+        onAccent: Color(hex: 0x17110D),
         route: Color(hex: 0xD6115C),
         link: Color(hex: 0x0A5C78),
         ok: Color(hex: 0x1D6B3C),
@@ -261,8 +267,10 @@ enum MotoMetrics {
     static let minTapTarget: CGFloat = 44
 
     enum RadarSize {
-        static let hero: CGFloat = 220
-        static let ride: CGFloat = 120
+        /// The circle is the product: on a 393pt phone it takes two thirds of
+        /// the width instead of reading as a badge.
+        static let hero: CGFloat = 248
+        static let ride: CGFloat = 176
         static let band: CGFloat = 44
     }
 }

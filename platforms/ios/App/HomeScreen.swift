@@ -60,13 +60,17 @@ struct HomeScreen: View {
             fixText: fixText
         ) {
             HStack(spacing: MotoMetrics.s1) {
-                MotoLabel(text: clockText, tone: .muted, token: .micro)
                 bandButton("slider.horizontal.3", label: "网关设置", identifier: "gateway-settings-toolbar") {
                     showsGatewaySettings = true
                 }
                 bandButton("circle.circle", label: "我的圆屏", identifier: "device-details-button") {
                     showsDeviceDetails = true
                 }
+                MotoLabel(text: clockText, tone: .muted, token: .micro)
+                    .fixedSize()
+                    // The clock is the only flexible cell; dropping its width
+                    // must never squeeze the two controls a thumb has to hit.
+                    .layoutPriority(-1)
             }
         }
     }
@@ -108,16 +112,12 @@ struct HomeScreen: View {
     // MARK: - Hero
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: MotoMetrics.s5) {
-            ZStack(alignment: .bottom) {
-                MotoRadar(
-                    size: MotoMetrics.RadarSize.hero,
-                    route: [],
-                    showsHome: homeStore.isSet
-                )
-                handlebarBadge
-                    .offset(y: 10)
-            }
+        VStack(alignment: .leading, spacing: MotoMetrics.s4) {
+            MotoRadar(
+                size: MotoMetrics.RadarSize.hero,
+                route: [],
+                showsHome: homeStore.isSet
+            )
             .frame(maxWidth: .infinity)
 
             wordmark
@@ -132,28 +132,18 @@ struct HomeScreen: View {
         .padding(.top, MotoMetrics.s5)
     }
 
-    /// Inverted tag. The device is a physical 466px circle; say so in poster type.
-    private var handlebarBadge: some View {
-        Text("HANDLEBAR · 466")
-            .font(type.mono(.micro))
-            .tracking(MotoMetrics.microTracking)
-            .foregroundStyle(palette.bg)
-            .padding(.horizontal, MotoMetrics.s3)
-            .padding(.vertical, MotoMetrics.s1)
-            .background(palette.ink)
-    }
-
     /// Poster line: one huge word, the Chinese verb beside it.
     private var wordmark: some View {
         HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
-            MotoWordmark(text: "GO", size: 92, fill: palette.accent, outline: palette.ink)
+            MotoWordmark(text: "GO", size: 88, fill: palette.accent, outline: palette.slab)
             VStack(alignment: .leading, spacing: MotoMetrics.s1) {
                 Text("出发")
                     .font(.system(.title2, weight: .bold))
                     .foregroundStyle(palette.ink)
                 MotoLabel(text: "spot · plan · ride", tone: .muted, token: .micro)
             }
-            Spacer(minLength: 0)
+            .padding(.bottom, MotoMetrics.s1)
+            Spacer(minLength: MotoMetrics.s2)
             homeButton
         }
     }
@@ -164,8 +154,8 @@ struct HomeScreen: View {
             VStack(spacing: MotoMetrics.s1) {
                 Image(systemName: homeStore.isSet ? "house.fill" : "house")
                     .font(.system(.title3, weight: .bold))
-                    .foregroundStyle(homeStore.isSet ? palette.bg : palette.onSlab)
-                    .frame(width: 56, height: 56)
+                    .foregroundStyle(homeStore.isSet ? palette.onAccent : palette.onSlab)
+                    .frame(width: 48, height: 48)
                     .background(homeStore.isSet ? palette.accent : palette.slab)
                     .overlay(
                         Rectangle().strokeBorder(
@@ -204,9 +194,9 @@ struct HomeScreen: View {
     private var commandBar: some View {
         HStack(spacing: MotoMetrics.s3) {
             TextField("", text: $model.destinationQuery, prompt: promptText)
-                .font(type.mono(.label))
-                .foregroundStyle(palette.bg)
-                .tint(palette.bg)
+                .font(type.mono(.secondary))
+                .foregroundStyle(palette.onAccent)
+                .tint(palette.onAccent)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -219,7 +209,7 @@ struct HomeScreen: View {
                 .accessibilityIdentifier("destination-search-field")
 
             if model.isSearchingPlaces {
-                ProgressView().controlSize(.mini).tint(palette.bg)
+                ProgressView().controlSize(.mini).tint(palette.onAccent)
             } else if !model.destinationQuery.isEmpty {
                 Button {
                     model.clearDestination()
@@ -227,30 +217,27 @@ struct HomeScreen: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(.footnote, weight: .bold))
-                        .foregroundStyle(palette.bg)
+                        .foregroundStyle(palette.onAccent)
                         .frame(width: 40, height: 40)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("清空搜索")
             } else {
-                Text("SET")
-                    .font(type.mono(.micro))
-                    .tracking(MotoMetrics.microTracking)
-                    .foregroundStyle(palette.bg)
-                    .padding(.horizontal, MotoMetrics.s3)
-                    .padding(.vertical, MotoMetrics.s1)
-                    .overlay(Rectangle().strokeBorder(palette.bg.opacity(0.55), lineWidth: 1))
+                Image(systemName: "magnifyingglass")
+                    .font(.system(.callout, weight: .medium))
+                    .foregroundStyle(palette.onAccent.opacity(0.72))
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, MotoMetrics.s4)
-        .frame(minHeight: 60)
+        .frame(minHeight: 56)
         .background(palette.accent)
     }
 
     private var promptText: Text {
         Text(settingHome ? "SET HOME ADDRESS" : "SET DESTINATION")
-            .font(type.mono(.label))
-            .foregroundColor(palette.bg.opacity(0.72))
+            .font(type.mono(.secondary))
+            .foregroundColor(palette.onAccent.opacity(0.78))
     }
 
     // MARK: - Search results
@@ -328,7 +315,7 @@ struct HomeScreen: View {
 
     private var gatewayPrompt: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("NOT READY")
+            sectionHeader("GATEWAY")
             Button { showsGatewaySettings = true } label: {
                 HStack(spacing: MotoMetrics.s3) {
                     VStack(alignment: .leading, spacing: MotoMetrics.s1) {

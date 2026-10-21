@@ -45,6 +45,8 @@ struct MotoLabel: View {
     let text: String
     var tone: Tone = .muted
     var token: MotoText = .label
+    /// Units stay lowercase; system labels are set in caps.
+    var uppercased = true
     @Environment(\.motoPalette) private var palette
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.motoType) private var type
@@ -52,7 +54,7 @@ struct MotoLabel: View {
     enum Tone { case muted, ink, accent, link, ok, abort, onSlab }
 
     var body: some View {
-        Text(text.uppercased())
+        Text(uppercased ? text.uppercased() : text)
             .font(type.mono(token))
             .tracking(token == .micro ? MotoMetrics.microTracking : MotoMetrics.labelTracking)
             .foregroundStyle(color)
@@ -117,7 +119,7 @@ struct MotoStatCell: View {
             HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s1) {
                 MotoNumeral(value: value, token: token, tone: tone)
                 if let unit {
-                    MotoLabel(text: unit, tone: .muted, token: .micro)
+                    MotoLabel(text: unit, tone: .muted, token: .micro, uppercased: false)
                 }
             }
         }
@@ -134,7 +136,7 @@ struct MotoPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(.body, weight: .semibold))
-            .foregroundStyle(palette.bg)
+            .foregroundStyle(palette.onAccent)
             .frame(maxWidth: .infinity, minHeight: 52)
             .background(configuration.isPressed ? palette.accent.opacity(0.82) : palette.accent)
             .contentShape(Rectangle())
@@ -203,38 +205,6 @@ struct MotoStatusBand<Right: View>: View {
     }
 }
 
-// MARK: - Command bar
-
-/// The destination entry point. Not a search field: a hard-edged command surface.
-struct MotoCommandBar: View {
-    let placeholder: String
-    let action: () -> Void
-
-    @Environment(\.motoPalette) private var palette
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: MotoMetrics.s3) {
-                Image(systemName: "scope")
-                    .font(.system(.callout, weight: .medium))
-                    .foregroundStyle(palette.accent)
-                MotoLabel(text: placeholder, tone: .muted, token: .label)
-                Spacer(minLength: MotoMetrics.s2)
-                MotoLabel(text: "SET", tone: .accent, token: .micro)
-            }
-            .padding(.horizontal, MotoMetrics.s4)
-            .frame(minHeight: 56)
-            .background(palette.surface)
-            .overlay(
-                Rectangle().strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - Radar
 
 /// The signature shape: the handlebar screen, repeated on the phone.
@@ -243,38 +213,69 @@ struct MotoRadar: View {
     var size: CGFloat
     /// Normalised points in 0…1, already projected by the caller.
     var route: [CGPoint] = []
+    /// Real street context in the same normalised space. When present it
+    /// replaces the abstract grid: a live route over invented streets is a lie.
+    var roads: [[CGPoint]] = []
+    var buildings: [[CGPoint]] = []
+    /// 0…1 route progress. Rides the outside of the ring, so it is never
+    /// mistaken for a second data layer inside the map.
+    var progress: Double?
     var showsSweep = true
     /// Draws the safehouse glyph, the way GTA marks home on the minimap.
     var showsHome = false
+    var showsCompass = true
 
     @Environment(\.motoPalette) private var palette
     @Environment(\.motoTheme) private var theme
+    @Environment(\.motoType) private var type
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
+        map
+            .frame(width: size, height: size)
+            .clipShape(Circle())
+            .overlay {
+                if let progress { progressArc(progress) }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("雷达")
+            .accessibilityValue(accessibilityValue)
+    }
+
+    private var map: some View {
         ZStack {
             Circle().fill(palette.surface)
             texture
-            streets
-            rings
-            if !route.isEmpty { routeStroke }
+            if roads.isEmpty {
+                streets
+            } else {
+                mapContext
+            }
+            routeStroke
+            rings(showsInner: roads.isEmpty)
             sweep
             if showsHome { homeBlip }
             riderDot
+            if showsCompass { compassBadge }
         }
-        .frame(width: size, height: size)
-        .clipShape(Circle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("雷达")
+    }
+
+    private var accessibilityValue: String {
+        guard let progress else { return "路线进度不可用" }
+        return "路线进度百分之\(Int((progress.clamped(to: 0...1)) * 100))"
     }
 
     /// A poster abstraction of a street grid, not a map. Enough geometry for the
     /// circle to read as a minimap; never enough to be mistaken for navigation.
+    ///
+    /// The light theme needs heavier ink: dark-on-cream at 10% disappears, while
+    /// light-on-black at 10% reads. Same structure, different strength.
     private var streets: some View {
         Canvas { context, size in
             let w = size.width
             let h = size.height
+            let roadWidth = max(1, size.width / 150)
             var path = Path()
             for i in 1...4 {
                 let y = h * CGFloat(i) / 5
@@ -288,7 +289,11 @@ struct MotoRadar: View {
             }
             path.move(to: CGPoint(x: w * 0.05, y: h * 0.82))
             path.addLine(to: CGPoint(x: w * 0.95, y: h * 0.18))
-            context.stroke(path, with: .color(palette.ink.opacity(0.22)), lineWidth: 1.5)
+            context.stroke(
+                path,
+                with: .color(palette.ink.opacity(roadOpacity)),
+                lineWidth: roadWidth
+            )
 
             // Blocks, not roads: the shape GTA uses to say "city".
             let blocks: [CGRect] = [
@@ -303,27 +308,67 @@ struct MotoRadar: View {
             // Park and water: the two colours that make a minimap read as GTA.
             context.fill(
                 Path(CGRect(x: w * 0.05, y: h * 0.60, width: w * 0.30, height: h * 0.26)),
-                with: .color(palette.ok.opacity(0.22))
+                with: .color(palette.ok.opacity(parkOpacity))
             )
             context.fill(
                 Path(CGRect(x: w * 0.68, y: h * 0.02, width: w * 0.34, height: h * 0.22)),
-                with: .color(palette.link.opacity(0.20))
+                with: .color(palette.link.opacity(waterOpacity))
             )
             for block in blocks {
-                context.fill(Path(block), with: .color(palette.ink.opacity(0.10)))
+                context.fill(Path(block), with: .color(palette.ink.opacity(blockOpacity)))
             }
         }
     }
 
-    private var rings: some View {
+    /// Real roads and building footprints, in the same rider-centred space as
+    /// the route. This is the same geometry the handlebar renders.
+    private var mapContext: some View {
+        Canvas { context, size in
+            for footprint in buildings {
+                guard footprint.count > 2 else { continue }
+                var path = Path()
+                path.addLines(footprint.map {
+                    CGPoint(x: $0.x * size.width, y: $0.y * size.height)
+                })
+                path.closeSubpath()
+                context.fill(path, with: .color(palette.ink.opacity(realBuildingOpacity)))
+            }
+            var roadsPath = Path()
+            for line in roads {
+                guard let first = line.first else { continue }
+                roadsPath.move(to: CGPoint(x: first.x * size.width, y: first.y * size.height))
+                for point in line.dropFirst() {
+                    roadsPath.addLine(to: CGPoint(x: point.x * size.width, y: point.y * size.height))
+                }
+            }
+            // Streets are context, not data: keep them under the route's
+            // weight so the magenta line is the loudest thing in the circle.
+            context.stroke(
+                roadsPath,
+                with: .color(palette.ink.opacity(realRoadOpacity)),
+                style: StrokeStyle(lineWidth: max(1, size.width / 190), lineCap: .round, lineJoin: .round)
+            )
+        }
+    }
+
+    private var realBuildingOpacity: Double { theme == .heat ? 0.10 : 0.14 }
+    private var realRoadOpacity: Double { theme == .heat ? 0.34 : 0.55 }
+    private var blockOpacity: Double { theme == .heat ? 0.17 : 0.10 }
+    private var roadOpacity: Double { theme == .heat ? 0.62 : 0.24 }
+    private var parkOpacity: Double { theme == .heat ? 0.34 : 0.24 }
+    private var waterOpacity: Double { theme == .heat ? 0.30 : 0.22 }
+
+    private func rings(showsInner: Bool) -> some View {
         ZStack {
             Circle().strokeBorder(palette.ink, lineWidth: 2)
-            Circle()
-                .strokeBorder(palette.accent.opacity(0.55), lineWidth: MotoMetrics.hairline)
-                .padding(MotoMetrics.s2)
-            Circle()
-                .strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
-                .padding(size * 0.22)
+            if showsInner {
+                Circle()
+                    .strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
+                    .padding(size * 0.10)
+                Circle()
+                    .strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
+                    .padding(size * 0.22)
+            }
         }
     }
 
@@ -332,28 +377,16 @@ struct MotoRadar: View {
         switch theme.radarTexture {
         case .scanlines(let pitch, let opacity):
             ScanlineTexture(pitch: pitch, color: palette.lineSoft.opacity(opacity * 6))
-        case .bands(let height, let opacity):
-            // Sunset bands: strong at the bottom, gone by the top. The rider dot
-            // and route must never sit on a pattern.
-            BandTexture(height: height, color: palette.accent.opacity(opacity))
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black, location: 0.35),
-                            .init(color: .clear, location: 1.0)
-                        ],
-                        startPoint: .bottom,
-                        endPoint: .top
-                    )
-                )
         case .none:
+            // Heat carries no texture inside the circle: glare turns thin bands
+            // into haze and the map stops reading as a map.
             EmptyView()
         }
     }
 
     private var routeStroke: some View {
         GeometryReader { proxy in
-            Path { path in
+            let path = Path { path in
                 let points = route.map {
                     CGPoint(x: $0.x * proxy.size.width, y: $0.y * proxy.size.height)
                 }
@@ -361,8 +394,33 @@ struct MotoRadar: View {
                 path.move(to: first)
                 for point in points.dropFirst() { path.addLine(to: point) }
             }
-            .stroke(palette.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+            let width = max(3, size * 0.023)
+            ZStack {
+                // 1pt casing in the paper colour separates the line from blocks.
+                path.stroke(
+                    palette.bg,
+                    style: StrokeStyle(lineWidth: width + 2.5, lineCap: .round, lineJoin: .round)
+                )
+                path.stroke(
+                    palette.route,
+                    style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
+                )
+            }
         }
+    }
+
+    /// The ring is the gauge: the completed part of the route replaces a
+    /// segment of the same 2pt rim. A separate track ring around it read as a
+    /// halo, not as progress.
+    private func progressArc(_ value: Double) -> some View {
+        Circle()
+            .trim(from: 0, to: value.clamped(to: 0...1))
+            .stroke(
+                palette.accent,
+                style: StrokeStyle(lineWidth: 3, lineCap: .butt)
+            )
+            .rotationEffect(.degrees(-90))
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -377,9 +435,9 @@ struct MotoRadar: View {
                         AngularGradient(
                             stops: [
                                 .init(color: .clear, location: 0.00),
-                                .init(color: palette.accent.opacity(0.04), location: 0.09),
-                                .init(color: palette.accent.opacity(0.26), location: 0.132),
-                                .init(color: .clear, location: 0.137)
+                                .init(color: .clear, location: 0.1285),
+                                .init(color: palette.accent.opacity(theme == .heat ? 0.20 : 0.24), location: 0.1300),
+                                .init(color: .clear, location: 0.1315)
                             ],
                             center: .center
                         )
@@ -390,12 +448,29 @@ struct MotoRadar: View {
         }
     }
 
+    private var compassBadge: some View {
+        let badge = max(20, size * 0.085)
+        return Text("N")
+            .font(type.mono(.micro))
+            .tracking(1)
+            .foregroundStyle(palette.bg)
+            .frame(width: badge, height: badge)
+            .background(Circle().fill(palette.ink))
+            .offset(y: -size / 2 + badge / 2)
+            .accessibilityHidden(true)
+    }
+
     private var homeBlip: some View {
-        HomeGlyph()
+        let radius = size * 0.44
+        let angle = 208.0 * Double.pi / 180
+        return HomeGlyph()
             .fill(palette.ink)
-            .frame(width: size * 0.075, height: size * 0.070)
+            .frame(width: size * 0.085, height: size * 0.080)
             .overlay(HomeGlyph().stroke(palette.bg, lineWidth: 1))
-            .offset(x: -size * 0.20, y: -size * 0.18)
+            .offset(
+                x: CGFloat(radius * cos(angle)),
+                y: CGFloat(radius * sin(angle))
+            )
             .accessibilityHidden(true)
     }
 
@@ -407,6 +482,12 @@ struct MotoRadar: View {
             .overlay(
                 RiderArrow().stroke(palette.bg, lineWidth: 1.5)
             )
+    }
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 
@@ -466,24 +547,6 @@ private struct ScanlineTexture: View {
                     with: .color(color)
                 )
                 y += pitch
-            }
-        }
-    }
-}
-
-private struct BandTexture: View {
-    let height: CGFloat
-    let color: Color
-
-    var body: some View {
-        Canvas { context, size in
-            var y: CGFloat = 0
-            while y < size.height {
-                context.fill(
-                    Path(CGRect(x: 0, y: y, width: size.width, height: height / 2)),
-                    with: .color(color)
-                )
-                y += height
             }
         }
     }
@@ -606,9 +669,9 @@ struct MotoInstructionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: symbol)
-                    .font(.system(size: 30, weight: .bold))
+                    .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(palette.bg)
-                    .frame(width: 76)
+                    .frame(width: 64)
                     .frame(maxHeight: .infinity)
                     .background(palette.route)
             }

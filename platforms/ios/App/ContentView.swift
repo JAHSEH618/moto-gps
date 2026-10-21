@@ -484,10 +484,36 @@ struct ContentView: View {
                     )
 
                     HStack(alignment: .top, spacing: MotoMetrics.s4) {
-                        MotoRadar(size: 196, route: [])
-                        VStack(alignment: .leading, spacing: MotoMetrics.s4) {
-                            MotoStatCell(label: "left", value: remainingDistance, token: .displayMD)
-                            MotoStatCell(label: "eta", value: remainingDuration, token: .displayMD, tone: .accent)
+                        MotoRadar(
+                            size: MotoMetrics.RadarSize.ride,
+                            route: rideMap.route,
+                            roads: rideMap.roads,
+                            buildings: rideMap.buildings,
+                            progress: rideMap.progress,
+                            showsSweep: false
+                        )
+                        VStack(alignment: .leading, spacing: 0) {
+                            MotoStatCell(
+                                label: "left",
+                                value: remainingDistanceValue,
+                                unit: remainingDistanceUnit,
+                                token: .displayMD,
+                                tone: .accent
+                            )
+                            MotoRule().padding(.vertical, MotoMetrics.s2)
+                            MotoStatCell(
+                                label: "eta",
+                                value: remainingDurationValue,
+                                unit: remainingDurationUnit,
+                                token: .displayMD
+                            )
+                            MotoRule().padding(.vertical, MotoMetrics.s2)
+                            MotoStatCell(
+                                label: "speed",
+                                value: speedValue,
+                                unit: "km/h",
+                                token: .displayMD
+                            )
                         }
                         .padding(.top, MotoMetrics.s2)
                     }
@@ -517,9 +543,6 @@ struct ContentView: View {
                         SurroundingMapStatusRow(store: model.surroundingMap)
                     }
 
-                    if model.isDemoActive {
-                        MotoLabel(text: "demo · 模拟位置与行驶", tone: .muted, token: .micro)
-                    }
                 }
                 .padding(.horizontal, MotoMetrics.s4)
                 .padding(.vertical, MotoMetrics.s4)
@@ -542,6 +565,9 @@ struct ContentView: View {
                 .accessibilityLabel("我的圆屏")
                 .accessibilityValue(deviceStatus)
                 .accessibilityIdentifier("device-details-button")
+                MotoLabel(text: rideClockText, tone: .muted, token: .micro)
+                    .fixedSize()
+                    .layoutPriority(-1)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -585,7 +611,7 @@ struct ContentView: View {
         Button(action: model.toggleNavigation) {
             HStack(spacing: MotoMetrics.s2) {
                 if model.isPlanningRoutePreview {
-                    ProgressView().tint(palette.bg)
+                    ProgressView().tint(palette.onAccent)
                 } else {
                     Image(systemName: model.isNavigationActive ? "stop.fill" : "location.fill")
                         .font(.system(.footnote, weight: .bold))
@@ -595,7 +621,7 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, minHeight: 56)
-            .foregroundStyle(palette.bg)
+            .foregroundStyle(model.isNavigationActive ? palette.bg : palette.onAccent)
             .background(model.isNavigationActive ? palette.abort : palette.accent)
             .contentShape(Rectangle())
         }
@@ -832,12 +858,119 @@ struct ContentView: View {
         ["navigating", "rerouting", "arrived"].contains(model.navigation.stateName)
     }
 
+    private struct RideMap {
+        var route: [CGPoint] = []
+        var roads: [[CGPoint]] = []
+        var buildings: [[CGPoint]] = []
+        var progress: Double?
+    }
+
+    /// Route, streets and footprints share one rider-centred, north-up
+    /// projection, so the phone radar is the same picture as the handlebar
+    /// instead of a decorative grid with a route dropped on top.
+    private var rideMap: RideMap {
+        let snapshot = model.navigation
+        var map = RideMap()
+        if snapshot.totalDistanceM > 0 {
+            map.progress = min(max(snapshot.routeProgressM / snapshot.totalDistanceM, 0), 1)
+        }
+        guard snapshot.hasRouteView else { return map }
+
+        let metresPerDegree = 111_320.0
+        let originLat = snapshot.routeViewOriginLatitudeDeg
+        let originLon = snapshot.routeViewOriginLongitudeDeg
+        let cosLat = cos(originLat * .pi / 180)
+        func offset(latitude: Double, longitude: Double) -> CGPoint {
+            CGPoint(
+                x: (longitude - originLon) * metresPerDegree * cosLat,
+                y: (latitude - originLat) * metresPerDegree
+            )
+        }
+
+        let routeOffsets = snapshot.routeViewPoints.map {
+            offset(latitude: $0.latitudeDeg, longitude: $0.longitudeDeg)
+        }
+        let window = model.surroundingMap.latestWindow
+        var reach = routeOffsets.reduce(0.0) { max($0, hypot($1.x, $1.y)) }
+        if let window {
+            // Never zoom past the fetched window: the streets are only real
+            // inside its radius.
+            reach = max(reach, Double(window.radiusM) * 0.55)
+        }
+        guard reach > 1 else { return map }
+        // 0.42 keeps the whole window inside the ring instead of clipping it.
+        let scale = 0.42 / reach
+        func normalise(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: 0.5 + point.x * scale, y: 0.5 - point.y * scale)
+        }
+
+        map.route = routeOffsets.map(normalise)
+        if let window {
+            map.roads = window.roads.map { road in
+                road.points.map {
+                    normalise(offset(
+                        latitude: Double($0.latitudeE6) / 1_000_000,
+                        longitude: Double($0.longitudeE6) / 1_000_000
+                    ))
+                }
+            }
+            map.buildings = window.buildings.map { building in
+                building.points.map {
+                    normalise(offset(
+                        latitude: Double($0.latitudeE6) / 1_000_000,
+                        longitude: Double($0.longitudeE6) / 1_000_000
+                    ))
+                }
+            }
+        }
+        return map
+    }
+
     private var remainingDuration: String {
         hasNavigationEstimate ? model.remainingDurationText : "—"
     }
 
     private var remainingDistance: String {
         hasNavigationEstimate ? model.remainingDistanceText : "—"
+    }
+
+    private var remainingDistanceValue: String {
+        guard hasNavigationEstimate else { return "—" }
+        let metres = model.navigation.remainingDistanceM
+        guard metres.isFinite, metres > 0 else { return "—" }
+        return metres >= 1_000
+            ? String(format: "%.1f", metres / 1_000)
+            : "\(Int(metres.rounded()))"
+    }
+
+    private var remainingDistanceUnit: String {
+        guard hasNavigationEstimate else { return "" }
+        let metres = model.navigation.remainingDistanceM
+        guard metres.isFinite, metres > 0 else { return "" }
+        return metres >= 1_000 ? "km" : "m"
+    }
+
+    private var remainingDurationValue: String {
+        guard hasNavigationEstimate else { return "—" }
+        let seconds = Int(model.navigation.remainingDurationS)
+        guard seconds > 0 else { return "—" }
+        return "\(max(1, Int((Double(seconds) / 60).rounded())))"
+    }
+
+    private var remainingDurationUnit: String {
+        hasNavigationEstimate && model.navigation.remainingDurationS > 0 ? "分钟" : ""
+    }
+
+    private var rideClockText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date())
+    }
+
+    private var speedValue: String {
+        let metresPerSecond = model.navigation.speedMPS
+        guard metresPerSecond.isFinite, metresPerSecond >= 0 else { return "—" }
+        return "\(Int((metresPerSecond * 3.6).rounded()))"
     }
 
     private var locationStatus: String {

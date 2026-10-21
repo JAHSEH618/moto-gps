@@ -113,32 +113,39 @@ The handlebar screen is round; the phone repeats it at three sizes.
 
 | Size | Where | Content |
 |---|---|---|
-| 220 | Home hero | dimmed fixture map + sweep, destination command bar notched into its bottom edge |
-| 120 | Active ride, top-right | live map around the rider |
+| 248 | Home hero | poster street abstraction + sweep, `N` badge on the rim |
+| 176 | Active ride | the real route window, streets and footprints around the rider |
 | 44 | Status band | connection state ring |
 
-Radar chrome (GTA V reference, `docs/todo.md` 22:58): **2px `ink` outer ring**, 1px `accent` inner ring, rider as a chunky outlined arrow, route stroke in `route` magenta with a 1pt `bg` casing. Devices that ride on the ring and never float over the map:
+Radar chrome (GTA V reference, `docs/todo.md` 22:58): **2px `ink` outer ring**, rider as a chunky outlined arrow, route stroke in `route` magenta with a 1pt `bg` casing. Devices that ride on the ring and never float over the map:
 
 | Device | Spec |
 |---|---|
-| Safehouse blip | White house glyph with a `bg` outline, inside the ring at ~0.88 radius, upper-left quadrant by default. Present only when home is set. |
-| Compass badge | Circular `ink` badge, `bg` letter `N`, sitting on the ring at twelve o'clock. |
-| Progress arc | 3pt arc riding the outside of the ring. Fed by BLE `route_progress_m` — real data only. Never repurposed as a health bar; we do not measure rider health. |
+| Safehouse blip | `ink` house glyph with a `bg` outline, inside the ring at ~0.88 radius, upper-left quadrant. Present only when home is set. |
+| Compass badge | Circular `ink` badge, `bg` letter `N`, centred on the rim at twelve o'clock. |
+| Progress ring | **The ring is the gauge.** The completed fraction of `route_progress_m / total_distance_m` replaces that segment of the 2px rim in `accent`, starting at twelve o'clock. No second track ring: a separate arc read as a halo. Real data only; never repurposed as a health bar. |
 | Counter bar | `ink` slab with `onSlab` numerals in a corner, the way GTA parks cash. |
 
-Map fill inside the circle: `surface` base, blocks at `ink` 10%, park at `ok` 22%, water at `link` 20%, roads at `ink` 22%. White-on-dark in Vice, ink-on-paper in Heat.
+Map fill inside the circle: `surface` base, park at `ok`, water at `link`, roads and blocks in `ink`. Strength is per theme because dark-on-cream at 10% disappears while light-on-black at 10% reads:
 
-Texture inside the circle only: Vice draws 1pt scanlines at 4pt pitch (`line-soft`); Heat draws 6pt bands in `accent` at 14% — no scanlines, because thin high-frequency texture fights legibility in glare. Both are clipped to the circle and never overlay the rider dot or route.
+| Layer | Vice | Heat |
+|---|---|---|
+| Blocks / footprints | `ink` 10% | `ink` 17% (abstraction) · 10% (real footprints) |
+| Roads | `ink` 24% (abstraction) · 55% (real) | `ink` 62% (abstraction) · 34% (real) |
+| Park / water | 24% / 22% | 34% / 30% |
+
+The home radar draws a poster abstraction — a city that is clearly not a claim about a location. The ride radar draws the same real window and route the handlebar gets: a live route over invented streets is a lie, so real geometry replaces the grid as soon as a scene exists.
+
+Texture inside the circle only: Vice draws 1pt scanlines at 4pt pitch (`line-soft`). **Heat draws none** — thin high-frequency bands turn into haze in glare and the map stops reading as a map. Texture never overlays the rider dot or route.
 
 ### Poster devices (what makes it read as GTA, not as "clean dark UI")
 
 | Device | Rule |
 |---|---|
-| Wordmark | One huge condensed Latin word in `accent` at 76pt (`GO`), with the Chinese verb at `.title2` beside it. Never a small title bar. |
-| Command bar | A solid `accent` block, 60pt tall, ink text, with an outlined `SET` cap. The only filled surface on a screen. |
+| Wordmark | One huge condensed Latin word in `accent` at 88pt (`GO`), outlined in `slab` with a hard offset drop, Chinese verb at `.title2` beside it. Never a small title bar. |
+| Command bar | A solid `accent` block, 56pt tall, `.secondary` mono text and one magnifier. The only filled surface on a screen; no trailing chip, the whole bar is the control. |
 | Menu rows | Numbered pause-screen list: `01…05` in condensed 34pt, title at `.title3`, 1px rule under every row. Numbers are real order, not decoration. |
 | Section head | 14×3pt accent tick + 11pt mono caps. No sentence-case section titles. |
-| Badge | Inverted rectangle (`ink` fill, `bg` text) sitting on the radar rim: `HANDLEBAR · 466`. |
 | Rules | 1px default, 2px after a block that ends a group. Never 0.5px, never shadowed. |
 | Map content | Radar draws blocks and streets in `ink` at 10–22%: a minimap silhouette, not a blank disc. |
 | Rider | A chunky arrow, not a dot. Heading is part of the readout. |
@@ -167,7 +174,7 @@ Source: `MickMelon/gta-sa-hud-react` (MIT code, proprietary fonts), `Geckomacabr
 | Secondary button | transparent, 1px `line`, `ink` text |
 | Command bar | 56pt, 1px `line`, radius 2, leading glyph, `SET DESTINATION` in mono caps, trailing ↵ badge |
 | List row | 1px `line` bottom rule, 64pt min, leading mono index, no chevron box |
-| Stat cell | label above, display numeral below, 1px vertical rule between cells |
+| Stat cell | label above, display numeral below, unit in lowercase mono at the numeral's baseline, 1px rule between cells |
 | Sheet | `.presentationCornerRadius(2)`, hard 1px top rule, `surface` background |
 | Segmented | 1px `line` container, selected cell = `accent` fill + `bg` text |
 | Empty state | glyph + one sentence of instruction; never a system illustration |
