@@ -80,6 +80,7 @@ struct Ui {
 
     lv_obj_t *nav_map = nullptr;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
+    lv_obj_t *nav_building_fill = nullptr;
     MapPolyline nav_building_lines[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_point_precise_t nav_building_points[
         MOTO_UI_BUILDING_POINT_CAPACITY +
@@ -419,6 +420,67 @@ void draw_map_line(lv_layer_t *layer, const lv_draw_line_dsc_t &line) {
     layer->_clip_area = original_clip;
 }
 
+void draw_building_fills(lv_event_t *event) {
+    if(lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
+    if(ui.nav_building_point_count < 3 ||
+       ui.nav_building_footprint_count == 0) {
+        return;
+    }
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    lv_layer_t *layer = lv_event_get_layer(event);
+
+    std::size_t packed_index = 0;
+    for(std::uint8_t footprint = 0;
+        footprint < ui.nav_building_footprint_count; ++footprint) {
+        const moto_ui_building_span_t span = ui.nav_building_spans[footprint];
+        const std::uint8_t count = span.point_count;
+        if(count < 3) {
+            packed_index += static_cast<std::size_t>(count) + 1U;
+            continue;
+        }
+        const lv_point_precise_t *points =
+            &ui.nav_building_points[packed_index];
+        float centre_x = 0.0F;
+        float centre_y = 0.0F;
+        for(std::uint8_t i = 0; i < count; ++i) {
+            centre_x += points[i].x;
+            centre_y += points[i].y;
+        }
+        centre_x /= count;
+        centre_y /= count;
+
+        lv_draw_triangle_dsc_t triangle;
+        lv_draw_triangle_dsc_init(&triangle);
+        triangle.color = span.building_class == 1U
+                             ? kBuildingLandmark
+                             : kBuildingGray;
+        triangle.opa = LV_OPA_COVER;
+        // Antialiased triangle edges meeting at the fan centre leave a
+        // one-pixel seam. Draw the fan twice from two interior points one
+        // pixel apart so each fan covers the other's seam.
+        for(std::uint8_t pass = 0; pass < 2; ++pass) {
+            const float fan_x = area.x1 + centre_x + static_cast<float>(pass);
+            const float fan_y = area.y1 + centre_y;
+            for(std::uint8_t i = 0; i < count; ++i) {
+                const std::uint8_t next = (i + 1U) % count;
+                triangle.p[0] = {
+                    static_cast<lv_value_precise_t>(fan_x),
+                    static_cast<lv_value_precise_t>(fan_y)};
+                triangle.p[1] = {
+                    static_cast<lv_value_precise_t>(area.x1 + points[i].x),
+                    static_cast<lv_value_precise_t>(area.y1 + points[i].y)};
+                triangle.p[2] = {
+                    static_cast<lv_value_precise_t>(area.x1 + points[next].x),
+                    static_cast<lv_value_precise_t>(area.y1 + points[next].y)};
+                lv_draw_triangle(layer, &triangle);
+            }
+        }
+        packed_index += static_cast<std::size_t>(count) + 1U;
+    }
+}
+
 void draw_map_polyline(lv_event_t *event) {
     lv_obj_t *object = lv_event_get_target_obj(event);
     const auto code = lv_event_get_code(event);
@@ -551,6 +613,9 @@ bool apply_building_geometry_frame(bool rebind_lines = true) {
                 span.point_count + 1U);
         }
         ++packed_index;
+    }
+    if(ui.nav_building_fill != nullptr) {
+        lv_obj_invalidate(ui.nav_building_fill);
     }
     return pixels_changed || rebind_lines;
 }
@@ -697,6 +762,9 @@ void update_building_geometry(const moto_ui_state_t *state) {
         ui.nav_building_scene_revision = state->map_scene_revision;
         for(lv_obj_t *building : ui.nav_buildings) {
             lv_obj_add_flag(building, LV_OBJ_FLAG_HIDDEN);
+        }
+        if(ui.nav_building_fill != nullptr) {
+            lv_obj_invalidate(ui.nav_building_fill);
         }
         return;
     }
@@ -1532,6 +1600,18 @@ void create_navigation_page() {
     lv_obj_add_flag(ui.nav_map, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(ui.nav_map, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_height(ui.nav_map, px(232));
+
+    // Footprint fills sit beneath the building outlines. A triangle fan from
+    // the footprint centroid gives the GTA-style flat blocks without a
+    // polygon fill primitive or a bitmap asset.
+    ui.nav_building_fill = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_building_fill);
+    lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.nav_building_fill, MOTO_UI_CANVAS_WIDTH, px(232));
+    lv_obj_set_pos(ui.nav_building_fill, 0, 0);
+    lv_obj_add_event_cb(ui.nav_building_fill, draw_building_fills,
+                        LV_EVENT_DRAW_MAIN, nullptr);
 
     // Real building footprints are quiet closed outlines beneath both roads
     // and the selected route. No inferred rectangles or decorative fill is
