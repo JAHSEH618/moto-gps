@@ -101,3 +101,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Added `device_settings_tests`; full native suite is now 10/10 green.
 - Phase 1 is 6/7: only the Home/Settings icon plus the low-speed gate remains; the settings page UI and NVS adapter are still pending.
 - Next: Phase 2 `AttitudeEstimator` pure math seam (Lean, pitch, longitudinal/lateral G).
+
+## 2026-10-21T21:23:38+09:00 — Green: AttitudeEstimator pure math
+
+- Added `platforms/esp32/main/attitude_estimator.hpp/.cpp`: a stateless estimate from raw specific force plus the caller's filtered gravity vector in bike axes (x=right, y=forward, z=up).
+- Lean right is positive; nose-up pitch is positive; longitudinal G is `(accel.y - gravity.y) / 9.80665`; lateral G is `tan(Lean)` clamped to ±4 g.
+- Lean/pitch calibration offsets are applied; invalid gravity magnitude and non-finite inputs return `valid=false`.
+- Added `attitude_estimator_tests`; full native suite is now 11/11 green.
+- Next: map QMI8658 axes to the bike frame, wire the estimator into the sensor/bridge, and add the BLE `AttitudeSample` codec.

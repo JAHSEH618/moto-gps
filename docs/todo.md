@@ -29,3 +29,5 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T21:22:41+09:00 **DONE** — Phase 1 / S3: `DeviceSettings` defaults, clamp, 9-byte encode/decode. Ref `2026-10-21T21:21:18+09:00`.
 - 2026-10-21T21:22:41+09:00 **TODO** — Phase 1 / S1: Home/Settings icon plus low-speed gate; settings page UI + NVS adapter still pending.
 - 2026-10-21T21:22:41+09:00 **TODO** — Phase 2: `AttitudeEstimator` pure math seam (Lean, pitch, longitudinal/lateral G).
+- 2026-10-21T21:23:38+09:00 **DONE** — Phase 2: `AttitudeEstimator` pure math seam. Ref `2026-10-21T21:22:41+09:00`.
+- 2026-10-21T21:23:38+09:00 **TODO** — Phase 2: map QMI8658 axes to the bike frame, wire the estimator into the sensor/bridge, add the BLE `AttitudeSample` codec.
