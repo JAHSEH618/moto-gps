@@ -499,6 +499,50 @@ Error validate(const HomeLocation& value) {
   return Error::None;
 }
 
+bool valid_settings_theme(SettingsTheme theme) {
+  return theme == SettingsTheme::Official || theme == SettingsTheme::Auto ||
+         theme == SettingsTheme::Day || theme == SettingsTheme::Night;
+}
+
+bool valid_settings_units(SettingsUnits units) {
+  return units == SettingsUnits::Kph || units == SettingsUnits::Mph;
+}
+
+// The supported scale and target values are a product decision, not a range:
+// sending 55 would render a gauge the design never reviewed. The device clamps
+// its own stored settings, but a wire value out of the table is refused.
+bool valid_lean_scale(std::uint8_t degrees) {
+  return degrees == 30 || degrees == 40 || degrees == 45 || degrees == 50;
+}
+
+bool valid_performance_target(std::uint16_t kph) {
+  return kph == 50 || kph == 60 || kph == 100;
+}
+
+Error validate(const SettingsState& value) {
+  if (!valid_settings_theme(value.theme) ||
+      !valid_settings_units(value.units)) {
+    return Error::InvalidEnum;
+  }
+  if (value.brightness_percent > 100 ||
+      !valid_lean_scale(value.lean_full_scale_deg) ||
+      !valid_performance_target(value.performance_target_kph) ||
+      value.lean_zero_offset_cdeg < -kMaxSettingsLeanOffsetCdeg ||
+      value.lean_zero_offset_cdeg > kMaxSettingsLeanOffsetCdeg) {
+    return Error::OutOfRange;
+  }
+  // Navigation is always visible, and an unknown bit would be silently
+  // dropped by an older firmware, so both are refused here.
+  if ((value.visible_pages & ~kSettingsAllPages) != 0U ||
+      (value.visible_pages & SettingsPageNavigation) == 0U) {
+    return Error::OutOfRange;
+  }
+  if (value.revision == 0) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 Error validate(const AttitudeSample& value) {
   if (value.lean_cdeg < -18'000 || value.lean_cdeg > 18'000 ||
       value.pitch_cdeg < -9'000 || value.pitch_cdeg > 9'000 ||
@@ -641,6 +685,15 @@ BytesResult encode_payload(const T& value) {
     writer.u32(value.revision);
     writer.s32(value.position.latitude_e6);
     writer.s32(value.position.longitude_e6);
+  } else if constexpr (std::is_same_v<T, SettingsState>) {
+    writer.u8(static_cast<std::uint8_t>(value.theme));
+    writer.u8(value.brightness_percent);
+    writer.u8(static_cast<std::uint8_t>(value.units));
+    writer.u8(value.lean_full_scale_deg);
+    writer.u16(value.performance_target_kph);
+    writer.u8(value.visible_pages);
+    writer.u16(static_cast<std::uint16_t>(value.lean_zero_offset_cdeg));
+    writer.u32(value.revision);
   } else if constexpr (std::is_same_v<T, AttitudeSample>) {
     writer.u32(value.monotonic_ms);
     writer.u16(static_cast<std::uint16_t>(value.lean_cdeg));
@@ -1525,6 +1578,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::HomeLocation;
         } else if constexpr (std::is_same_v<T, AttitudeSample>) {
           return MessageType::AttitudeSample;
+        } else if constexpr (std::is_same_v<T, SettingsState>) {
+          return MessageType::SettingsState;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1570,6 +1625,33 @@ MessageResult decode_home_location(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool SettingsState::operator==(const SettingsState& rhs) const noexcept {
+  return std::tie(theme, brightness_percent, units, lean_full_scale_deg,
+                  performance_target_kph, visible_pages,
+                  lean_zero_offset_cdeg, revision) ==
+         std::tie(rhs.theme, rhs.brightness_percent, rhs.units,
+                  rhs.lean_full_scale_deg, rhs.performance_target_kph,
+                  rhs.visible_pages, rhs.lean_zero_offset_cdeg,
+                  rhs.revision);
+}
+
+MessageResult decode_settings_state(ByteView payload) {
+  Reader reader(payload);
+  SettingsState value;
+  if (begin_payload(reader)) {
+    value.theme = static_cast<SettingsTheme>(reader.u8());
+    value.brightness_percent = reader.u8();
+    value.units = static_cast<SettingsUnits>(reader.u8());
+    value.lean_full_scale_deg = reader.u8();
+    value.performance_target_kph = reader.u16();
+    value.visible_pages = reader.u8();
+    value.lean_zero_offset_cdeg = static_cast<std::int16_t>(reader.u16());
+    value.revision = reader.u32();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -1588,6 +1670,8 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_attitude_sample(payload);
     case MessageType::HomeLocation:
       return decode_home_location(payload);
+    case MessageType::SettingsState:
+      return decode_settings_state(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

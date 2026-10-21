@@ -113,6 +113,7 @@ add_executable(device_settings_tests
 target_include_directories(device_settings_tests PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
 )
+target_link_libraries(device_settings_tests PRIVATE moto_ble_protocol)
 target_compile_features(device_settings_tests PRIVATE cxx_std_17)
 
 add_executable(attitude_estimator_tests

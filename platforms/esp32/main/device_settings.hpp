@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "moto/ble_protocol/ble_protocol.hpp"
+
 namespace moto::device {
 
 enum class DeviceThemeMode : std::uint8_t {
@@ -63,5 +65,17 @@ struct DeviceSettings {
     return !(*this == rhs);
   }
 };
+
+// Wire adapter for the shared SettingsState contract. The device owns the
+// applied revision; the phone only supplies a request. `to_settings_state`
+// asserts nothing (call `clamp()` first) while `from_settings_state` clamps,
+// because a decoded or replayed message is external input.
+//
+// device_settings_tests pins this struct and the wire struct field by field,
+// so adding a field to one without the other fails the native suite.
+[[nodiscard]] moto::ble::SettingsState to_settings_state(
+    const DeviceSettings& settings, std::uint32_t revision);
+[[nodiscard]] DeviceSettings from_settings_state(
+    const moto::ble::SettingsState& state);
 
 }  // namespace moto::device
