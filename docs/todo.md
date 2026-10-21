@@ -31,3 +31,5 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T21:22:41+09:00 **TODO** — Phase 2: `AttitudeEstimator` pure math seam (Lean, pitch, longitudinal/lateral G).
 - 2026-10-21T21:23:38+09:00 **DONE** — Phase 2: `AttitudeEstimator` pure math seam. Ref `2026-10-21T21:22:41+09:00`.
 - 2026-10-21T21:23:38+09:00 **TODO** — Phase 2: map QMI8658 axes to the bike frame, wire the estimator into the sensor/bridge, add the BLE `AttitudeSample` codec.
+- 2026-10-21T21:25:09+09:00 **DONE** — Phase 2: BLE `AttitudeSample` codec, capability bit, protocol docs and golden payload.
+- 2026-10-21T21:25:09+09:00 **TODO** — Phase 2: QMI8658 axis mapping + sensor/bridge wiring; iOS BLE decode; telemetry gating.
