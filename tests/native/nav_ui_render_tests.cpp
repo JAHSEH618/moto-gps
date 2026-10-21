@@ -224,17 +224,11 @@ void test_a_building_footprint_interior_is_filled() {
   moto_nav_ui_set_state(&state);
   capture();
 
-  for(int y = 100; y <= 200; y += 25) {
-    for(int x = 100; x <= 200; x += 25) {
-      std::cerr << "(" << x << ',' << y << ")=0x" << std::hex
-                << pixel_at(x, y) << ' ';
-    }
-    std::cerr << std::dec << '\n';
-  }
-  std::cerr << "outside=0x" << std::hex << pixel_at(300, 150)
-            << " expected=0x" << rgb565(0x24, 0x29, 0x2C) << std::dec << '\n';
   // The footprint interior must be a filled surface, not just an outline.
   CHECK(pixel_at(150, 150) == rgb565(0x24, 0x29, 0x2C));
+  // The old fan-spoke seams must be covered as well, not just the centre.
+  CHECK(pixel_at(125, 125) == rgb565(0x24, 0x29, 0x2C));
+  CHECK(pixel_at(175, 175) == rgb565(0x24, 0x29, 0x2C));
   // The rest of the map must remain the page background.
   CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
 }

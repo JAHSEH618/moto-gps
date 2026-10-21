@@ -430,6 +430,14 @@ void draw_building_fills(lv_event_t *event) {
     lv_area_t area;
     lv_obj_get_coords(object, &area);
     lv_layer_t *layer = lv_event_get_layer(event);
+    const int32_t local_width = area.x2 - area.x1;
+    const int32_t local_height = area.y2 - area.y1;
+
+    lv_draw_rect_dsc_t fill;
+    lv_draw_rect_dsc_init(&fill);
+    fill.bg_opa = LV_OPA_COVER;
+    fill.radius = 0;
+    fill.border_width = 0;
 
     std::size_t packed_index = 0;
     for(std::uint8_t footprint = 0;
@@ -442,39 +450,54 @@ void draw_building_fills(lv_event_t *event) {
         }
         const lv_point_precise_t *points =
             &ui.nav_building_points[packed_index];
-        float centre_x = 0.0F;
-        float centre_y = 0.0F;
-        for(std::uint8_t i = 0; i < count; ++i) {
-            centre_x += points[i].x;
-            centre_y += points[i].y;
-        }
-        centre_x /= count;
-        centre_y /= count;
+        fill.bg_color = span.building_class == 1U
+                            ? kBuildingLandmark
+                            : kBuildingGray;
 
-        lv_draw_triangle_dsc_t triangle;
-        lv_draw_triangle_dsc_init(&triangle);
-        triangle.color = span.building_class == 1U
-                             ? kBuildingLandmark
-                             : kBuildingGray;
-        triangle.opa = LV_OPA_COVER;
-        // Antialiased triangle edges meeting at the fan centre leave a
-        // one-pixel seam. Draw the fan twice from two interior points one
-        // pixel apart so each fan covers the other's seam.
-        for(std::uint8_t pass = 0; pass < 2; ++pass) {
-            const float fan_x = area.x1 + centre_x + static_cast<float>(pass);
-            const float fan_y = area.y1 + centre_y;
+        float minimum_y = static_cast<float>(points[0].y);
+        float maximum_y = static_cast<float>(points[0].y);
+        for(std::uint8_t i = 1; i < count; ++i) {
+            minimum_y = std::min(minimum_y, static_cast<float>(points[i].y));
+            maximum_y = std::max(maximum_y, static_cast<float>(points[i].y));
+        }
+        const int32_t first_row = std::max<int32_t>(
+            0, static_cast<int32_t>(std::ceil(minimum_y)));
+        const int32_t last_row = std::min<int32_t>(
+            local_height, static_cast<int32_t>(std::floor(maximum_y)));
+        for(int32_t row = first_row; row <= last_row; ++row) {
+            const float scan_y = static_cast<float>(row) + 0.5F;
+            float crossings[MOTO_UI_BUILDING_POINT_CAPACITY];
+            std::size_t crossing_count = 0;
             for(std::uint8_t i = 0; i < count; ++i) {
                 const std::uint8_t next = (i + 1U) % count;
-                triangle.p[0] = {
-                    static_cast<lv_value_precise_t>(fan_x),
-                    static_cast<lv_value_precise_t>(fan_y)};
-                triangle.p[1] = {
-                    static_cast<lv_value_precise_t>(area.x1 + points[i].x),
-                    static_cast<lv_value_precise_t>(area.y1 + points[i].y)};
-                triangle.p[2] = {
-                    static_cast<lv_value_precise_t>(area.x1 + points[next].x),
-                    static_cast<lv_value_precise_t>(area.y1 + points[next].y)};
-                lv_draw_triangle(layer, &triangle);
+                const float y0 = static_cast<float>(points[i].y);
+                const float y1 = static_cast<float>(points[next].y);
+                if(!((y0 <= scan_y && y1 > scan_y) ||
+                     (y1 <= scan_y && y0 > scan_y))) {
+                    continue;
+                }
+                const float t = (scan_y - y0) / (y1 - y0);
+                crossings[crossing_count++] =
+                    static_cast<float>(points[i].x) +
+                    t * (static_cast<float>(points[next].x) -
+                         static_cast<float>(points[i].x));
+            }
+            std::sort(crossings, crossings + crossing_count);
+            for(std::size_t i = 0; i + 1 < crossing_count; i += 2) {
+                const int32_t first_column = std::max<int32_t>(
+                    0, static_cast<int32_t>(
+                           std::ceil(crossings[i] - 0.5F)));
+                const int32_t last_column = std::min<int32_t>(
+                    local_width, static_cast<int32_t>(
+                                     std::floor(crossings[i + 1] - 0.5F)));
+                if(first_column > last_column) continue;
+                lv_area_t row_area = {
+                    area.x1 + first_column,
+                    area.y1 + row,
+                    area.x1 + last_column,
+                    area.y1 + row,
+                };
+                lv_draw_rect(layer, &fill, &row_area);
             }
         }
         packed_index += static_cast<std::size_t>(count) + 1U;
