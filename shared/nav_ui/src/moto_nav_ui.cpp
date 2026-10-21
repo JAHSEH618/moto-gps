@@ -128,6 +128,9 @@ struct Ui {
     lv_obj_t *nav_map = nullptr;
     lv_obj_t *nav_map_background = nullptr;
     moto_ui_theme_t theme = MOTO_UI_THEME_OFFICIAL;
+    // Day/night signal supplied by the phone. Only MOTO_UI_THEME_AUTO reads
+    // it; an explicit theme stays authoritative.
+    bool ambient_night = false;
     MapPalette palette = kOfficialPalette;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_obj_t *nav_building_fill = nullptr;
@@ -2655,13 +2658,30 @@ void apply_theme_colors() {
 extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
     if(!ui.live) return;
     ui.theme = theme;
-    switch(theme) {
+    // AUTO has no palette of its own: it defers to the phone's day/night flag.
+    // Resolve it in one place so no caller has to know the rule.
+    const moto_ui_theme_t effective =
+        theme == MOTO_UI_THEME_AUTO
+            ? (ui.ambient_night ? MOTO_UI_THEME_GTA_NIGHT
+                                : MOTO_UI_THEME_GTA_DAY)
+            : theme;
+    switch(effective) {
         case MOTO_UI_THEME_GTA_DAY: ui.palette = kGtaDayPalette; break;
         case MOTO_UI_THEME_GTA_NIGHT: ui.palette = kGtaNightPalette; break;
         case MOTO_UI_THEME_OFFICIAL:
+        case MOTO_UI_THEME_AUTO:
         default: ui.palette = kOfficialPalette; break;
     }
     if(ui.nav_map_background != nullptr) apply_theme_colors();
+}
+
+extern "C" void moto_nav_ui_set_ambient_night(uint8_t is_night) {
+    if(!ui.live) return;
+    const bool night = is_night != 0;
+    // The phone may repeat this on every session; a repeat must not repaint.
+    if(ui.ambient_night == night) return;
+    ui.ambient_night = night;
+    if(ui.theme == MOTO_UI_THEME_AUTO) moto_nav_ui_set_theme(ui.theme);
 }
 
 void moto_nav_ui_set_state(const moto_ui_state_t *state) {

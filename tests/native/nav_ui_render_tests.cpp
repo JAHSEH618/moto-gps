@@ -7,6 +7,12 @@
 
 #include <lvgl.h>
 
+// Pointer indev shipped with LVGL and compiled in when LV_USE_TEST is set.
+// It gives the suite a real gesture: LV_EVENT_GESTURE cannot be synthesised
+// with lv_obj_send_event, because gesture_event() reads the direction from
+// the active indev.
+#include "src/debugging/test/lv_test_indev.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -448,6 +454,53 @@ void test_day_and_night_themes_render_different_map_colors() {
   moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
 }
 
+void test_auto_theme_follows_the_ambient_night_flag() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 440};
+  state.route_points[1] = {60, 440};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 4;
+  state.building_points[0] = {100, 100};
+  state.building_points[1] = {200, 100};
+  state.building_points[2] = {200, 200};
+  state.building_points[3] = {100, 200};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 4, 0};
+  moto_nav_ui_set_state(&state);
+  capture();
+
+  // AUTO is resolved on the device from the phone's day/night flag, so the
+  // palette has to follow that flag without another theme message.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_AUTO);
+  moto_nav_ui_set_ambient_night(1);
+  capture();
+  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x22, 0x30));
+  CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
+  const Frame night = capture();
+
+  // The flag is expected to repeat; a repeat must not restyle or repaint.
+  moto_nav_ui_set_ambient_night(1);
+  CHECK(night.hash == capture().hash);
+
+  moto_nav_ui_set_ambient_night(0);
+  capture();
+  CHECK(pixel_at(150, 150) == rgb565(0x4A, 0x2A, 0x32));
+  CHECK(pixel_at(300, 150) == rgb565(0x1A, 0x1F, 0x1A));
+
+  // An explicit theme is authoritative: the flag is stored but not applied.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  const Frame explicit_night = capture();
+  moto_nav_ui_set_ambient_night(1);
+  CHECK(explicit_night.hash == capture().hash);
+
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_ambient_night(0);
+}
+
 void test_performance_and_lean_pages_render_attitude() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
@@ -858,11 +911,57 @@ void render_demo_frame() {
   (void)capture();
 }
 
+// LVGL sends LV_EVENT_GESTURE while the drag is still pressed, once the summed
+// pointer movement passes the gesture limit. Waiting between moves gives the
+// indev timer a chance to read each step.
+void swipe(int32_t from_x, int32_t to_x) {
+  const int32_t y = MOTO_UI_CANVAS_HEIGHT / 2;
+  lv_test_mouse_move_to(from_x, y);
+  lv_test_mouse_press();
+  lv_test_wait(50);
+  lv_test_mouse_move_to((from_x + to_x) / 2, y);
+  lv_test_wait(50);
+  lv_test_mouse_move_to(to_x, y);
+  lv_test_wait(50);
+  lv_test_mouse_release();
+  lv_test_wait(50);
+}
+
+void test_one_swipe_moves_one_page_even_after_a_rebuild() {
+  moto_nav_ui_set_reduce_motion(1);
+  lv_test_indev_create_all();
+
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  capture();
+  swipe(320, 180);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_PERFORMANCE);
+
+  // create() re-adds the screen callbacks on every call. A stacked handler
+  // would move two pages here while every object-level assertion stayed green.
+  moto_nav_ui_create();
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+  capture();
+  swipe(320, 180);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_PERFORMANCE);
+
+  // And the reverse direction still moves exactly one page back.
+  swipe(180, 320);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+
+  lv_test_indev_delete_all();
+  // The swipe reveals the page dots for five seconds; leave the shared UI
+  // settled, because the remaining tests compare exact frames.
+  pump(1100);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
   const int buffer_rows = argc > 1 ? std::atoi(argv[1]) : 40;
-  const int extra_pool_bytes = argc > 2 ? std::atoi(argv[2]) : 0;
+  // Default to the board's second pool so a hand-run binary is shaped like the
+  // device too; pass 0 explicitly to measure the 64 KiB pool alone.
+  const int extra_pool_bytes =
+      argc > 2 ? std::atoi(argv[2]) : 2 * 1024 * 1024;
   if(buffer_rows < 1 || buffer_rows > kHeight) return EXIT_FAILURE;
   if(extra_pool_bytes < 0) return EXIT_FAILURE;
   init_display(buffer_rows, extra_pool_bytes);
@@ -884,6 +983,7 @@ int main(int argc, char **argv) {
   test_the_ring_carries_progress_and_a_north_badge();
   test_a_refused_home_tap_shows_a_hint_and_fades();
   test_day_and_night_themes_render_different_map_colors();
+  test_auto_theme_follows_the_ambient_night_flag();
   test_performance_and_lean_pages_render_attitude();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
@@ -894,6 +994,7 @@ int main(int argc, char **argv) {
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
+  test_one_swipe_moves_one_page_even_after_a_rebuild();
 
   // Visual check runs while the instrument is still alive; the terminal
   // screens below delete the whole widget tree.
