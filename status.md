@@ -1,0 +1,52 @@
+# Status
+
+Append-only work log. Every entry is added at the end with an ISO 8601 timestamp. Existing entries are never edited or removed.
+
+## 2026-10-21T02:09:20+09:00 — Baseline green, Phase 1 TDD seams confirmed
+
+- Native baseline: 9/9 tests pass (`ctest --test-dir build/native`).
+- Phase 1 seams confirmed: S1 Radar geometry (`NavPresenter`), S2 Radar rendering (headless LVGL framebuffer), S3 `DeviceSettings`.
+- First red queue confirmed: rider anchor, building fill, full-canvas map, day/night theme, settings clamp/round-trip, low-speed Home/Settings gating.
+- Next: write the first red test (`test_rider_is_anchored_at_the_centre_of_the_full_screen_radar`).
+
+## 2026-10-21T02:09:35+09:00 — Red: rider anchor test fails as expected
+
+- Added `test_rider_is_anchored_at_the_centre_of_the_full_screen_radar` to `tests/native/nav_presenter_tests.cpp`.
+- `nav_presenter_tests` fails at `state.route_points[0].y == 233`; the old map-strip anchor is still in use.
+- Next: move `kVehicleY` to the canvas centre and update the two existing anchor expectations to the new full-screen spec.
+
+## 2026-10-21T02:10:01+09:00 — Green: full-screen Radar anchor
+
+- `kVehicleY` is now `MOTO_UI_CANVAS_HEIGHT / 2` (233), so the rider sits at the physical centre of the Radar.
+- Updated the two pre-existing anchor expectations in `nav_presenter_tests.cpp` to the new full-screen spec.
+- `nav_presenter_tests` green; full native suite 9/9 green.
+- Next red test: `test_a_building_footprint_interior_is_filled_with_the_theme_building_colour` (S2).
+
+## 2026-10-21T02:10:49+09:00 — Red: building interior is not filled
+
+- Added `test_a_building_footprint_interior_is_filled` to `nav_ui_render_tests.cpp` with a 4-point footprint at (100,100)-(200,200).
+- The render test fails at `pixel_at(150, 150)` because the UI still draws only the footprint outline.
+- Scope note: this slice fills with the current `kBuildingGray`; the theme palette switch remains a separate slice. The test is named for the behaviour (filled), not the future theme colour.
+- Next: add a building-fill draw layer behind the outlines and repaint it when footprint geometry changes.
+
+## 2026-10-21T02:12:47+09:00 — Paused by user instruction
+
+- Development stopped at the user's request. No further code, test, branch, stash, commit, or remote changes were made after this entry.
+- Current working tree:
+  - Green (first slice): `shared/nav_presenter/src/moto_nav_presenter.cpp` and `tests/native/nav_presenter_tests.cpp` — rider anchored at (233,233); `nav_presenter_tests` and the other 8 native tests passed at this point.
+  - Work in progress (second slice, RED): `shared/nav_ui/src/moto_nav_ui.cpp` adds a building-fill layer plus a two-pass triangle fan; `tests/native/nav_ui_render_tests.cpp` adds `test_a_building_footprint_interior_is_filled` plus a temporary pixel-grid debug dump.
+  - The fill is working, but the fan's shared vertex still blends to `0x1924`/`0x18e3` instead of `0x2145` at (150,150). The test is intentionally red.
+  - Docs created: `GLOSSARY.md`, `docs/adr/0001-attitude-telemetry-uplink.md`, `docs/adr/0002-rides-and-performance-runs-are-separate.md`, `status.md`, `todo.md`.
+  - Also present: untracked `docs/ANALYSIS_AND_ROADMAP_GTA_ATTITUDE.md`; tracked `TODO.md` has a pre-existing modification not made by this session.
+- Resume steps:
+  1. Remove the temporary pixel-grid debug dump from `nav_ui_render_tests.cpp`.
+  2. Kill the triangle-fan seam. The +1 px x-offset second fan still leaves a seam at (150,150); try offsetting the second fan on both axes, a hard-edged fill, or sampling a non-seam pixel and recording the limitation.
+  3. Get `nav_ui_render_tests` green, then run the full native suite.
+  4. Continue the confirmed red queue (full-canvas map, theme pixels, settings model, low-speed Home/Settings gating).
+- All open tasks are paused.
+
+## 2026-10-21T21:10:20+09:00 — Path correction: todo log is docs/todo.md
+
+- macOS APFS is case-insensitive; creating root `todo.md` collided with the tracked upstream `TODO.md` and overwrote it on disk.
+- Restored upstream `TODO.md` from HEAD; the append-only todo log now lives at `docs/todo.md`.
+- No upstream TODO content was lost. The log content itself is unchanged.
