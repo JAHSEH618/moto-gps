@@ -14,5 +14,13 @@ and THIRD_PARTY_NOTICES.md; original contributions must be distributable under t
 - List the tests actually run in the PR; a successful compile cannot replace Bluetooth, route-correctness or on-bike acceptance.
 - Map geometry must not use random lines or invented buildings to fill gaps in the real data.
 
+## The merge gate
+
+This repository's `origin` does not run GitHub Actions: `gh workflow list -R JAHSEH618/moto-gps`
+returns nothing, and the upstream's recent runs are all `action_required` at 0 s. So do not wait for a
+green badge in a PR — `scripts/verify.sh` is the gate that actually executes (todo log, native ctest,
+Swift package tests, iOS app build); `scripts/verify.sh --install-hook` installs it as a pre-push hook.
+`.github/workflows/checks.yml` only means something once Actions is enabled.
+
 For security issues, do not paste keys or details that could be used to attack an existing service into a public issue.
 This repository is a development snapshot and does not currently promise commercial maintenance, a response deadline or stability.

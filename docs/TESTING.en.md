@@ -51,5 +51,13 @@ Web needs Emscripten; run `./scripts/build_web.sh`.
 ESP32 needs ESP-IDF 5.5.5; run `idf.py -C platforms/esp32 build`.
 The first build downloads public SDKs/components; these network accesses do not need the author's service credentials.
 
+## iOS simulator screenshot review
+
+The iOS 26.2 runtime cannot load PingFang (SpringBoard is tofu too), so that runtime can only judge structure,
+spacing, colour and dark mode. Any Chinese truncation, wrap or squeeze question goes to 27.0 or a real device,
+because a tofu box is not the advance width of the glyph. Run `scripts/sim_font_gate.sh` first; exit code 2
+means this runtime cannot judge typography. The runtime's font defect does not affect installation or display
+on a real device: the device's system font is intact and the app's deployment target is 17.0.
+
 CI does not flash, deploy or use account keys. Real acceptance still has to cover: phone offline / screen lock / cellular handover,
 BLE disconnection recovery, consistency between the preview route and the round-display route, cross-city routes, fast turns, power supply and long-run operation.

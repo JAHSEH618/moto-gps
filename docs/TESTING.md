@@ -49,5 +49,12 @@ Web 需要 Emscripten，执行 `./scripts/build_web.sh`。
 ESP32 需要 ESP-IDF 5.5.5，执行 `idf.py -C platforms/esp32 build`。
 初次构建会下载公开 SDK/组件；这些网络访问不需要作者的服务凭证。
 
+## iOS 模拟器截图复核
+
+26.2 的 runtime 无法加载 PingFang（连 SpringBoard 也是豆腐），该 runtime 上只能判断结构、间距、颜色和暗色模式；
+中文截断、换行、挤压一律放到 27.0 或真机，因为豆腐框的宽度不是真实字宽。
+复核前先跑 `scripts/sim_font_gate.sh`，退出码 2 表示这个 runtime 不能判排版。
+模拟器 runtime 的字体缺陷不影响真机安装与显示：真机的系统字体完整，App 的 deployment target 是 17.0。
+
 CI 不烧录、不部署、不使用账号密钥。真实验收还需覆盖：手机断网/锁屏/蜂窝切换、
 BLE 断连恢复、预览路线与圆屏路线一致性、跨城路线、快速转向、供电和长时间运行。

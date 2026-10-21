@@ -12,5 +12,13 @@
 - PR 中列出实际执行的测试；编译通过不能代替蓝牙、路线正确性或实车验收。
 - 地图几何不得用随机线条或虚构建筑填补真实数据缺失。
 
+## 合并门
+
+本仓库的 `origin` 没有启用 GitHub Actions：`gh workflow list -R JAHSEH618/moto-gps` 返回空，
+上游最近的运行都是 0 秒的 `action_required`。所以不要在 PR 里等绿灯 —— `scripts/verify.sh`
+才是实际执行的门（todo 日志、native ctest、Swift 包测试、iOS App 构建）；
+`scripts/verify.sh --install-hook` 会把它装成 pre-push 钩子。`.github/workflows/checks.yml`
+只在 Actions 被启用之后才有意义。
+
 安全问题请勿在公开 Issue 粘贴密钥或可用于攻击现有服务的细节。
 本仓库是开发快照，暂不承诺商业维护、响应期限或稳定性。
