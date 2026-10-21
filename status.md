@@ -58,3 +58,12 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Feature branch commits: `5065721` docs/glossary/ADRs/work logs, `da7fc81` full-screen radar anchor, `aad79fd` WIP building fill (intentionally red, temporary pixel debug dump).
 - Local `main` now tracks `origin/main`; local `feat/gta-attitude` tracks `origin/feat/gta-attitude`.
 - Working tree was clean before this log entry. Resume steps are unchanged: remove the debug dump, fix the triangle-fan seam, get the render test green, then run the full native suite.
+
+## 2026-10-21T21:12:40+09:00 — Current progress analysis
+
+- Phase 1 red queue (7 tests): 1 green (rider anchor), 1 red (building fill seam), 5 not started.
+- Native suite: 8/9 pass; only `nav_ui_render_tests` is red.
+- Phase 2 (attitude/telemetry) and Phase 3 (Ride/Performance Run) are design-only; no implementation yet.
+- Biggest visual gap: the map layer is still `px(232)` = 300 px tall. The anchor moved to y=233, but the Radar is not yet full-screen and the HUD still uses the old split layout.
+- Main risks: triangle-fan AA seam; red WIP commit on the feature branch; 500 m map radius will look sparse at full-screen density; e-scooter top speed is still unknown for 0-100 testing; font/licensing work is design-only.
+- Recommended order: finish the building fill, expand the map layer and HUD, add the day/night theme, add Home/Settings plus the low-speed gate, then the `DeviceSettings` model; run the Web preview after the full-screen layout.
