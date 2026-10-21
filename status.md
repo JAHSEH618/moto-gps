@@ -225,3 +225,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Open queue: 15 tasks, down from 36 that mixed done, dropped and forgotten work. `TODO.md` and `docs/todo.md` now state their roles and link to each other; both checklist languages got the same line.
 - Agent skills settled: `.agents/skills` and `skills-lock.json` are tracked, `.claude/skills` is a symlink mirror and is ignored.
 - Verification before the commit: native **11/11**, Swift **24/24** (16 navigation + 8 ride), and `xcodebuild -sdk iphonesimulator` reports BUILD SUCCEEDED with 0 errors and no warnings beyond the AppIntents metadata note.
+
+## 2026-10-21T23:05:30+09:00 — iOS attitude telemetry reaches Swift
+
+- The bridge now maps `AttitudeSample` (0x15) into `MotoBLEAttitudeSample`. Before this the message was decoded and then dropped: `std::get_if<DeviceCommand>` returned null and the inbound object carried nothing, so the phone never saw an IMU sample.
+- `MotoNavigationCore.AttitudeSample` owns the display units — `leanDegrees`, `pitchDegrees`, `longitudinalG`, `lateralG`, `leanSide`. No wire layout was copied into Swift; the Objective-C++ bridge keeps that job, as its header contract says.
+- `AttitudeTelemetry` expires a readout after 500 ms and rejects one stamped in the future. A BLE link can go quiet without reporting a disconnect, and showing the last lean would tell the rider they are upright while the data is dead. `AppModel` also clears it on any snapshot that is not connected.
+- `AttitudeSampleTests` adds 8 tests; the Swift package is now 32 green (24 navigation + 8 ride). `xcodebuild -sdk iphonesimulator` still reports BUILD SUCCEEDED with no new warnings.
+- Split rather than closed: the original task also asked to feed the ride screen's meters, and no meters exist. The new TODO asks for that design decision before any layout work.
