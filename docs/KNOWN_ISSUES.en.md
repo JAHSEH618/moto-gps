@@ -15,6 +15,7 @@ What is published here is a development snapshot of the Waveshare production-boa
 | Inherent boundary | Absolute north when stationary | The QMI8658 has only an accelerometer and a gyroscope and no magnetometer. With the phone in a bag, the phone body's orientation must not be treated as the direction the bike is facing |
 | Inherent boundary | Background road network outside Jinan | The bundled OSM data covers Jinan only; other cities have no equivalent offline grey-road/building coverage, which does not mean the route API does not support that city |
 | Inherent boundary | Speed limits, missing buildings | Depends on real data coverage, no fictitious content is drawn in to fill the gaps; the route service does not always give a trustworthy legal speed limit |
+| Evaluated | The ~800 ms window between software shutdown and deep sleep | Deep sleep starts after `board_port_unlock()`, so the BLE task can still deliver a snapshot in that gap. The `ui.live` gate makes every mutator inert after teardown, so data that arrives in the window is dropped rather than written into freed objects; the transport is not explicitly quiesced. Accepted |
 | Not accepted | Battery life, power-off on combined USB/battery supply, water resistance, vibration resistance, riding safety | The production development board is not a project-certified automotive-grade device |
 
 The on-device demo uses real OSM geometry near public POIs, which allows checking the screen contents and how the actions relate, but it cannot be acceptance for live traffic conditions,

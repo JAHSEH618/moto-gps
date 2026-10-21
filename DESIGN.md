@@ -11,6 +11,8 @@ Visual system for the MOTO GPS phone app (`platforms/ios`) and the web shell (`p
 
 `DeviceSettings.theme = Auto` maps through the device; the app never contradicts the handlebar. There is **no app-level appearance switch** — HIG § Dark Mode: an app-specific appearance setting makes people adjust two places and suspect a broken app. The device owns the choice; losing the link falls back to the system appearance.
 
+`Auto` needs a light condition the handlebar does not have: there is no clock, light sensor or network time on the ESP32-S3, so the phone supplies one day/night flag with the settings and the device resolves `Auto` to `Day` or `Night` from it (day until the first flag arrives). An explicit `Day` or `Night` ignores the flag. The control therefore reads **Auto / Day / Night** on the device-settings screen; Vice and Heat are the phone palettes that follow the result, not a second setting.
+
 Both themes share geometry, spacing, type scale, and the circle motif. Only paper band, accent, display weight, and texture change — never structure. If a component needs a different layout in the other theme, the component is wrong.
 
 **Heat is a light theme on purpose.** A dark interface behind glass in direct sun becomes a mirror: reflectance wins and the numerals disappear. Readability in daylight requires a high-luminance paper and near-black ink, which is also the palette of the poster the theme is named after. Atmosphere is sacrificed for legibility; that is the trade.
