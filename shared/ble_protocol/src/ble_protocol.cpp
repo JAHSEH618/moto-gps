@@ -481,6 +481,16 @@ Error validate(const DeviceCommand& value) {
   return value.command_id == 0 ? Error::OutOfRange : Error::None;
 }
 
+Error validate(const AttitudeSample& value) {
+  if (value.lean_cdeg < -18'000 || value.lean_cdeg > 18'000 ||
+      value.pitch_cdeg < -9'000 || value.pitch_cdeg > 9'000 ||
+      value.longitudinal_mg < -4'000 || value.longitudinal_mg > 4'000 ||
+      value.lateral_mg < -4'000 || value.lateral_mg > 4'000) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -607,6 +617,12 @@ BytesResult encode_payload(const T& value) {
       writer.u8(static_cast<std::uint8_t>(building.building_class));
       write_points(building.points);
     }
+  } else if constexpr (std::is_same_v<T, AttitudeSample>) {
+    writer.u32(value.monotonic_ms);
+    writer.u16(static_cast<std::uint16_t>(value.lean_cdeg));
+    writer.u16(static_cast<std::uint16_t>(value.pitch_cdeg));
+    writer.u16(static_cast<std::uint16_t>(value.longitudinal_mg));
+    writer.u16(static_cast<std::uint16_t>(value.lateral_mg));
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -1448,6 +1464,13 @@ bool MapScene::operator==(const MapScene& rhs) const noexcept {
                   rhs.view_origin, rhs.radius_m, rhs.roads, rhs.buildings);
 }
 
+bool AttitudeSample::operator==(const AttitudeSample& rhs) const noexcept {
+  return std::tie(monotonic_ms, lean_cdeg, pitch_cdeg, longitudinal_mg,
+                  lateral_mg) ==
+         std::tie(rhs.monotonic_ms, rhs.lean_cdeg, rhs.pitch_cdeg,
+                  rhs.longitudinal_mg, rhs.lateral_mg);
+}
+
 bool DeviceCommand::operator==(const DeviceCommand& rhs) const noexcept {
   return std::tie(kind, command_id, page, x, y, event_time_ms) ==
          std::tie(rhs.kind, rhs.command_id, rhs.page, rhs.x, rhs.y,
@@ -1474,6 +1497,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::MediaState;
         } else if constexpr (std::is_same_v<T, MapScene>) {
           return MessageType::MapScene;
+        } else if constexpr (std::is_same_v<T, AttitudeSample>) {
+          return MessageType::AttitudeSample;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1484,6 +1509,20 @@ MessageType message_type(const Message& message) noexcept {
 BytesResult encode_message(const Message& message) {
   return std::visit(
       [](const auto& value) { return encode_payload(value); }, message);
+}
+
+MessageResult decode_attitude_sample(ByteView payload) {
+  Reader reader(payload);
+  AttitudeSample value;
+  if (begin_payload(reader)) {
+    value.monotonic_ms = reader.u32();
+    value.lean_cdeg = static_cast<std::int16_t>(reader.u16());
+    value.pitch_cdeg = static_cast<std::int16_t>(reader.u16());
+    value.longitudinal_mg = static_cast<std::int16_t>(reader.u16());
+    value.lateral_mg = static_cast<std::int16_t>(reader.u16());
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
 }
 
 MessageResult decode_message(MessageType type, ByteView payload) {
@@ -1500,6 +1539,8 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_traffic_deviation(payload);
     case MessageType::MediaState: return decode_media_state(payload);
     case MessageType::MapScene: return decode_map_scene(payload);
+    case MessageType::AttitudeSample:
+      return decode_attitude_sample(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

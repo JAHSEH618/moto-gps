@@ -117,6 +117,16 @@ MediaState media_fixture() {
   return value;
 }
 
+AttitudeSample attitude_fixture() {
+  AttitudeSample value;
+  value.monotonic_ms = 0x12345678U;
+  value.lean_cdeg = 3'000;
+  value.pitch_cdeg = -250;
+  value.longitudinal_mg = -306;
+  value.lateral_mg = 577;
+  return value;
+}
+
 MapScene map_scene_fixture() {
   MapScene value;
   value.scene_revision = 7;
@@ -262,6 +272,7 @@ void dump_golden() {
   const Bytes navigation = encode_or_fail(Message{navigation_fixture()});
   const Bytes geometry = encode_or_fail(Message{geometry_fixture()});
   const Bytes command = encode_or_fail(Message{command_fixture()});
+  const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
   std::cout << "connection.payload=" << hex(ByteView(connection)) << '\n';
   std::cout << "connection.frame="
             << frame_hex(fragment_or_fail(MessageType::ConnectionStatus, 1,
@@ -275,6 +286,7 @@ void dump_golden() {
                                           0x1234U, command, 20,
                                           AckRequested | Urgent))
             << '\n';
+  std::cout << "attitude.payload=" << hex(ByteView(attitude)) << '\n';
 }
 
 void test_uuid_contract() {
@@ -324,6 +336,7 @@ void test_all_message_round_trips() {
       Message{traffic_fixture()},
       Message{media_fixture()},
       Message{map_scene_fixture()},
+      Message{attitude_fixture()},
       Message{command_fixture()},
   };
   for (const Message& message : messages) {
@@ -347,6 +360,7 @@ void test_golden_vectors() {
   const Bytes navigation = encode_or_fail(Message{navigation_fixture()});
   const Bytes geometry = encode_or_fail(Message{geometry_fixture()});
   const Bytes command = encode_or_fail(Message{command_fixture()});
+  const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
 
   CHECK(expected.at("connection.payload") == hex(ByteView(connection)));
   CHECK(expected.at("connection.frame") ==
@@ -359,6 +373,20 @@ void test_golden_vectors() {
         frame_hex(fragment_or_fail(MessageType::DeviceCommand, 0x1234U,
                                    command, 20,
                                    AckRequested | Urgent)));
+  CHECK(expected.at("attitude.payload") == hex(ByteView(attitude)));
+}
+
+void test_attitude_sample_validation() {
+  AttitudeSample value = attitude_fixture();
+  CHECK(encode_message(Message{value}).ok());
+  value.lean_cdeg = 18'001;
+  CHECK(!encode_message(Message{value}).ok());
+  value = attitude_fixture();
+  value.pitch_cdeg = -9'001;
+  CHECK(!encode_message(Message{value}).ok());
+  value = attitude_fixture();
+  value.lateral_mg = 4'001;
+  CHECK(!encode_message(Message{value}).ok());
 }
 
 void test_fragmentation_and_reassembly() {
@@ -599,6 +627,7 @@ int main(int argc, char** argv) {
   test_crc_and_sequence_primitives();
   test_all_message_round_trips();
   test_golden_vectors();
+  test_attitude_sample_validation();
   test_fragmentation_and_reassembly();
   test_full_map_scene_budget_and_reassembly();
   test_crc_duplicate_gap_conflict_and_timeout();

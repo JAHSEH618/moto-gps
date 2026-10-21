@@ -116,6 +116,7 @@ enum class MessageType : std::uint8_t {
   TrafficDeviation = 0x12,
   MediaState = 0x13,
   MapScene = 0x14,
+  AttitudeSample = 0x15,
   DeviceCommand = 0x20,
 };
 
@@ -273,6 +274,7 @@ enum Capability : std::uint32_t {
   CapabilityMusicCommands = 1U << 5U,
   CapabilityCommandAck = 1U << 6U,
   CapabilityMapScene = 1U << 7U,
+  CapabilityAttitudeTelemetry = 1U << 8U,
 };
 
 struct ConnectionStatus {
@@ -552,14 +554,26 @@ struct DeviceCommand {
   bool operator==(const DeviceCommand& rhs) const noexcept;
 };
 
-using Message = std::variant<ConnectionStatus,
-                             Heartbeat,
+// Device->phone, 10 Hz fire-and-forget telemetry. Only valid estimates are
+// encoded; the payload is intentionally fixed-size and Ack-free.
+struct AttitudeSample {
+  std::uint32_t monotonic_ms = 0;
+  std::int16_t lean_cdeg = 0;
+  std::int16_t pitch_cdeg = 0;
+  std::int16_t longitudinal_mg = 0;
+  std::int16_t lateral_mg = 0;
+
+  bool operator==(const AttitudeSample& rhs) const noexcept;
+};
+
+using Message = std::variant<ConnectionStatus,                             Heartbeat,
                              Ack,
                              NavigationSnapshot,
                              RouteGeometry,
                              TrafficDeviation,
                              MediaState,
                              MapScene,
+                             AttitudeSample,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;
