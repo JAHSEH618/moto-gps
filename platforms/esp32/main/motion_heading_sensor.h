@@ -2,13 +2,16 @@
 
 #include <cstdint>
 
+#include "attitude_estimator.hpp"
 #include "esp_err.h"
 
 class MotionHeadingSensor {
  public:
-  using SampleCallback = void (*)(float heading_rate_dps,
-                                  std::uint64_t sample_ms,
-                                  void* context);
+  using SampleCallback = void (*)(
+      float heading_rate_dps,
+      const moto::motion::AttitudeEstimate& attitude,
+      std::uint64_t sample_ms,
+      void* context);
 
   MotionHeadingSensor() = default;
   MotionHeadingSensor(const MotionHeadingSensor&) = delete;

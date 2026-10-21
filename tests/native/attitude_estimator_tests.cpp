@@ -100,6 +100,53 @@ void test_calibration_offsets_are_applied() {
   check_near(pitched.pitch_deg, 5.0F);
 }
 
+void test_sensor_to_bike_with_aligned_basis() {
+  const Vec3f right{1.0F, 0.0F, 0.0F};
+  const Vec3f up{0.0F, 0.0F, 1.0F};
+  const Vec3f upright = moto::motion::sensor_to_bike(
+      {0.0F, 0.0F, 9.80665F}, right, up);
+  check_near(upright.x, 0.0F);
+  check_near(upright.y, 0.0F);
+  check_near(upright.z, 9.80665F);
+
+  const Vec3f accelerating = moto::motion::sensor_to_bike(
+      {0.0F, 2.0F, 9.80665F}, right, up);
+  check_near(accelerating.y, 2.0F);
+
+  // The mapped gravity keeps the lean component instead of forcing the
+  // measured up vector to (0,0,g).
+  const Vec3f leaned = moto::motion::sensor_to_bike(
+      {-4.903325F, 0.0F, 8.492808F}, right, up);
+  check_near(leaned.x, -4.903325F);
+  check_near(leaned.z, 8.492808F);
+  const AttitudeEstimate estimate =
+      estimate_attitude(leaned, leaned, AttitudeCalibration{});
+  CHECK(estimate.valid);
+  check_near(estimate.lean_deg, 30.0F);
+}
+
+void test_sensor_to_bike_with_rotated_basis() {
+  const Vec3f right{0.0F, 1.0F, 0.0F};
+  const Vec3f up{0.0F, 0.0F, 1.0F};
+  const Vec3f mapped = moto::motion::sensor_to_bike(
+      {1.0F, 0.0F, 0.0F}, right, up);
+  check_near(mapped.x, 0.0F);
+  check_near(mapped.y, -1.0F);
+  check_near(mapped.z, 0.0F);
+
+  const Vec3f gravity = moto::motion::sensor_to_bike(
+      {0.0F, 0.0F, 9.80665F}, right, up);
+  check_near(gravity.z, 9.80665F);
+}
+
+void test_sensor_to_bike_rejects_degenerate_basis() {
+  const Vec3f mapped = moto::motion::sensor_to_bike(
+      {0.0F, 0.0F, 9.80665F}, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 1.0F});
+  check_near(mapped.x, 0.0F);
+  check_near(mapped.y, 0.0F);
+  check_near(mapped.z, 0.0F);
+}
+
 void test_invalid_inputs_are_rejected() {
   const AttitudeEstimate weak_gravity = estimate_attitude(
       {0.0F, 0.0F, 2.0F}, {0.0F, 0.0F, 2.0F}, AttitudeCalibration{});
@@ -131,6 +178,9 @@ int main() {
   test_nose_up_pitch_is_positive();
   test_calibration_offsets_are_applied();
   test_invalid_inputs_are_rejected();
+  test_sensor_to_bike_with_aligned_basis();
+  test_sensor_to_bike_with_rotated_basis();
+  test_sensor_to_bike_rejects_degenerate_basis();
   test_lateral_g_is_clamped();
 
   if (failures != 0) {

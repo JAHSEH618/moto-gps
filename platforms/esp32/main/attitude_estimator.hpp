@@ -32,6 +32,14 @@ constexpr float kMinimumGravity = 6.8F;
 constexpr float kMaximumGravity = 12.8F;
 constexpr float kMaximumLateralG = 4.0F;
 
+// Rotate a sensor-frame vector into the bike frame using the calibrated
+// screen-right and screen-up axes (both expressed in sensor coordinates).
+// The mount basis is fixed to the bike, so the measured gravity direction
+// changes with Lean instead of being forced upright by a gravity-derived
+// basis. Returns zeros for a degenerate basis.
+Vec3f sensor_to_bike(const Vec3f& sensor, const Vec3f& right,
+                     const Vec3f& up);
+
 // accel is the raw specific force at 125 Hz. gravity_up is the low-passed
 // accelerometer vector (the measured up direction) in the same bike frame.
 // The caller owns filtering; this function is deliberately stateless so the

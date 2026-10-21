@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -538,7 +539,7 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
   PhoneNavBridge bridge(presenter);
   // The IMU is usually ready before BLE. Its relative zero cannot become the
   // absolute heading when the phone finally connects.
-  bridge.on_imu_sample(0.0F, 1);
+  bridge.on_imu_sample(0.0F, moto::motion::AttitudeEstimate{}, 1);
   moto::ble::NavigationSnapshot navigation;
   navigation.state = moto::ble::NavigationState::Navigating;
   navigation.display_page = moto::ble::DisplayPage::Compass;
@@ -551,7 +552,7 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
 
   const int before = moto::test::phone_nav_bridge_apply_count();
   for (std::uint64_t time = 8; time <= 1'000; time += 8) {
-    bridge.on_imu_sample(45.0F, time);
+    bridge.on_imu_sample(45.0F, moto::motion::AttitudeEstimate{}, time);
     pump(bridge);
   }
   const int motion_frames = moto::test::phone_nav_bridge_apply_count() - before;
@@ -562,6 +563,41 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
   CHECK(bridge.on_message(make_message(navigation, 2)) == moto::ble::AckStatus::Ok);
   pump(bridge);
   CHECK(moto::test::phone_nav_bridge_last_heading_deg() == before_stale);
+}
+
+void test_imu_attitude_reaches_the_lean_page() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+
+  moto::ble::NavigationSnapshot navigation;
+  navigation.state = moto::ble::NavigationState::Navigating;
+  navigation.network = moto::ble::NetworkState::Online;
+  navigation.display_page = moto::ble::DisplayPage::Lean;
+  navigation.flags = moto::ble::NavigationHasFix;
+  CHECK(bridge.on_message(make_message(navigation, 1)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+
+  moto::motion::AttitudeEstimate attitude;
+  attitude.valid = true;
+  attitude.lean_deg = 30.0F;
+  attitude.pitch_deg = 2.0F;
+  attitude.longitudinal_g = 0.3F;
+  attitude.lateral_g = 0.58F;
+  bridge.on_imu_sample(0.0F, attitude, 1'000);
+  pump(bridge);
+
+  CHECK(moto::test::phone_nav_bridge_last_has_attitude() == 1);
+  CHECK(std::abs(moto::test::phone_nav_bridge_last_lean_deg() - 30.0F) <
+        0.01F);
+  CHECK(std::abs(moto::test::phone_nav_bridge_last_pitch_deg() - 2.0F) <
+        0.01F);
+  CHECK(std::abs(
+            moto::test::phone_nav_bridge_last_longitudinal_g() - 0.3F) <
+        0.01F);
+  CHECK(std::abs(moto::test::phone_nav_bridge_last_lateral_g() - 0.58F) <
+        0.01F);
 }
 
 }  // namespace
@@ -576,6 +612,7 @@ int main() {
   test_ios_demo_token_attaches_context_and_live_route_clears_it();
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();
   test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored();
+  test_imu_attitude_reaches_the_lean_page();
 
   if (failures != 0) {
     std::cerr << failures << " phone navigation bridge checks failed\n";
