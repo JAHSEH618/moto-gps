@@ -233,3 +233,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - `AttitudeTelemetry` expires a readout after 500 ms and rejects one stamped in the future. A BLE link can go quiet without reporting a disconnect, and showing the last lean would tell the rider they are upright while the data is dead. `AppModel` also clears it on any snapshot that is not connected.
 - `AttitudeSampleTests` adds 8 tests; the Swift package is now 32 green (24 navigation + 8 ride). `xcodebuild -sdk iphonesimulator` still reports BUILD SUCCEEDED with no new warnings.
 - Split rather than closed: the original task also asked to feed the ride screen's meters, and no meters exist. The new TODO asks for that design decision before any layout work.
+
+## 2026-10-21T23:08:40+09:00 — Safehouse reaches the round screen
+
+- `moto_nav_ui` owns a `moto-home` control on the navigation page: a 46 pt circle with the Montserrat home glyph, drawn above the radar and below the connection overlay. `moto_nav_ui_set_home_callback()` is the only new surface.
+- The gate is speed, not intent: the glyph is hidden above 5 km/h and `home_shortcut_event()` refuses a tap anyway. A queued or synthetic event must not replace active guidance with a plan home, so hiding it is not the whole rule.
+- `PhoneNavBridge::home_command()` sends `HomeShortcut` with `AckRequested | Urgent` through the existing command path, so it inherits command-id allocation and the link-active check. A dead link sends nothing rather than queueing an intent that fires later.
+- Two tests: `nav_ui_render_tests` taps the real LVGL object by name (via `lv_obj_find_by_name`, which needed `LV_USE_OBJ_NAME` in the shared `config/lv_conf.h`), and `phone_nav_bridge_tests` asserts the wire command, its flags, and the dead-link case. Native suite 11/11.
+- Still open on purpose: the glyph never reflects whether a home is set, because the device cannot know. The phone's `.invalidState` Ack is dropped after logging, so a tap can look like a no-op; a TODO tracks that feedback instead of faking a disabled control.
