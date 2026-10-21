@@ -376,8 +376,45 @@ void test_music_page_state_and_fallback() {
   CHECK(moto_nav_ui_get_page() != MOTO_UI_PAGE_MUSIC);
 }
 
-void test_phone_lifecycle_renders_deterministically() {
-  // The connection lifecycle is a full-screen overlay for the empty
+int home_tap_count = 0;
+
+void count_home_tap(void *) {
+  ++home_tap_count;
+}
+
+void test_home_glyph_is_gated_by_speed() {
+  home_tap_count = 0;
+  moto_nav_ui_set_home_callback(count_home_tap, nullptr);
+  moto_ui_state_t state = base_state();
+  state.speed_kph = 0;
+  moto_nav_ui_set_state(&state);
+
+  lv_obj_t *home = lv_obj_find_by_name(lv_screen_active(), "moto-home");
+  CHECK(home != nullptr);
+  if (home == nullptr) return;
+  CHECK(!lv_obj_has_flag(home, LV_OBJ_FLAG_HIDDEN));
+  (void)lv_obj_send_event(home, LV_EVENT_CLICKED, nullptr);
+  CHECK(home_tap_count == 1);
+
+  // Above the gate the glyph is gone, and a tap that was already queued on the
+  // old frame must not start a route either.
+  state.speed_kph = 30;
+  moto_nav_ui_set_state(&state);
+  CHECK(lv_obj_has_flag(home, LV_OBJ_FLAG_HIDDEN));
+  (void)lv_obj_send_event(home, LV_EVENT_CLICKED, nullptr);
+  CHECK(home_tap_count == 1);
+
+  // Back under the gate the glyph returns and works again.
+  state.speed_kph = 5;
+  moto_nav_ui_set_state(&state);
+  CHECK(!lv_obj_has_flag(home, LV_OBJ_FLAG_HIDDEN));
+  (void)lv_obj_send_event(home, LV_EVENT_CLICKED, nullptr);
+  CHECK(home_tap_count == 2);
+
+  moto_nav_ui_set_home_callback(nullptr, nullptr);
+}
+
+void test_phone_lifecycle_renders_deterministically() {  // The connection lifecycle is a full-screen overlay for the empty
   // navigation page; cycle it there and require visually distinct terminal
   // states plus deterministic repetition (no accumulated residue).
   moto_ui_state_t empty = base_state();
@@ -574,6 +611,7 @@ int main(int argc, char **argv) {
   test_performance_and_lean_pages_render_attitude();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
+  test_home_glyph_is_gated_by_speed();
   test_phone_lifecycle_renders_deterministically();
   test_demo_mode_visual_contract();
   test_capacity_payloads_render_stably();

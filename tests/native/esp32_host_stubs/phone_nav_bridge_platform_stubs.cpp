@@ -16,6 +16,8 @@ moto_music_command_callback_t music_callback = nullptr;
 void* music_callback_context = nullptr;
 moto_demo_change_callback_t demo_callback = nullptr;
 void* demo_callback_context = nullptr;
+moto_home_shortcut_callback_t home_callback = nullptr;
+void* home_callback_context = nullptr;
 int apply_count = 0;
 int board_lock_count = 0;
 bool board_lock_available = true;
@@ -161,6 +163,14 @@ extern "C" void moto_nav_ui_set_demo_change_callback(
   demo_callback_context = context;
 }
 
+extern "C" void moto_nav_ui_set_home_callback(
+    moto_home_shortcut_callback_t callback,
+    void* context) {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  home_callback = callback;
+  home_callback_context = context;
+}
+
 namespace moto::test {
 
 void reset_phone_nav_bridge_probe() {
@@ -236,6 +246,19 @@ void emit_demo_change(bool enabled) {
   if (callback == nullptr) return;
   const std::lock_guard<std::recursive_mutex> lock(board_mutex);
   callback(enabled ? 1U : 0U, context);
+}
+
+void emit_home_shortcut() {
+  moto_home_shortcut_callback_t callback = nullptr;
+  void* context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(probe_mutex);
+    callback = home_callback;
+    context = home_callback_context;
+  }
+  if (callback == nullptr) return;
+  const std::lock_guard<std::recursive_mutex> lock(board_mutex);
+  callback(context);
 }
 
 int phone_nav_bridge_apply_count() {

@@ -31,6 +31,9 @@
 #define LV_USE_LABEL 1
 #define LV_USE_LINE 1
 #define LV_USE_BUTTON 1
+// Named objects let the render tests address a control (for example the home
+// glyph) without exposing a test-only accessor in the public header.
+#define LV_USE_OBJ_NAME 1
 #define LV_USE_ANIMIMG 0
 #define LV_USE_CANVAS 0
 #define LV_USE_LOTTIE 0

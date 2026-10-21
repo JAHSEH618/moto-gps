@@ -10,6 +10,7 @@ void reset_phone_nav_bridge_probe();
 void emit_page_change(moto_ui_page_t page);
 void emit_music_command(moto_music_command_t command);
 void emit_demo_change(bool enabled);
+void emit_home_shortcut();
 int phone_nav_bridge_apply_count();
 int phone_nav_bridge_board_lock_count();
 void phone_nav_bridge_set_board_lock_available(bool available);

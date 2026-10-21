@@ -83,8 +83,7 @@ bool record_music_sender(const moto::ble::Message& message,
   return true;
 }
 
-void test_sender_is_called_without_bridge_state_lock() {
-  moto::nav::NavPresenter presenter;
+void test_sender_is_called_without_bridge_state_lock() {  moto::nav::NavPresenter presenter;
   PhoneNavBridge bridge(presenter);
   ReentrantSenderContext sender{&bridge};
   bridge.set_sender(reentrant_sender, &sender);
@@ -94,6 +93,32 @@ void test_sender_is_called_without_bridge_state_lock() {
   moto::test::emit_page_change(MOTO_UI_PAGE_SPEED);
   CHECK(sender.calls == 1);
   CHECK(sender.last_page == moto::ble::DisplayPage::Speed);
+}
+
+void test_home_shortcut_sends_the_intent() {
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  MusicSenderContext sender;
+  bridge.set_sender(record_music_sender, &sender);
+  bridge.install_ui_callbacks();
+  bridge.on_link_state(true);
+
+  moto::test::emit_home_shortcut();
+  CHECK(sender.commands.size() == 1);
+  if (sender.commands.size() == 1) {
+    CHECK(sender.commands[0].kind ==
+          moto::ble::DeviceCommandKind::HomeShortcut);
+    CHECK(sender.commands[0].page == moto::ble::DisplayPage::Navigation);
+    CHECK(sender.commands[0].x == moto::ble::kUnknownTouchCoordinate);
+    CHECK(sender.commands[0].y == moto::ble::kUnknownTouchCoordinate);
+    CHECK(sender.flags[0] ==
+          (moto::ble::AckRequested | moto::ble::Urgent));
+  }
+
+  // With no link the tap must not leave a queued "go home" to fire later.
+  bridge.on_link_state(false);
+  moto::test::emit_home_shortcut();
+  CHECK(sender.commands.size() == 1);
 }
 
 void test_navigation_and_touch_updates_are_serialized() {
@@ -604,6 +629,7 @@ void test_imu_attitude_reaches_the_lean_page() {
 
 int main() {
   test_sender_is_called_without_bridge_state_lock();
+  test_home_shortcut_sends_the_intent();
   test_navigation_and_touch_updates_are_serialized();
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();
   test_phone_connection_lifecycle_reaches_the_ui();

@@ -78,6 +78,9 @@ constexpr std::uint32_t kRouteMotionFrameMs = 25;
 static_assert(LV_DEF_REFR_PERIOD == kRouteMotionFrameMs,
               "LVGL refresh and map motion must use the same cadence");
 constexpr std::uint32_t kConnectionSuccessHoldMs = 920;
+// Home is only reachable while the bike is effectively stopped; see
+// home_shortcut_event().
+constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
 
 enum class LifecycleVisual : std::uint8_t {
     Hidden = 0,
@@ -167,6 +170,8 @@ struct Ui {
     moto_maneuver_t nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
     lv_obj_t *nav_limit = nullptr;
     lv_obj_t *nav_limit_value = nullptr;
+    lv_obj_t *nav_home = nullptr;
+    std::uint16_t nav_speed_kph = 0;
     lv_obj_t *nav_progress = nullptr;
 
     // A full-screen empty-state surface replaces the old tiny
@@ -230,6 +235,8 @@ struct Ui {
     void *page_callback_context = nullptr;
     moto_demo_change_callback_t demo_callback = nullptr;
     void *demo_callback_context = nullptr;
+    moto_home_shortcut_callback_t home_callback = nullptr;
+    void *home_callback_context = nullptr;
     bool music_page_enabled = true;
     bool demo_active = false;
     bool reduce_motion = false;
@@ -1520,6 +1527,10 @@ void update_nav_status(const moto_ui_state_t *state) {
     lv_obj_set_style_text_color(ui.nav_status, color, 0);
 }
 
+// Defined with the navigation page; declared here because the gate is applied
+// from update_navigation().
+void update_home_shortcut();
+
 void update_navigation(const moto_ui_state_t *state) {
     update_building_geometry(state);
     update_road_geometry(state);
@@ -1536,6 +1547,7 @@ void update_navigation(const moto_ui_state_t *state) {
     ui.navigation_route_request_in_flight =
         state->route_request_in_flight != 0;
     set_navigation_guidance_visible(has_guidance);
+    update_home_shortcut();
     refresh_lifecycle();
     if(!has_guidance) return;
 
@@ -1739,6 +1751,22 @@ void create_page_dots() {
     reveal_page_dots();
 }
 
+void home_shortcut_event(lv_event_t *) {
+    // The glyph is hidden above the gate; refusing here as well means a queued
+    // or synthetic tap cannot start a route while the bike is moving.
+    if(ui.nav_speed_kph > kHomeShortcutMaxSpeedKph) return;
+    if(ui.home_callback != nullptr) ui.home_callback(ui.home_callback_context);
+}
+
+void update_home_shortcut() {
+    if(ui.nav_home == nullptr) return;
+    if(ui.nav_speed_kph > kHomeShortcutMaxSpeedKph) {
+        lv_obj_add_flag(ui.nav_home, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(ui.nav_home, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void create_navigation_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_NAVIGATION];
     ui.nav_map = make_layer(page);
@@ -1879,6 +1907,28 @@ void create_navigation_page() {
     lv_obj_set_style_arc_width(ui.nav_progress, px(4), LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(ui.nav_progress, kIce, LV_PART_INDICATOR);
     lv_obj_move_to_index(ui.nav_progress, 0);
+
+    // Route home. Deliberately a small stop-time control, not part of the
+    // riding HUD: it disappears above the speed gate so a glove or a mount
+    // cannot replace active guidance with a plan home.
+    ui.nav_home = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.nav_home);
+    lv_obj_set_size(ui.nav_home, px(46), px(46));
+    lv_obj_set_pos(ui.nav_home, px(334), px(300));
+    lv_obj_set_style_radius(ui.nav_home, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ui.nav_home, kBlack, 0);
+    lv_obj_set_style_bg_opa(ui.nav_home, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(ui.nav_home, px(1), 0);
+    lv_obj_set_style_border_color(ui.nav_home, kGraphite, 0);
+    lv_obj_set_style_border_opa(ui.nav_home, LV_OPA_COVER, 0);
+    lv_obj_add_flag(ui.nav_home, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_name_static(ui.nav_home, "moto-home");
+    lv_obj_add_event_cb(ui.nav_home, home_shortcut_event, LV_EVENT_CLICKED,
+                        nullptr);
+    lv_obj_t *home_glyph =
+        make_label(ui.nav_home, &lv_font_montserrat_20, kWhite,
+                   LV_SYMBOL_HOME);
+    lv_obj_center(home_glyph);
 
     // Connection lifecycle overlay. The composition follows the same circular
     // safe area as the navigation instrument and intentionally uses one hero
@@ -2376,6 +2426,7 @@ extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
 
 void moto_nav_ui_set_state(const moto_ui_state_t *state) {
     if(state == nullptr || ui.screen == nullptr) return;
+    ui.nav_speed_kph = state->speed_kph;
     show_page(state->page);
     // Hidden pages do not need to be invalidated. Page changes immediately
     // apply a fresh snapshot through PhoneNavBridge, so this keeps every page
@@ -2502,4 +2553,10 @@ extern "C" void moto_nav_ui_set_demo_change_callback(
     moto_demo_change_callback_t callback, void *context) {
     ui.demo_callback = callback;
     ui.demo_callback_context = context;
+}
+
+extern "C" void moto_nav_ui_set_home_callback(
+    moto_home_shortcut_callback_t callback, void *context) {
+    ui.home_callback = callback;
+    ui.home_callback_context = context;
 }
