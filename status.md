@@ -145,3 +145,10 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - The mount basis is a placeholder (screen-right = QMI X, screen-up = QMI Y). Board axis regression and Lean zero calibration are still pending.
 - The ESP-IDF firmware build was not run in this environment; `motion_heading_sensor.cpp` and `app_main.cpp` need an `idf.py build` plus hardware validation.
 - Next: BLE attitude telemetry sending + iOS decode, the 0-100 run pipeline, and the settings page/NVS/Home/Settings gate.
+
+## 2026-10-21T21:33:59+09:00 — Green: PerformanceRunDetector
+
+- Added the `MotoRideCore` Swift target and `MotoRideCoreTests`.
+- The detector requires a one-second stationary hold, interpolates the start and target crossings, aborts on a >3 km/h speed drop, 30-second timeout or >2-second sensor gap, supports a configurable target (0-50 for the current scooter), and requires a fresh stationary hold between runs.
+- 8 detector tests pass; the full Swift package suite is 24 tests (16 navigation + 8 ride) green.
+- Next: wire the detector to raw CoreLocation speed, surface its live/result state on the PERF page, then add Ride recording/store/charts and the BLE telemetry/iOS decode path.
