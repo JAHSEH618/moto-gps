@@ -296,6 +296,7 @@ void PhoneNavBridge::install_ui_callbacks() {
   moto_nav_ui_set_page_change_callback(page_changed, this);
   moto_nav_ui_set_music_command_callback(music_command, this);
   moto_nav_ui_set_demo_change_callback(demo_changed, this);
+  moto_nav_ui_set_home_callback(home_shortcut, this);
 }
 
 bool PhoneNavBridge::start_renderer() {
@@ -1050,6 +1051,19 @@ void PhoneNavBridge::send_page_command(moto_ui_page_t page) {
   moto::ble::DeviceCommand command;
   command.kind = moto::ble::DeviceCommandKind::PageSelected;
   command.page = map_page(page);
+  send_device_command(command);
+}
+
+void PhoneNavBridge::home_shortcut(void* context) {
+  static_cast<PhoneNavBridge*>(context)->home_command();
+}
+
+void PhoneNavBridge::home_command() {
+  moto::ble::DeviceCommand command;
+  command.kind = moto::ble::DeviceCommandKind::HomeShortcut;
+  command.page = moto::ble::DisplayPage::Navigation;
+  command.x = moto::ble::kUnknownTouchCoordinate;
+  command.y = moto::ble::kUnknownTouchCoordinate;
   send_device_command(command);
 }
 

@@ -114,6 +114,7 @@ typedef void (*moto_page_change_callback_t)(moto_ui_page_t page,
                                              void *context);
 typedef void (*moto_demo_change_callback_t)(uint8_t enabled,
                                              void *context);
+typedef void (*moto_home_shortcut_callback_t)(void *context);
 
 typedef struct {
     moto_ui_page_t page;
@@ -187,6 +188,14 @@ void moto_nav_ui_set_demo_active(uint8_t enabled);
 void moto_nav_ui_set_demo_change_callback(
     moto_demo_change_callback_t callback,
     void *context);
+/**
+ * Tap on the navigation page's home glyph. Only fires below 5 km/h: the glyph
+ * is hidden above that speed and the handler refuses a queued tap, so a glove
+ * or a mount cannot start a route home mid-ride. The device only sends the
+ * intent; the phone owns the address.
+ */
+void moto_nav_ui_set_home_callback(moto_home_shortcut_callback_t callback,
+                                   void *context);
 
 #ifdef __cplusplus
 }
