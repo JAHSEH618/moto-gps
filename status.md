@@ -75,3 +75,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Removed the temporary pixel-grid debug dump from `nav_ui_render_tests.cpp`.
 - `nav_ui_render_tests` green; full native suite 9/9 green.
 - Next red test: map covers the bottom of the round canvas (full-screen map layer).
+
+## 2026-10-21T21:15:28+09:00 — Green: full-screen Radar canvas
+
+- `nav_map`, the building fill, building outlines, roads, route shadow and route now use `MOTO_UI_CANVAS_HEIGHT` (466) instead of the old `px(232)` strip.
+- The vehicle marker is repositioned so its bounding-box centre sits on the presenter's (233,233) rider anchor.
+- Added `test_the_map_covers_the_bottom_of_the_round_canvas`; `nav_ui_render_tests` green and the full native suite is 9/9 green.
+- HUD elements remain in the lower third and now overlay the map. The bottom vignette and the day/night palette are still pending.
+- Next: build the Web preview, then add the day/night theme palette.
