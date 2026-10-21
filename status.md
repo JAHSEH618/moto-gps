@@ -118,3 +118,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Updated the Chinese and English v1 protocol docs with the new message table row, capability bit, section 6.10 and golden payload.
 - Full native suite is 11/11 green.
 - Next: map QMI8658 axes to the bike frame and wire the estimator into `MotionHeadingSensor` / `PhoneNavBridge`; then decode the sample in the iOS BLE bridge.
+
+## 2026-10-21T21:26:07+09:00 — Green: attitude data contract
+
+- Added `has_attitude`, `lean_deg`, `pitch_deg`, `longitudinal_g` and `lateral_g` to `NavSnapshot` and `moto_ui_state_t`.
+- `NavPresenter` only exposes attitude when every field is finite; Lean is clamped to ±180°, pitch to ±90°, G to ±4 g, and missing attitude zeroes the block.
+- Added a presenter characterization test. Note: the shared fields landed before the assertion, so this slice is not a strict red-first cycle; the next UI slice will be.
+- Full native suite 11/11 green.
+- Next: PERF / LEAN page UI backed by the attitude block.
