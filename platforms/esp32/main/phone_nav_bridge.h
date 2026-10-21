@@ -70,6 +70,7 @@ class PhoneNavBridge {
   void consume_traffic(const moto::ble::TrafficDeviation& input);
   void consume_media(const moto::ble::MediaState& input);
   moto::ble::AckStatus consume_map_scene(const moto::ble::MapScene& input);
+  void consume_home_location(const moto::ble::HomeLocation& input);
   // Requires state_mutex_. This helper never calls LVGL or the BLE sender.
   void apply_geometry_locked(moto::nav::NavSnapshot& target);
   moto::nav::NavSnapshot& phone_snapshot_locked() noexcept;
@@ -96,6 +97,8 @@ class PhoneNavBridge {
 
   moto::nav::NavPresenter& presenter_;
   moto::nav::NavSnapshot snapshot_{};
+  // Newest accepted HomeLocation revision for this session.
+  std::uint32_t home_revision_ = 0;
   // Only the render task writes these retained copies. They let state_mutex_
   // be released before waiting for LVGL or running the relatively expensive
   // road/building projection.

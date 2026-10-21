@@ -157,6 +157,11 @@ typedef struct {
     float pitch_deg;
     float longitudinal_g;
     float lateral_g;
+    /* Saved home position already projected into this canvas. The UI hides a
+       blip that would fall outside the round safe area. */
+    uint8_t has_home;
+    int16_t home_x;
+    int16_t home_y;
 } moto_ui_state_t;
 
 void moto_nav_ui_create(void);

@@ -414,7 +414,44 @@ void test_home_glyph_is_gated_by_speed() {
   moto_nav_ui_set_home_callback(nullptr, nullptr);
 }
 
-void test_phone_lifecycle_renders_deterministically() {  // The connection lifecycle is a full-screen overlay for the empty
+void test_home_blip_is_visible_only_inside_the_radar() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  // A route keeps the connection lifecycle overlay off the map, so the blip
+  // is actually visible in the captured frame.
+  fill_route(state, 8);
+  state.speed_kph = 0;
+  state.has_home = 1;
+  state.home_x = 300;
+  state.home_y = 200;
+  moto_nav_ui_set_state(&state);
+  pump();
+
+  lv_obj_t *blip = lv_obj_find_by_name(lv_screen_active(), "moto-home-blip");
+  CHECK(blip != nullptr);
+  if (blip == nullptr) return;
+  CHECK(!lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
+  const Frame with_home = capture();
+
+  // The glass is round; a blip in the cropped corner must be hidden instead
+  // of drawn into a region the rider can never see.
+  state.home_x = 440;
+  state.home_y = 30;
+  moto_nav_ui_set_state(&state);
+  CHECK(lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
+  CHECK(with_home.hash != capture().hash);
+
+  state.has_home = 0;
+  state.home_x = 300;
+  state.home_y = 200;
+  moto_nav_ui_set_state(&state);
+  CHECK(lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
+  CHECK(with_home.hash != capture().hash);
+}
+
+void test_phone_lifecycle_renders_deterministically() {
+  // The connection lifecycle is a full-screen overlay for the empty
   // navigation page; cycle it there and require visually distinct terminal
   // states plus deterministic repetition (no accumulated residue).
   moto_ui_state_t empty = base_state();
@@ -612,6 +649,7 @@ int main(int argc, char **argv) {
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_home_glyph_is_gated_by_speed();
+  test_home_blip_is_visible_only_inside_the_radar();
   test_phone_lifecycle_renders_deterministically();
   test_demo_mode_visual_contract();
   test_capacity_payloads_render_stably();

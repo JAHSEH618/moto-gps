@@ -24,6 +24,9 @@ bool board_lock_available = true;
 std::string last_road_name;
 uint16_t last_heading_deg = 0;
 uint8_t last_has_attitude = 0;
+uint8_t last_has_home = 0;
+int16_t last_home_x = 0;
+int16_t last_home_y = 0;
 float last_lean_deg = 0.0F;
 float last_pitch_deg = 0.0F;
 float last_longitudinal_g = 0.0F;
@@ -84,6 +87,9 @@ extern "C" void moto_nav_ui_set_state(const moto_ui_state_t* state) {
                        : state->next_road_name;
   last_heading_deg = state->heading_deg;
   last_has_attitude = state->has_attitude;
+  last_has_home = state->has_home;
+  last_home_x = state->home_x;
+  last_home_y = state->home_y;
   last_lean_deg = state->lean_deg;
   last_pitch_deg = state->pitch_deg;
   last_longitudinal_g = state->longitudinal_g;
@@ -181,6 +187,9 @@ void reset_phone_nav_bridge_probe() {
   last_road_name.clear();
   last_heading_deg = 0;
   last_has_attitude = 0;
+  last_has_home = 0;
+  last_home_x = 0;
+  last_home_y = 0;
   last_lean_deg = 0.0F;
   last_pitch_deg = 0.0F;
   last_longitudinal_g = 0.0F;
@@ -379,6 +388,21 @@ uint32_t phone_nav_bridge_last_distance_to_maneuver_m() {
 uint8_t phone_nav_bridge_last_has_attitude() {
   const std::lock_guard<std::mutex> lock(probe_mutex);
   return last_has_attitude;
+}
+
+uint8_t phone_nav_bridge_last_has_home() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return last_has_home;
+}
+
+int16_t phone_nav_bridge_last_home_x() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return last_home_x;
+}
+
+int16_t phone_nav_bridge_last_home_y() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return last_home_y;
 }
 
 float phone_nav_bridge_last_lean_deg() {

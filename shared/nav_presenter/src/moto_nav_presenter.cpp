@@ -200,6 +200,23 @@ moto_ui_point_t project_map_point(const Gcj02Point& point,
   };
 }
 
+void project_home(const NavSnapshot& snapshot, const MapTransform& transform,
+                  moto_ui_state_t& output) {
+  output.has_home = 0;
+  output.home_x = 0;
+  output.home_y = 0;
+  // The transform is anchored on the rider, which only exists once the route
+  // window is built. Without it there is no honest place to put the blip.
+  if (!snapshot.has_home || !snapshot.has_route_view) {
+    return;
+  }
+  const moto_ui_point_t pixel =
+      project_map_point(snapshot.home, transform);
+  output.home_x = pixel.x;
+  output.home_y = pixel.y;
+  output.has_home = 1;
+}
+
 void project_route_view(const NavSnapshot& snapshot,
                         const MapTransform& transform,
                         moto_ui_state_t& output) {
@@ -259,8 +276,7 @@ void project_road_context(const NavSnapshot& snapshot,
       static_cast<std::uint8_t>(accepted_polylines);
 }
 
-void project_building_context(const NavSnapshot& snapshot,
-                              const MapTransform& transform,
+void project_building_context(const NavSnapshot& snapshot,                              const MapTransform& transform,
                               moto_ui_state_t& output) {
   output.building_point_count = 0;
   output.building_footprint_count = 0;
@@ -375,6 +391,7 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
   project_route_view(snapshot, transform, ui_state_);
   project_road_context(snapshot, transform, ui_state_);
   project_building_context(snapshot, transform, ui_state_);
+  project_home(snapshot, transform, ui_state_);
   ui_state_.road_name = road_name_.empty() ? nullptr : road_name_.c_str();
   ui_state_.next_road_name =
       next_road_name_.empty() ? nullptr : next_road_name_.c_str();

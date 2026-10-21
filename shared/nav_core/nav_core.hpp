@@ -88,6 +88,11 @@ struct NavSnapshot {
   std::array<Gcj02Point, kRouteViewPointCapacity> route_view_points{};
   std::uint8_t route_view_point_count = 0;
 
+  // Saved home address for the minimap blip. It is independent of the route
+  // and of the map window, so a missing offline map still shows home.
+  bool has_home = false;
+  Gcj02Point home;
+
   // Optional, bounded street context for a GTA-style heading-up minimap.
   // Points stay in provider coordinates; NavPresenter applies the exact same
   // rider-centred transform as the selected route. Separate spans prevent
