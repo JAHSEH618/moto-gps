@@ -541,6 +541,9 @@ enum class DeviceCommandKind : std::uint8_t {
   MusicTogglePlayback = 17,
   MusicNext = 18,
   MusicLike = 19,
+  // Tap on the device's home glyph: the phone plans a route to the saved home
+  // address. The device never stores the address, only the intent.
+  HomeShortcut = 20,
 };
 
 constexpr std::uint16_t kUnknownTouchCoordinate = 0xFFFFU;
