@@ -75,6 +75,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<MotoBLEMapBuildingInput *> *buildings;
 @end
 
+/// Saved home address (message 0x16). Latitude and longitude must already be
+/// GCJ-02: the device refuses any other frame rather than drawing the blip in
+/// the wrong place. `revision` is monotonic across app launches.
+@interface MotoBLEHomeLocationInput : NSObject
+@property(nonatomic) uint32_t revision;
+@property(nonatomic) BOOL hasHome;
+@property(nonatomic) int32_t latitudeE6;
+@property(nonatomic) int32_t longitudeE6;
+@end
+
 @interface MotoBLEDeviceCommand : NSObject
 @property(nonatomic, readonly) uint16_t sequence;
 @property(nonatomic, readonly) BOOL ackRequested;
@@ -174,6 +184,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (nullable NSArray<NSData *> *)encodeMapScene:(MotoBLEMapSceneInput *)scene
                                           error:(NSError **)error;
+
+- (nullable NSArray<NSData *> *)encodeHomeLocation:(MotoBLEHomeLocationInput *)home
+                                             error:(NSError **)error;
+
+/// Test hook for checking the shared HomeLocation payload without duplicating
+/// its binary layout in Swift.
+- (nullable NSData *)encodeHomeLocationPayloadForTesting:(MotoBLEHomeLocationInput *)home
+                                                   error:(NSError **)error;
 
 /// Test hook for checking the shared MapScene payload without duplicating its
 /// binary layout in Swift.

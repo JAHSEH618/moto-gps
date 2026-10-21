@@ -592,6 +592,16 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           ESP_LOGD(kTag, "phone ack sequence=%u command=%u status=%u",
                    value.acknowledged_sequence, value.command_id,
                    static_cast<unsigned>(value.status));
+          bool home_refused = false;
+          {
+            const std::lock_guard<std::mutex> lock(state_mutex_);
+            if (pending_home_command_id_ != 0 &&
+                value.command_id == pending_home_command_id_) {
+              pending_home_command_id_ = 0;
+              home_refused = value.status != moto::ble::AckStatus::Ok;
+            }
+          }
+          if (home_refused) request_render(RenderHomeError);
         } else if constexpr (std::is_same_v<T, moto::ble::DeviceCommand>) {
           return moto::ble::AckStatus::Unsupported;
         }
@@ -1023,6 +1033,9 @@ void PhoneNavBridge::render_pending() {
   } else if (motion) {
     moto_nav_ui_set_motion_state(&presenter_.ui_state());
   }
+  if ((requested & RenderHomeError) != 0U) {
+    moto_nav_ui_show_home_error();
+  }
   if (media) {
     moto_music_state_t state{};
     state.source_name = render_media_state_.source_name.c_str();
@@ -1090,7 +1103,12 @@ void PhoneNavBridge::home_command() {
   command.page = moto::ble::DisplayPage::Navigation;
   command.x = moto::ble::kUnknownTouchCoordinate;
   command.y = moto::ble::kUnknownTouchCoordinate;
-  send_device_command(command);
+  const std::uint16_t command_id = send_device_command(command);
+  if (command_id == 0) {
+    return;
+  }
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  pending_home_command_id_ = command_id;
 }
 
 void PhoneNavBridge::send_music_command(moto_music_command_t command) {
@@ -1113,17 +1131,20 @@ void PhoneNavBridge::send_music_command(moto_music_command_t command) {
   send_device_command(output);
 }
 
-void PhoneNavBridge::send_device_command(moto::ble::DeviceCommand command) {
+std::uint16_t PhoneNavBridge::send_device_command(
+    moto::ble::DeviceCommand command) {
   SendCallback sender = nullptr;
   void* sender_context = nullptr;
+  std::uint16_t command_id = 0;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     if (sender_ == nullptr || !link_active_) {
-      return;
+      return 0;
     }
     sender = sender_;
     sender_context = sender_context_;
     command.command_id = next_command_id_;
+    command_id = command.command_id;
     ++next_command_id_;
     if (next_command_id_ == 0) {
       next_command_id_ = 1;
@@ -1135,4 +1156,5 @@ void PhoneNavBridge::send_device_command(moto::ble::DeviceCommand command) {
   // state_mutex_ held across this boundary.
   sender(message, moto::ble::AckRequested | moto::ble::Urgent,
          sender_context);
+  return command_id;
 }

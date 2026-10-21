@@ -207,6 +207,17 @@ moto::ble::MapScene MapSceneFromInput(MotoBLEMapSceneInput *input) {
   return scene;
 }
 
+moto::ble::HomeLocation HomeLocationFromInput(MotoBLEHomeLocationInput *input) {
+  moto::ble::HomeLocation home;
+  // The wire contract is GCJ-02 only; the device does not convert frames and
+  // refuses WGS84 rather than drawing the blip a few hundred metres away.
+  home.coordinate_system = moto::ble::CoordinateSystem::Gcj02;
+  home.revision = input.revision;
+  home.has_home = input.hasHome;
+  home.position = {input.latitudeE6, input.longitudeE6};
+  return home;
+}
+
 NSArray<NSData *> *EncodeMessage(CodecStorage *storage,
                                  const moto::ble::Message &message,
                                  std::uint8_t flags,
@@ -324,6 +335,9 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   }
   return self;
 }
+@end
+
+@implementation MotoBLEHomeLocationInput
 @end
 
 @interface MotoBLEDeviceCommand ()
@@ -524,6 +538,28 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   return EncodeMessage(storage,
                        moto::ble::Message{MapSceneFromInput(input)},
                        moto::ble::AckRequested, error);
+}
+
+- (NSArray<NSData *> *)encodeHomeLocation:(MotoBLEHomeLocationInput *)input
+                                    error:(NSError **)error {
+  auto *storage = static_cast<CodecStorage *>(_storage);
+  // No Ack: the message is idempotent and ordered by revision, and a lost one
+  // is replaced by the next address change or the next session's resend. An
+  // Ack would confirm delivery, not that a blip is on screen.
+  return EncodeMessage(storage,
+                       moto::ble::Message{HomeLocationFromInput(input)},
+                       0, error);
+}
+
+- (NSData *)encodeHomeLocationPayloadForTesting:(MotoBLEHomeLocationInput *)input
+                                          error:(NSError **)error {
+  const auto payload =
+      moto::ble::encode_message(moto::ble::Message{HomeLocationFromInput(input)});
+  if (!payload.ok()) {
+    if (error != nullptr) *error = ProtocolError(payload.error, payload.offset);
+    return nil;
+  }
+  return [NSData dataWithBytes:payload.value.data() length:payload.value.size()];
 }
 
 - (NSData *)encodeMapScenePayloadForTesting:(MotoBLEMapSceneInput *)input

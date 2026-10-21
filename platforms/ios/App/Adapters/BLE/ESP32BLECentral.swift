@@ -229,6 +229,11 @@ final class ESP32BLECentral: NSObject {
     private var pendingNavigationState: MotoNavCoreSnapshot?
     private var pendingMediaState: PhoneMediaState?
     private var pendingMapScene: OfflineMapSceneWindow?
+    /// Newest saved home. Retained across a disconnect and re-sent after every
+    /// handshake, because the device forgets its revision watermark on a new
+    /// session and must not keep a home the rider already replaced.
+    private var pendingHomeLocation: HomeLocationBroadcast?
+    private var lastSentHomeRevision: UInt32?
     private var mapSceneDelivery = BLEMapSceneDelivery()
     private var mapSceneFinalFrame: Data?
     private var shouldMaintainConnection = false
@@ -324,6 +329,14 @@ final class ESP32BLECentral: NSObject {
     func sendMapScene(_ scene: OfflineMapSceneWindow) {
         pendingMapScene = scene
         flushPendingMapScene()
+    }
+
+    /// Fire-and-forget by revision: only the newest home matters, and the
+    /// device ignores anything it has already applied. A peer that does not
+    /// advertise the capability is never sent the message type.
+    func sendHomeLocation(_ home: HomeLocationBroadcast) {
+        pendingHomeLocation = home
+        flushPendingHomeLocation()
     }
 
     private func startScan() {
@@ -580,6 +593,8 @@ final class ESP32BLECentral: NSObject {
                 }
                 flushPendingMediaState()
                 flushPendingMapScene()
+                lastSentHomeRevision = nil
+                flushPendingHomeLocation()
             }
         } catch {
             recoverFromTransportError(error.localizedDescription)
@@ -668,6 +683,7 @@ final class ESP32BLECentral: NSObject {
         lastRouteGeometrySignature = nil
         mapSceneDelivery = BLEMapSceneDelivery()
         mapSceneFinalFrame = nil
+        lastSentHomeRevision = nil
         phoneToDeviceCharacteristic = nil
         deviceToPhoneCharacteristic = nil
         codec = nil
@@ -895,6 +911,37 @@ final class ESP32BLECentral: NSObject {
         }
     }
 
+    private func flushPendingHomeLocation() {
+        guard protocolReady,
+              let codec,
+              let home = pendingHomeLocation,
+              home.supports(capabilities: peerCapabilities),
+              home.revision != lastSentHomeRevision
+        else { return }
+
+        do {
+            try send(codec.encodeHomeLocation(makeHomeLocationInput(home)))
+            lastSentHomeRevision = home.revision
+            trace("home revision=\(home.revision) set=\(home.hasHome)")
+        } catch {
+            // Keep the newest value for a future protocol-ready session.
+            recoverFromTransportError(error.localizedDescription)
+        }
+    }
+
+    private func makeHomeLocationInput(
+        _ home: HomeLocationBroadcast
+    ) -> MotoBLEHomeLocationInput {
+        let input = MotoBLEHomeLocationInput()
+        input.revision = home.revision
+        input.hasHome = home.hasHome
+        if let coordinate = home.coordinate {
+            input.latitudeE6 = Self.bridgeCoordinateE6(coordinate.latitudeDeg)
+            input.longitudeE6 = Self.bridgeCoordinateE6(coordinate.longitudeDeg)
+        }
+        return input
+    }
+
     private static func routeGeometrySignature(
         for state: MotoNavCoreSnapshot
     ) -> RouteGeometrySignature? {
@@ -921,6 +968,13 @@ final class ESP32BLECentral: NSObject {
     private static func coordinateE6(_ value: Double) -> Int64 {
         guard value.isFinite else { return 0 }
         return Int64((value * 1_000_000).rounded())
+    }
+
+    /// The bridge takes int32; a coordinate outside the encodable range is a
+    /// bug upstream, not something to wrap into a plausible-looking address.
+    private static func bridgeCoordinateE6(_ value: Double) -> Int32 {
+        let e6 = coordinateE6(value)
+        return Int32(clamping: e6)
     }
 
     private func flushWrites() {

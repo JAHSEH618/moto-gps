@@ -4,12 +4,14 @@ enum BLEProtocolGoldenCheck {
     enum CheckError: LocalizedError {
         case fixtureMissing
         case vectorMissing
+        case homeVectorMissing
         case mismatch(expected: String, actual: String)
 
         var errorDescription: String? {
             switch self {
             case .fixtureMissing: "BLE v1 黄金帧资源不存在"
             case .vectorMissing: "BLE v1 黄金帧缺少 navigation.payload"
+            case .homeVectorMissing: "BLE v1 黄金帧缺少 home.payload"
             case let .mismatch(expected, actual):
                 "BLE v1 编码不一致：expected \(expected), actual \(actual)"
             }
@@ -63,6 +65,25 @@ enum BLEProtocolGoldenCheck {
         let actual = payload.map { String(format: "%02x", $0) }.joined()
         guard actual == expected else {
             throw CheckError.mismatch(expected: expected, actual: actual)
+        }
+
+        guard let expectedHome = fixture
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("home.payload=") })?
+            .split(separator: "=", maxSplits: 1)
+            .last
+            .map(String.init)
+        else { throw CheckError.homeVectorMissing }
+
+        let home = MotoBLEHomeLocationInput()
+        home.revision = 3
+        home.hasHome = true
+        home.latitudeE6 = 36_674_512
+        home.longitudeE6 = 117_122_880
+        let homePayload = try codec.encodeHomeLocationPayload(forTesting: home)
+        let actualHome = homePayload.map { String(format: "%02x", $0) }.joined()
+        guard actualHome == expectedHome else {
+            throw CheckError.mismatch(expected: expectedHome, actual: actualHome)
         }
     }
 }
