@@ -358,6 +358,8 @@ enum class DisplayPage : std::uint8_t {
   Speed = 1,
   Compass = 2,
   Music = 3,
+  Performance = 4,
+  Lean = 5,
 };
 
 enum NavigationFlag : std::uint16_t {

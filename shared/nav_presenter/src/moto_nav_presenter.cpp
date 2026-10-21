@@ -45,6 +45,8 @@ moto_ui_mode_t map_mode(const NavSnapshot& snapshot) {
 moto_ui_page_t map_page(DisplayPage page) {
   switch(page) {
     case DisplayPage::Navigation: return MOTO_UI_PAGE_NAVIGATION;
+    case DisplayPage::Performance: return MOTO_UI_PAGE_PERFORMANCE;
+    case DisplayPage::Lean: return MOTO_UI_PAGE_LEAN;
     case DisplayPage::Speed: return MOTO_UI_PAGE_SPEED;
     case DisplayPage::Compass: return MOTO_UI_PAGE_COMPASS;
     case DisplayPage::Music: return MOTO_UI_PAGE_MUSIC;

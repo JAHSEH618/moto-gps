@@ -238,7 +238,7 @@ bool valid_coordinate_system(CoordinateSystem system) {
 }
 
 bool valid_display_page(DisplayPage page) {
-  return enum_at_most(page, DisplayPage::Music);
+  return enum_at_most(page, DisplayPage::Lean);
 }
 
 bool valid_map_road_class(MapRoadClass road_class) {

@@ -97,6 +97,8 @@ void present_snapshot(const NavSnapshot& snapshot, void* context) {
 
 DisplayPage display_page_from_ui(moto_ui_page_t page) {
   switch(page) {
+    case MOTO_UI_PAGE_PERFORMANCE: return DisplayPage::Performance;
+    case MOTO_UI_PAGE_LEAN: return DisplayPage::Lean;
     case MOTO_UI_PAGE_SPEED: return DisplayPage::Speed;
     case MOTO_UI_PAGE_COMPASS: return DisplayPage::Compass;
     case MOTO_UI_PAGE_MUSIC: return DisplayPage::Music;
@@ -680,6 +682,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE void moto_web_set_heading_offset(int degrees) {
 
 extern "C" EMSCRIPTEN_KEEPALIVE int moto_web_get_page(void) {
   switch(app.snapshot().display_page) {
+    case DisplayPage::Performance: return MOTO_UI_PAGE_PERFORMANCE;
+    case DisplayPage::Lean: return MOTO_UI_PAGE_LEAN;
     case DisplayPage::Speed: return MOTO_UI_PAGE_SPEED;
     case DisplayPage::Compass: return MOTO_UI_PAGE_COMPASS;
     case DisplayPage::Music: return MOTO_UI_PAGE_MUSIC;

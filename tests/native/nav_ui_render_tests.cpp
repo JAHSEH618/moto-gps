@@ -292,6 +292,37 @@ void test_day_and_night_themes_render_different_map_colors() {
   moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
 }
 
+void test_performance_and_lean_pages_render_attitude() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.has_attitude = 1;
+  state.lean_deg = 30.0F;
+  state.longitudinal_g = 0.4F;
+  state.lateral_g = 0.6F;
+  state.page = MOTO_UI_PAGE_LEAN;
+  moto_nav_ui_set_state(&state);
+  const Frame lean_right = capture();
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_LEAN);
+
+  state.lean_deg = -20.0F;
+  moto_nav_ui_set_state(&state);
+  const Frame lean_left = capture();
+  CHECK(lean_right.hash != lean_left.hash);
+
+  state.page = MOTO_UI_PAGE_PERFORMANCE;
+  moto_nav_ui_set_state(&state);
+  const Frame perf = capture();
+  CHECK(perf.hash != lean_left.hash);
+
+  state.lateral_g = -1.2F;
+  moto_nav_ui_set_state(&state);
+  const Frame perf_changed = capture();
+  CHECK(perf.hash != perf_changed.hash);
+
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+}
+
 void test_clearing_geometry_leaves_no_residue() {
   moto_ui_state_t with_route = base_state();
   fill_route(with_route, 18);
@@ -540,6 +571,7 @@ int main(int argc, char **argv) {
   test_a_building_footprint_interior_is_filled();
   test_the_map_covers_the_bottom_of_the_round_canvas();
   test_day_and_night_themes_render_different_map_colors();
+  test_performance_and_lean_pages_render_attitude();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_phone_lifecycle_renders_deterministically();
