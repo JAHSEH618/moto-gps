@@ -148,6 +148,12 @@ typedef struct {
         building_footprints[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY];
     const char *road_name;
     const char *next_road_name;
+    /* Device-side attitude telemetry for the PERF / LEAN pages. */
+    uint8_t has_attitude;
+    float lean_deg;
+    float pitch_deg;
+    float longitudinal_g;
+    float lateral_g;
 } moto_ui_state_t;
 
 void moto_nav_ui_create(void);

@@ -123,6 +123,14 @@ struct NavSnapshot {
   double distance_to_next_maneuver_m = 0.0;
   TrafficLevel traffic_ahead = TrafficLevel::Unknown;
 
+  // Device-side attitude telemetry. has_attitude stays false until the
+  // handlebar IMU has produced a valid estimate for this session.
+  bool has_attitude = false;
+  float lean_deg = 0.0F;
+  float pitch_deg = 0.0F;
+  float longitudinal_g = 0.0F;
+  float lateral_g = 0.0F;
+
   TimestampMs now_ms = 0;
   TimestampMs last_fix_ms = 0;
   TimestampMs last_traffic_update_ms = 0;

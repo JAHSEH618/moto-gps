@@ -98,6 +98,46 @@ void test_display_pages_map_without_changing_navigation_mode() {
   }
 }
 
+void test_attitude_is_mapped_and_sanitized() {
+  NavPresenter presenter;
+  NavSnapshot snapshot;
+  snapshot.state = NavState::Navigating;
+  snapshot.has_attitude = true;
+  snapshot.lean_deg = 32.5F;
+  snapshot.pitch_deg = -4.25F;
+  snapshot.longitudinal_g = -0.31F;
+  snapshot.lateral_g = 0.64F;
+  presenter.update(snapshot);
+
+  CHECK(presenter.ui_state().has_attitude == 1);
+  CHECK(std::abs(presenter.ui_state().lean_deg - 32.5F) < 0.001F);
+  CHECK(std::abs(presenter.ui_state().pitch_deg + 4.25F) < 0.001F);
+  CHECK(std::abs(presenter.ui_state().longitudinal_g + 0.31F) < 0.001F);
+  CHECK(std::abs(presenter.ui_state().lateral_g - 0.64F) < 0.001F);
+
+  snapshot.has_attitude = false;
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().has_attitude == 0);
+  CHECK(presenter.ui_state().lean_deg == 0.0F);
+  CHECK(presenter.ui_state().lateral_g == 0.0F);
+
+  snapshot.has_attitude = true;
+  snapshot.lean_deg = 400.0F;
+  snapshot.pitch_deg = 200.0F;
+  snapshot.longitudinal_g = 9.0F;
+  snapshot.lateral_g = -99.0F;
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().has_attitude == 1);
+  CHECK(presenter.ui_state().lean_deg == 180.0F);
+  CHECK(presenter.ui_state().pitch_deg == 90.0F);
+  CHECK(presenter.ui_state().longitudinal_g == 4.0F);
+  CHECK(presenter.ui_state().lateral_g == -4.0F);
+
+  snapshot.lean_deg = std::numeric_limits<float>::quiet_NaN();
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().has_attitude == 0);
+}
+
 void test_all_maneuvers() {
   struct ManeuverCase {
     ManeuverType input;
@@ -503,6 +543,7 @@ void test_apply_to_lvgl_uses_last_owned_state() {
 int main() {
   test_all_navigation_and_network_states();
   test_display_pages_map_without_changing_navigation_mode();
+  test_attitude_is_mapped_and_sanitized();
   test_all_maneuvers();
   test_all_traffic_levels();
   test_metrics_are_rounded_clamped_and_deterministic();
