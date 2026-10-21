@@ -64,7 +64,12 @@ if(TARGET lvgl)
   set(MOTO_NATIVE_LVGL_HEAP_BYTES "8388608" CACHE STRING
       "LVGL internal heap for native render tests; use 65536 for board parity")
   target_compile_definitions(lvgl PRIVATE
-    CONFIG_LV_MEM_SIZE=${MOTO_NATIVE_LVGL_HEAP_BYTES})
+    CONFIG_LV_MEM_SIZE=${MOTO_NATIVE_LVGL_HEAP_BYTES}
+    # LV_ASSERT_HANDLER defaults to `while(1);`, which turns a null-object bug
+    # into a silent 100% CPU spin that ctest can only report as a timeout.
+    # Trap instead, so the failure arrives as a stack in the test log. Only the
+    # native build gets this; the firmware keeps the spin on purpose.
+    "LV_ASSERT_HANDLER=__builtin_trap()\\;")
   add_executable(nav_ui_render_tests nav_ui_render_tests.cpp)
   target_link_libraries(nav_ui_render_tests PRIVATE moto_nav_ui lvgl)
   target_compile_features(nav_ui_render_tests PRIVATE cxx_std_17)
@@ -149,6 +154,9 @@ target_compile_features(phone_nav_bridge_tests PRIVATE cxx_std_17)
 add_test(NAME nav_core_tests COMMAND nav_core_tests)
 if(TARGET nav_ui_render_tests)
   add_test(NAME nav_ui_render_tests COMMAND nav_ui_render_tests)
+  # A trap is instant, but a deadlock or an accidental infinite loop in a
+  # timer is not. Fail in three minutes instead of ctest's 1500 s default.
+  set_tests_properties(nav_ui_render_tests PROPERTIES TIMEOUT 180)
 endif()
 add_test(NAME nav_app_tests COMMAND nav_app_tests)
 add_test(NAME nav_presenter_tests COMMAND nav_presenter_tests)
