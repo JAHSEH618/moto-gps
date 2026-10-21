@@ -349,6 +349,23 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
       static_cast<double>(snapshot.speed_mps) * 3.6);
   ui_state_.speed_limit_kph = snapshot.speed_limit_kph;
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
+  const bool attitude_valid =
+      snapshot.has_attitude && std::isfinite(snapshot.lean_deg) &&
+      std::isfinite(snapshot.pitch_deg) &&
+      std::isfinite(snapshot.longitudinal_g) &&
+      std::isfinite(snapshot.lateral_g);
+  ui_state_.has_attitude = attitude_valid ? 1 : 0;
+  ui_state_.lean_deg = attitude_valid
+                           ? std::clamp(snapshot.lean_deg, -180.0F, 180.0F)
+                           : 0.0F;
+  ui_state_.pitch_deg = attitude_valid
+                            ? std::clamp(snapshot.pitch_deg, -90.0F, 90.0F)
+                            : 0.0F;
+  ui_state_.longitudinal_g =
+      attitude_valid ? std::clamp(snapshot.longitudinal_g, -4.0F, 4.0F)
+                     : 0.0F;
+  ui_state_.lateral_g =
+      attitude_valid ? std::clamp(snapshot.lateral_g, -4.0F, 4.0F) : 0.0F;
   // Route, roads and buildings share one rider-centred transform. Besides
   // guaranteeing exact layer alignment, this avoids repeating trigonometry
   // hundreds of times on every high-rate IMU frame.
