@@ -83,10 +83,12 @@ constexpr std::uint32_t kConnectionSuccessHoldMs = 920;
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
 // Home blip geometry, in design pixels like every other HUD measurement.
 constexpr int kHomeBlipSizeDesign = 14;
-// The panel is round: anything past this radius is cropped by the glass, so
-// the blip is hidden rather than drawn into a corner nobody can see.
-constexpr int32_t kHomeBlipSafeRadiusPx =
-    (MOTO_UI_CANVAS_WIDTH / 2) - 28;
+// The panel is round: the ring sits just inside the glass, and a blip further
+// out is clamped to it rather than dropped.
+constexpr std::uint32_t kHomeHintMs = 3'000;
+// North badge diameter. It rides the ring, so it is sized in design pixels
+// like the rest of the HUD.
+constexpr int kNorthBadgeSizeDesign = 20;
 
 enum class LifecycleVisual : std::uint8_t {
     Hidden = 0,
@@ -178,8 +180,15 @@ struct Ui {
     lv_obj_t *nav_limit = nullptr;
     lv_obj_t *nav_limit_value = nullptr;
     lv_obj_t *nav_home = nullptr;
+    lv_obj_t *nav_home_hint = nullptr;
+    lv_timer_t *nav_home_hint_timer = nullptr;
     std::uint16_t nav_speed_kph = 0;
-    lv_obj_t *nav_progress = nullptr;
+    // The ring replaces the old 84-degree arc: the whole rim is the gauge now,
+    // and the north badge rides it.
+    lv_obj_t *nav_ring = nullptr;
+    lv_obj_t *nav_north = nullptr;
+    std::uint8_t nav_radar_progress = 0;
+    moto_traffic_t nav_radar_traffic = MOTO_TRAFFIC_UNKNOWN;
 
     // A full-screen empty-state surface replaces the old tiny
     // WAITING FOR PHONE / WAITING FOR ROUTE caption. It is kept inside the
@@ -247,6 +256,10 @@ struct Ui {
     bool music_page_enabled = true;
     bool demo_active = false;
     bool reduce_motion = false;
+    // True only while the full widget tree from moto_nav_ui_create() exists.
+    // A terminal screen clears it, so every mutator becomes inert in the
+    // shutdown window instead of trusting a pointer that still looks valid.
+    bool live = false;
 } ui;
 
 void reset_ui_state() {
@@ -257,6 +270,10 @@ void reset_ui_state() {
     // offline map buffers make Ui about 15 KiB, so that temporary can consume
     // nearly the whole ESP-IDF main-task stack before LVGL is called.  Clear
     // the retained instance in place and restore the two non-zero defaults.
+    //
+    // This also clears `ui.live` and the four callbacks, so a caller that
+    // intends to receive taps must install them *after* create(); a callback
+    // registered before it is silently discarded.
     std::memset(&ui, 0, sizeof(ui));
     ui.page = MOTO_UI_PAGE_NAVIGATION;
     ui.page_dots_visible = true;
@@ -273,6 +290,41 @@ void reset_ui_state() {
     ui.nav_route_identity = ~std::uint32_t{0};
     ui.nav_road_scene_revision = ~std::uint32_t{0};
     ui.nav_building_scene_revision = ~std::uint32_t{0};
+}
+
+// Every screen that owns the whole widget tree leaves through here. The
+// timers go first: they retain raw widget pointers, and lv_obj_clean() is what
+// invalidates those pointers. Clearing the pointers is what stops a late
+// snapshot from reaching freed LVGL objects; clearing `ui.live` is what stops
+// a late touch or a second create() from doing the same thing by another door.
+void teardown_ui() {
+    if(ui.page_dots_timer != nullptr) {
+        lv_timer_delete(ui.page_dots_timer);
+        ui.page_dots_timer = nullptr;
+    }
+    if(ui.nav_route_motion_timer != nullptr) {
+        lv_timer_delete(ui.nav_route_motion_timer);
+        ui.nav_route_motion_timer = nullptr;
+    }
+    if(ui.nav_lifecycle_timer != nullptr) {
+        lv_timer_delete(ui.nav_lifecycle_timer);
+        ui.nav_lifecycle_timer = nullptr;
+    }
+    if(ui.nav_success_timer != nullptr) {
+        lv_timer_delete(ui.nav_success_timer);
+        ui.nav_success_timer = nullptr;
+    }
+    if(ui.nav_home_hint_timer != nullptr) {
+        lv_timer_delete(ui.nav_home_hint_timer);
+        ui.nav_home_hint_timer = nullptr;
+    }
+    reset_ui_state();
+    // The active screen itself is never deleted, only its children. Keep it so
+    // the boot and power-off screens still have a surface to draw on.
+    ui.screen = lv_screen_active();
+    if(ui.screen != nullptr) {
+        lv_obj_clean(ui.screen);
+    }
 }
 
 lv_obj_t *make_layer(lv_obj_t *parent) {
@@ -429,6 +481,7 @@ void reveal_page_dots() {
 }
 
 void interaction_event(lv_event_t *) {
+    if(!ui.live) return;
     reveal_page_dots();
 }
 
@@ -444,6 +497,11 @@ void install_interaction_wake(lv_obj_t *object) {
 
 void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
     if(page < MOTO_UI_PAGE_NAVIGATION || page >= MOTO_UI_PAGE_COUNT) return;
+    // The boot and power-off screens clean the widget tree and reset the page
+    // pointers. A snapshot that arrives during that window (the BLE task can
+    // still deliver one before the PMIC cuts power) must not touch LVGL: the
+    // object is gone and LVGL asserts on it.
+    if(ui.pages[page] == nullptr) return;
     if(page == MOTO_UI_PAGE_MUSIC && !ui.music_page_enabled) {
         page = MOTO_UI_PAGE_NAVIGATION;
     }
@@ -463,6 +521,8 @@ void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
 }
 
 void gesture_event(lv_event_t *) {
+    // Screen event callbacks outlive lv_obj_clean(); see teardown_ui().
+    if(!ui.live) return;
     lv_indev_t *indev = lv_indev_active();
     if(indev == nullptr) return;
     const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
@@ -973,9 +1033,18 @@ void update_route_geometry(const moto_ui_state_t *state) {
         ui.nav_route_target_count = 0;
         ui.nav_route_identity = state->route_identity;
         ui.nav_route_generation = state->route_generation;
-        lv_obj_add_flag(ui.nav_route_shadow, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(ui.nav_route, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(ui.nav_marker, LV_OBJ_FLAG_HIDDEN);
+        // The only objects that may legitimately be absent while the UI is
+        // live: the route layer is optional, unlike the page tree, which the
+        // `live` gate already guarantees.
+        if(ui.nav_route_shadow != nullptr) {
+            lv_obj_add_flag(ui.nav_route_shadow, LV_OBJ_FLAG_HIDDEN);
+        }
+        if(ui.nav_route != nullptr) {
+            lv_obj_add_flag(ui.nav_route, LV_OBJ_FLAG_HIDDEN);
+        }
+        if(ui.nav_marker != nullptr) {
+            lv_obj_add_flag(ui.nav_marker, LV_OBJ_FLAG_HIDDEN);
+        }
         return;
     }
 
@@ -1547,7 +1616,8 @@ void set_navigation_guidance_visible(bool visible) {
         ui.nav_maneuver,
         ui.nav_distance,
         ui.nav_unit,
-        ui.nav_progress,
+        ui.nav_ring,
+        ui.nav_north,
     };
     for(lv_obj_t *object : objects) {
         if(visible) {
@@ -1556,7 +1626,11 @@ void set_navigation_guidance_visible(bool visible) {
             lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
         }
     }
-    if(!visible) lv_obj_add_flag(ui.nav_limit, LV_OBJ_FLAG_HIDDEN);
+    if(!visible) {
+        lv_obj_add_flag(ui.nav_limit, LV_OBJ_FLAG_HIDDEN);
+        // The hint belongs to the instrument, not to the empty-state surface.
+        lv_obj_add_flag(ui.nav_home_hint, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void update_nav_status(const moto_ui_state_t *state) {
@@ -1590,6 +1664,7 @@ void update_nav_status(const moto_ui_state_t *state) {
 // from update_navigation().
 void update_home_shortcut();
 void update_home_blip(const moto_ui_state_t *state);
+void update_radar_ring(const moto_ui_state_t *state);
 
 void update_navigation(const moto_ui_state_t *state) {
     update_building_geometry(state);
@@ -1631,10 +1706,7 @@ void update_navigation(const moto_ui_state_t *state) {
     lv_obj_align_to(ui.nav_unit, ui.nav_distance, LV_ALIGN_OUT_RIGHT_BOTTOM,
                     px(6), px(-7));
 
-    lv_arc_set_value(ui.nav_progress,
-                     std::min<int>(100, state->route_progress_percent));
-    lv_obj_set_style_arc_color(ui.nav_progress, traffic_color(state->traffic),
-                               LV_PART_INDICATOR);
+    update_radar_ring(state);
 
     if(state->speed_limit_kph > 0) {
         char limit[8];
@@ -1830,21 +1902,100 @@ void update_home_shortcut() {
 
 void update_home_blip(const moto_ui_state_t *state) {
     if(ui.nav_home_blip == nullptr) return;
-    bool visible = state->has_home != 0;
-    if(visible) {
-        const int32_t dx = state->home_x - MOTO_UI_CANVAS_WIDTH / 2;
-        const int32_t dy = state->home_y - MOTO_UI_CANVAS_HEIGHT / 2;
-        visible = dx * dx + dy * dy <=
-                  kHomeBlipSafeRadiusPx * kHomeBlipSafeRadiusPx;
-    }
-    if(!visible) {
+    if(state->has_home == 0) {
         lv_obj_add_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    const int size = px(kHomeBlipSizeDesign);
-    lv_obj_set_pos(ui.nav_home_blip, state->home_x - size / 2,
-                   state->home_y - size / 2);
+    const int32_t size = px(kHomeBlipSizeDesign);
+    const int32_t centre_x = MOTO_UI_CANVAS_WIDTH / 2;
+    const int32_t centre_y = MOTO_UI_CANVAS_HEIGHT / 2;
+    const int32_t clamp_radius =
+        MOTO_UI_RADAR_RING_RADIUS_PX - size / 2 - px(2);
+    int32_t dx = state->home_x - centre_x;
+    int32_t dy = state->home_y - centre_y;
+    const std::int64_t distance_sq =
+        static_cast<std::int64_t>(dx) * dx + static_cast<std::int64_t>(dy) * dy;
+    if(distance_sq >
+       static_cast<std::int64_t>(clamp_radius) * clamp_radius) {
+        // A home three kilometres away must still be findable: keep its bearing
+        // and pin it to the ring instead of dropping the safehouse entirely.
+        const double distance = std::sqrt(static_cast<double>(distance_sq));
+        dx = static_cast<int32_t>(std::lround(dx / distance * clamp_radius));
+        dy = static_cast<int32_t>(std::lround(dy / distance * clamp_radius));
+    }
+    lv_obj_set_pos(ui.nav_home_blip, centre_x + dx - size / 2,
+                   centre_y + dy - size / 2);
     lv_obj_remove_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
+}
+
+void update_radar_ring(const moto_ui_state_t *state) {
+    if(ui.nav_ring != nullptr) {
+        const std::uint8_t progress = static_cast<std::uint8_t>(
+            std::min<int>(100, std::max<int>(0, state->route_progress_percent)));
+        if(progress != ui.nav_radar_progress ||
+           state->traffic != ui.nav_radar_traffic) {
+            ui.nav_radar_progress = progress;
+            ui.nav_radar_traffic = state->traffic;
+            lv_obj_invalidate(ui.nav_ring);
+        }
+    }
+    if(ui.nav_north == nullptr) return;
+    // Heading-up map: north is wherever the rider is pointing away from. A
+    // badge pinned to twelve o'clock would be a lie on a rotating map.
+    const double heading =
+        static_cast<double>(state->heading_deg) * kPi / 180.0;
+    const int32_t centre_x = MOTO_UI_CANVAS_WIDTH / 2;
+    const int32_t centre_y = MOTO_UI_CANVAS_HEIGHT / 2;
+    const int32_t size = px(kNorthBadgeSizeDesign);
+    const int32_t x = centre_x - static_cast<int32_t>(
+                           std::lround(std::sin(heading) *
+                                       MOTO_UI_RADAR_RING_RADIUS_PX));
+    const int32_t y = centre_y - static_cast<int32_t>(
+                           std::lround(std::cos(heading) *
+                                       MOTO_UI_RADAR_RING_RADIUS_PX));
+    lv_obj_set_pos(ui.nav_north, x - size / 2, y - size / 2);
+}
+
+void draw_radar_ring(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_draw_arc_dsc_t dsc;
+    lv_draw_arc_dsc_init(&dsc);
+    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
+    dsc.radius = MOTO_UI_RADAR_RING_RADIUS_PX;
+    dsc.width = px(2);
+    dsc.rounded = 0;
+    dsc.color = ui.palette.building;
+    // Two halves instead of 0..360: a wrapped arc is the one thing every LVGL
+    // major version treats differently, and the rim is too visible to gamble.
+    dsc.start_angle = 0;
+    dsc.end_angle = 180;
+    lv_draw_arc(layer, &dsc);
+    dsc.start_angle = 180;
+    dsc.end_angle = 360;
+    lv_draw_arc(layer, &dsc);
+
+    if(ui.nav_radar_progress == 0) return;
+    // The rim is the gauge: progress runs clockwise from twelve o'clock, in the
+    // traffic colour this screen does not show anywhere else.
+    dsc.color = traffic_color(ui.nav_radar_traffic);
+    dsc.width = px(4);
+    double cursor = 270.0;
+    double left = ui.nav_radar_progress * 3.6;
+    while(left > 0.001) {
+        const double end = std::min(360.0, cursor + left);
+        dsc.start_angle = static_cast<std::uint16_t>(std::lround(cursor));
+        dsc.end_angle = static_cast<std::uint16_t>(std::lround(end));
+        lv_draw_arc(layer, &dsc);
+        left -= end - cursor;
+        cursor = end >= 360.0 ? 0.0 : end;
+    }
+}
+
+void hide_home_hint(lv_timer_t *timer) {
+    lv_timer_pause(timer);
+    if(ui.nav_home_hint != nullptr) {
+        lv_obj_add_flag(ui.nav_home_hint, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void create_navigation_page() {
@@ -1986,20 +2137,42 @@ void create_navigation_page() {
     ui.nav_limit_value = make_label(ui.nav_limit, &lv_font_montserrat_28, kBlack, "70");
     lv_obj_center(ui.nav_limit_value);
 
-    ui.nav_progress = lv_arc_create(page);
-    lv_obj_set_size(ui.nav_progress, px(316), px(316));
-    lv_obj_center(ui.nav_progress);
-    lv_arc_set_rotation(ui.nav_progress, 48);
-    lv_arc_set_bg_angles(ui.nav_progress, 0, 84);
-    lv_arc_set_range(ui.nav_progress, 0, 100);
-    lv_arc_set_value(ui.nav_progress, 24);
-    lv_obj_remove_style(ui.nav_progress, nullptr, LV_PART_KNOB);
-    lv_obj_clear_flag(ui.nav_progress, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_arc_width(ui.nav_progress, px(3), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(ui.nav_progress, kGraphite, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(ui.nav_progress, px(4), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(ui.nav_progress, kIce, LV_PART_INDICATOR);
-    lv_obj_move_to_index(ui.nav_progress, 0);
+    // The rim is the gauge. It is drawn on its own full-canvas layer above the
+    // map so the route, the blip and the sweep can never paint over it.
+    ui.nav_ring = make_layer(page);
+    lv_obj_remove_flag(ui.nav_ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_name_static(ui.nav_ring, "moto-radar-ring");
+    lv_obj_add_event_cb(ui.nav_ring, draw_radar_ring, LV_EVENT_DRAW_MAIN,
+                        nullptr);
+
+    ui.nav_north = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.nav_north);
+    lv_obj_set_size(ui.nav_north, px(kNorthBadgeSizeDesign),
+                    px(kNorthBadgeSizeDesign));
+    lv_obj_set_style_radius(ui.nav_north, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ui.nav_north, kBlack, 0);
+    lv_obj_set_style_bg_opa(ui.nav_north, LV_OPA_80, 0);
+    lv_obj_clear_flag(ui.nav_north, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_name_static(ui.nav_north, "moto-compass-north");
+    lv_obj_t *north_glyph =
+        make_label(ui.nav_north, &lv_font_montserrat_16, kWhite, "N");
+    lv_obj_center(north_glyph);
+
+    // One line, three seconds, and only when the phone refuses the tap. The
+    // device cannot know whether a home exists; guessing would be worse than
+    // saying nothing.
+    ui.nav_home_hint = make_label(page, &lv_font_montserrat_16, kAmber,
+                                  "SET HOME ON PHONE");
+    lv_obj_set_name_static(ui.nav_home_hint, "moto-home-hint");
+    lv_obj_set_style_bg_color(ui.nav_home_hint, kBlack, 0);
+    lv_obj_set_style_bg_opa(ui.nav_home_hint, LV_OPA_80, 0);
+    lv_obj_set_style_pad_hor(ui.nav_home_hint, px(6), 0);
+    lv_obj_set_style_pad_ver(ui.nav_home_hint, px(2), 0);
+    lv_obj_align(ui.nav_home_hint, LV_ALIGN_TOP_MID, 0, px(40));
+    lv_obj_add_flag(ui.nav_home_hint, LV_OBJ_FLAG_HIDDEN);
+    ui.nav_home_hint_timer = lv_timer_create(hide_home_hint, kHomeHintMs,
+                                             nullptr);
+    lv_timer_pause(ui.nav_home_hint_timer);
 
     // Route home. Deliberately a small stop-time control, not part of the
     // riding HUD: it disappears above the speed gate so a glove or a mount
@@ -2318,28 +2491,10 @@ void set_boot_content_opacity(void *object, int32_t opacity) {
 }  // namespace
 
 extern "C" void moto_nav_ui_show_boot_screen(void) {
-    /* This entry point is also used while the full UI is live. Delete every
-       timer that retains widget pointers before reset_ui_state() and
-       lv_obj_clean() invalidate the tree. */
-    if(ui.page_dots_timer != nullptr) {
-        lv_timer_delete(ui.page_dots_timer);
-        ui.page_dots_timer = nullptr;
-    }
-    if(ui.nav_route_motion_timer != nullptr) {
-        lv_timer_delete(ui.nav_route_motion_timer);
-        ui.nav_route_motion_timer = nullptr;
-    }
-    if(ui.nav_lifecycle_timer != nullptr) {
-        lv_timer_delete(ui.nav_lifecycle_timer);
-        ui.nav_lifecycle_timer = nullptr;
-    }
-    if(ui.nav_success_timer != nullptr) {
-        lv_timer_delete(ui.nav_success_timer);
-        ui.nav_success_timer = nullptr;
-    }
-    reset_ui_state();
-    ui.screen = lv_screen_active();
-    lv_obj_clean(ui.screen);
+    /* Also used while the full UI is live, so it must leave nothing behind
+       that still points at the previous tree. */
+    teardown_ui();
+    if(ui.screen == nullptr) return;
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
     const lv_color_t boot_black = LV_COLOR_MAKE(0x00, 0x00, 0x00);
     const lv_color_t boot_white = LV_COLOR_MAKE(0xFF, 0xFF, 0xFF);
@@ -2398,25 +2553,8 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
 }
 
 extern "C" void moto_nav_ui_show_power_off_screen(void) {
+    teardown_ui();
     if(ui.screen == nullptr) return;
-    if(ui.page_dots_timer != nullptr) {
-        lv_timer_delete(ui.page_dots_timer);
-        ui.page_dots_timer = nullptr;
-    }
-    if(ui.nav_route_motion_timer != nullptr) {
-        lv_timer_delete(ui.nav_route_motion_timer);
-        ui.nav_route_motion_timer = nullptr;
-    }
-    if(ui.nav_lifecycle_timer != nullptr) {
-        lv_timer_delete(ui.nav_lifecycle_timer);
-        ui.nav_lifecycle_timer = nullptr;
-    }
-    if(ui.nav_success_timer != nullptr) {
-        lv_timer_delete(ui.nav_success_timer);
-        ui.nav_success_timer = nullptr;
-    }
-
-    lv_obj_clean(ui.screen);
     lv_obj_set_style_bg_color(ui.screen, LV_COLOR_MAKE(0x00, 0x00, 0x00), 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
 
@@ -2437,12 +2575,17 @@ extern "C" void moto_nav_ui_show_power_off_screen(void) {
 }
 
 extern "C" void moto_nav_ui_create(void) {
-    reset_ui_state();
-    ui.screen = lv_screen_active();
-    lv_obj_clean(ui.screen);
+    // Normally runs right after the boot screen, but a second create() while
+    // the UI is live must retire the old timers before the tree is replaced.
+    teardown_ui();
+    if(ui.screen == nullptr) return;
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(ui.screen, kBlack, 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
+    // The active screen survives lv_obj_clean(), so a second create() would
+    // otherwise stack a duplicate gesture and wake callback on it.
+    lv_obj_remove_event_cb(ui.screen, gesture_event);
+    lv_obj_remove_event_cb(ui.screen, interaction_event);
     lv_obj_add_event_cb(ui.screen, gesture_event, LV_EVENT_GESTURE, nullptr);
     for(int i = 0; i < MOTO_UI_PAGE_COUNT; ++i) {
         ui.pages[i] = make_layer(ui.screen);
@@ -2459,6 +2602,9 @@ extern "C" void moto_nav_ui_create(void) {
     // necessarily to its page. Register once across the finished tree so any
     // touch reliably wakes the dots, including the map and music controls.
     install_interaction_wake(ui.screen);
+    // The tree is complete. This must be set before the two public entry
+    // points below, because they are gated on it like every other mutator.
+    ui.live = true;
 
     moto_music_state_t initial_music = {
         "APPLE MUSIC", "NIGHT RIDE", "PHONE NOW PLAYING", 1, 1, 0, 0,
@@ -2507,6 +2653,7 @@ void apply_theme_colors() {
 }
 
 extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
+    if(!ui.live) return;
     ui.theme = theme;
     switch(theme) {
         case MOTO_UI_THEME_GTA_DAY: ui.palette = kGtaDayPalette; break;
@@ -2518,7 +2665,7 @@ extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
 }
 
 void moto_nav_ui_set_state(const moto_ui_state_t *state) {
-    if(state == nullptr || ui.screen == nullptr) return;
+    if(state == nullptr || !ui.live) return;
     ui.nav_speed_kph = state->speed_kph;
     show_page(state->page);
     // Hidden pages do not need to be invalidated. Page changes immediately
@@ -2535,8 +2682,21 @@ void moto_nav_ui_set_state(const moto_ui_state_t *state) {
     }
 }
 
+extern "C" void moto_nav_ui_show_home_error(void) {
+    if(!ui.live) return;
+    if(ui.nav_home_hint == nullptr || ui.nav_home_hint_timer == nullptr) {
+        return;
+    }
+    lv_obj_remove_flag(ui.nav_home_hint, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_reset(ui.nav_home_hint_timer);
+    lv_timer_resume(ui.nav_home_hint_timer);
+}
+
 extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
-    if(state == nullptr || ui.screen == nullptr || state->page != ui.page) return;
+    if(state == nullptr || !ui.live ||
+       ui.pages[MOTO_UI_PAGE_NAVIGATION] == nullptr || state->page != ui.page) {
+        return;
+    }
     // QMI8658 samples arrive at high frequency. Only the route polyline or
     // compass rose actually changes with yaw; labels, arcs and hidden pages
     // remain untouched so LVGL submits a small, bounded dirty region.
@@ -2544,6 +2704,7 @@ extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);
+        update_radar_ring(state);
     } else if(ui.page == MOTO_UI_PAGE_COMPASS) {
         update_compass(state);
     } else if(ui.page == MOTO_UI_PAGE_LEAN) {
@@ -2555,7 +2716,8 @@ extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
 
 extern "C" void moto_nav_ui_set_phone_connection(
     moto_ui_phone_connection_t connection) {
-    if(ui.screen == nullptr || connection < MOTO_UI_PHONE_OFFLINE ||
+    if(!ui.live || ui.nav_lifecycle == nullptr ||
+       connection < MOTO_UI_PHONE_OFFLINE ||
        connection > MOTO_UI_PHONE_ONLINE) {
         return;
     }
@@ -2582,6 +2744,7 @@ extern "C" void moto_nav_ui_set_phone_connection(
 }
 
 extern "C" void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion) {
+    if(!ui.live) return;
     ui.reduce_motion = reduce_motion != 0;
     if(ui.nav_lifecycle_timer != nullptr) {
         if(ui.reduce_motion) {
@@ -2594,7 +2757,8 @@ extern "C" void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion) {
 }
 
 extern "C" void moto_nav_ui_set_page(moto_ui_page_t page) {
-    if(ui.screen != nullptr) show_page(page, true);
+    if(!ui.live) return;
+    show_page(page, true);
 }
 
 extern "C" moto_ui_page_t moto_nav_ui_get_page(void) {
@@ -2608,7 +2772,7 @@ extern "C" void moto_nav_ui_set_page_change_callback(
 }
 
 extern "C" void moto_nav_ui_set_music_state(const moto_music_state_t *state) {
-    if(state == nullptr || ui.screen == nullptr) return;
+    if(state == nullptr || !ui.live) return;
     ui.music = *state;
     copy_text(ui.music_source_text, sizeof(ui.music_source_text),
               state->source_name, "PHONE MEDIA");
@@ -2623,7 +2787,7 @@ extern "C" void moto_nav_ui_set_music_state(const moto_music_state_t *state) {
 }
 
 extern "C" void moto_nav_ui_set_music_page_enabled(uint8_t enabled) {
-    if(ui.screen == nullptr) return;
+    if(!ui.live) return;
     ui.music_page_enabled = enabled != 0;
     if(!ui.music_page_enabled && ui.page == MOTO_UI_PAGE_MUSIC) {
         show_page(MOTO_UI_PAGE_NAVIGATION, true);
@@ -2638,6 +2802,7 @@ extern "C" void moto_nav_ui_set_music_command_callback(
 }
 
 extern "C" void moto_nav_ui_set_demo_active(uint8_t enabled) {
+    if(!ui.live) return;
     ui.demo_active = enabled != 0;
     refresh_lifecycle();
 }

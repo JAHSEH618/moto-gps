@@ -8,6 +8,7 @@
 #include <lvgl.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -118,6 +119,18 @@ std::uint16_t pixel_at(int x, int y) {
   return pixel;
 }
 
+// A single pixel on a diagonal arc can land on an antialiased edge, so the
+// diagonal samples look at the pixel's immediate neighbourhood. The axial
+// samples stay exact: those pixels sit on the stroke centre line.
+bool has_color_within(int x, int y, std::uint16_t color, int radius = 2) {
+  for (int dy = -radius; dy <= radius; ++dy) {
+    for (int dx = -radius; dx <= radius; ++dx) {
+      if (pixel_at(x + dx, y + dy) == color) return true;
+    }
+  }
+  return false;
+}
+
 moto_ui_state_t base_state() {
   moto_ui_state_t state{};
   state.page = MOTO_UI_PAGE_NAVIGATION;
@@ -203,6 +216,32 @@ void test_frames_are_deterministic() {
   CHECK(speed_again.hash == speed_page.hash);
 }
 
+void test_rebuilding_the_ui_is_idempotent() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  fill_route(state, 12);
+  fill_streets(state);
+  moto_nav_ui_set_state(&state);
+  // The rebuild resets the link to offline, so going online again raises the
+  // 920 ms CONNECTED confirmation. Let it expire before sampling: it is a
+  // correct overlay, not residue, and framing a test around it would hide the
+  // next regression behind a full-screen panel.
+  pump(240);
+  const Frame before = capture();
+
+  // A second create() must retire the previous timers and rebuild the same
+  // frame from the same state. A tree with duplicate screen callbacks or a
+  // timer still holding deleted widgets shows up here.
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_state(&state);
+  pump(240);
+  const Frame after = capture();
+  CHECK(before.hash == after.hash);
+}
+
 void test_a_building_footprint_interior_is_filled() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
@@ -257,6 +296,123 @@ void test_the_map_covers_the_bottom_of_the_round_canvas() {
   // The old 232-design-pixel map strip ended around y=300; this row must be
   // inside the full-screen Radar, not the page background.
   CHECK(pixel_at(120, 380) == rgb565(0x24, 0x29, 0x2C));
+}
+
+void test_the_ring_carries_progress_and_a_north_badge() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  fill_route(state, 8);
+  // Heading east: north is to the left, so the badge must leave the top of the
+  // ring. A badge pinned to twelve o'clock would be wrong half the time.
+  state.heading_deg = 90;
+  state.route_progress_percent = 0;
+  state.traffic = MOTO_TRAFFIC_SLOW;
+  moto_nav_ui_set_state(&state);
+  pump();
+
+  lv_obj_t *north = lv_obj_find_by_name(lv_screen_active(), "moto-compass-north");
+  CHECK(north != nullptr);
+  if (north == nullptr) return;
+  CHECK(!lv_obj_has_flag(north, LV_OBJ_FLAG_HIDDEN));
+  const int32_t centre_x = kWidth / 2;
+  const int32_t centre_y = kHeight / 2;
+  const int32_t north_x = lv_obj_get_x(north) + lv_obj_get_width(north) / 2;
+  const int32_t north_y = lv_obj_get_y(north) + lv_obj_get_height(north) / 2;
+  CHECK(north_x < centre_x - 120);
+  CHECK(std::abs(north_y - centre_y) <= 2);
+
+  // With no progress the rim is the quiet track colour at twelve o'clock.
+  const Frame idle = capture();
+  CHECK(pixel_at(centre_x, centre_y - MOTO_UI_RADAR_RING_RADIUS_PX) ==
+        rgb565(0x24, 0x29, 0x2C));
+
+  // 25% needs its own sample: at twelve o'clock a clockwise and a
+  // counter-clockwise arc paint the same pixel, so the top of the ring cannot
+  // tell the two directions apart. The clockwise quadrant is the upper right.
+  state.route_progress_percent = 25;
+  moto_nav_ui_set_state(&state);
+  pump();
+  const int32_t diagonal = static_cast<int32_t>(
+      std::lround(MOTO_UI_RADAR_RING_RADIUS_PX / std::sqrt(2.0)));
+  CHECK(has_color_within(centre_x + diagonal, centre_y - diagonal,
+                         rgb565(0xE6, 0xC8, 0x4F)));
+  CHECK(!has_color_within(centre_x - diagonal, centre_y - diagonal,
+                          rgb565(0xE6, 0xC8, 0x4F)));
+
+  // Progress starts at twelve o'clock and is drawn in the traffic colour, the
+  // only place this screen reports traffic.
+  state.route_progress_percent = 50;
+  moto_nav_ui_set_state(&state);
+  pump();
+  const Frame half = capture();
+  CHECK(half.hash != idle.hash);
+  CHECK(pixel_at(centre_x, centre_y - MOTO_UI_RADAR_RING_RADIUS_PX) ==
+        rgb565(0xE6, 0xC8, 0x4F));
+
+  // A full ring leaves no track colour at the top.
+  state.route_progress_percent = 100;
+  moto_nav_ui_set_state(&state);
+  pump();
+  CHECK(pixel_at(centre_x, centre_y - MOTO_UI_RADAR_RING_RADIUS_PX) ==
+        rgb565(0xE6, 0xC8, 0x4F));
+
+  // The badge turns with the rider: heading north puts it on top.
+  state.heading_deg = 0;
+  moto_nav_ui_set_state(&state);
+  pump();
+  CHECK(lv_obj_get_y(north) + lv_obj_get_height(north) / 2 < centre_y - 120);
+  CHECK(std::abs(lv_obj_get_x(north) + lv_obj_get_width(north) / 2 -
+                 centre_x) <= 2);
+
+  // South and west catch a sign error that the two axis-aligned checks above
+  // cannot: heading 180 must put the badge at the bottom, 270 at the right.
+  state.heading_deg = 180;
+  moto_nav_ui_set_state(&state);
+  pump();
+  CHECK(lv_obj_get_y(north) + lv_obj_get_height(north) / 2 > centre_y + 120);
+  CHECK(std::abs(lv_obj_get_x(north) + lv_obj_get_width(north) / 2 -
+                 centre_x) <= 2);
+
+  state.heading_deg = 270;
+  moto_nav_ui_set_state(&state);
+  pump();
+  CHECK(lv_obj_get_x(north) + lv_obj_get_width(north) / 2 > centre_x + 120);
+  CHECK(std::abs(lv_obj_get_y(north) + lv_obj_get_height(north) / 2 -
+                 centre_y) <= 2);
+}
+
+void test_a_refused_home_tap_shows_a_hint_and_fades() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  fill_route(state, 8);
+  moto_nav_ui_set_state(&state);
+  pump();
+
+  lv_obj_t *hint = lv_obj_find_by_name(lv_screen_active(), "moto-home-hint");
+  CHECK(hint != nullptr);
+  if (hint == nullptr) return;
+  CHECK(lv_obj_has_flag(hint, LV_OBJ_FLAG_HIDDEN));
+
+  moto_nav_ui_show_home_error();
+  const Frame shown = capture();
+  CHECK(!lv_obj_has_flag(hint, LV_OBJ_FLAG_HIDDEN));
+
+  // Three seconds, then it goes away on its own. A hint that needs a tap to
+  // dismiss would be another control on a screen that must stay readable.
+  pump(650);
+  CHECK(lv_obj_has_flag(hint, LV_OBJ_FLAG_HIDDEN));
+  CHECK(shown.hash != capture().hash);
+
+  // The same hint can be shown again after it faded.
+  moto_nav_ui_show_home_error();
+  CHECK(!lv_obj_has_flag(hint, LV_OBJ_FLAG_HIDDEN));
+
+  // Leave the shared UI in a settled state: the remaining tests compare exact
+  // frames, and a hint that expires mid-capture would look like residue.
+  pump(650);
+  CHECK(lv_obj_has_flag(hint, LV_OBJ_FLAG_HIDDEN));
 }
 
 void test_day_and_night_themes_render_different_map_colors() {
@@ -414,7 +570,7 @@ void test_home_glyph_is_gated_by_speed() {
   moto_nav_ui_set_home_callback(nullptr, nullptr);
 }
 
-void test_home_blip_is_visible_only_inside_the_radar() {
+void test_home_blip_is_clamped_to_the_ring() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
   moto_ui_state_t state = base_state();
@@ -434,13 +590,50 @@ void test_home_blip_is_visible_only_inside_the_radar() {
   CHECK(!lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
   const Frame with_home = capture();
 
-  // The glass is round; a blip in the cropped corner must be hidden instead
-  // of drawn into a region the rider can never see.
+  // A home outside the map window keeps its bearing and is pinned to the ring
+  // instead of vanishing: a safehouse three kilometres away is still the point
+  // of the feature.
+  const int32_t centre_x = kWidth / 2;
+  const int32_t centre_y = kHeight / 2;
   state.home_x = 440;
   state.home_y = 30;
   moto_nav_ui_set_state(&state);
-  CHECK(lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
+  CHECK(!lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
+  const int32_t dx = lv_obj_get_x(blip) + lv_obj_get_width(blip) / 2 - centre_x;
+  const int32_t dy = lv_obj_get_y(blip) + lv_obj_get_height(blip) / 2 - centre_y;
+  CHECK(dx > 0);
+  CHECK(dy < 0);
+  // Same bearing as the raw point (207, -203), and inside the ring.
+  CHECK(std::abs(dx * 203 + dy * 207) < 207);
+  CHECK(static_cast<int64_t>(dx) * dx + static_cast<int64_t>(dy) * dy <=
+        static_cast<int64_t>(MOTO_UI_RADAR_RING_RADIUS_PX) *
+            MOTO_UI_RADAR_RING_RADIUS_PX);
   CHECK(with_home.hash != capture().hash);
+
+  // The blip is ink-on-paper in every theme, so it must survive the switch.
+  // Without this, a themed blip could disappear into the cream day map and no
+  // other test would notice.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  moto_nav_ui_set_state(&state);
+  pump();
+  CHECK(!lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
+  const int32_t blip_x = lv_obj_get_x(blip) + lv_obj_get_width(blip) / 2;
+  const int32_t blip_y = lv_obj_get_y(blip) + lv_obj_get_height(blip) / 2;
+  // The glyph's ink is kWhite (a warm near-white), and the day map is cream,
+  // so the property worth asserting is "still light", not an exact constant.
+  bool blip_is_light = false;
+  for (int yy = blip_y - 5; yy <= blip_y + 5; ++yy) {
+    for (int xx = blip_x - 5; xx <= blip_x + 5; ++xx) {
+      const std::uint16_t pixel = pixel_at(xx, yy);
+      const int red = ((pixel >> 11) & 0x1F) * 255 / 31;
+      const int green = ((pixel >> 5) & 0x3F) * 255 / 63;
+      const int blue = (pixel & 0x1F) * 255 / 31;
+      blip_is_light = blip_is_light ||
+                      (red > 200 && green > 200 && blue > 200);
+    }
+  }
+  CHECK(blip_is_light);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
 
   state.has_home = 0;
   state.home_x = 300;
@@ -622,6 +815,49 @@ void test_diagonal_map_pixels_are_independent_of_partial_buffer_height() {
   CHECK(draw_with_buffer(short_buffer) == tall_frame);
 }
 
+// Dev-only visual check for the round screen. Set MOTO_UI_DUMP=/tmp/frame.ppm
+// to render one representative navigation frame after the assertions; the
+// agent-side loop converts it to PNG and looks at it. It never runs otherwise,
+// so the test stays a test. MOTO_UI_HEAP prints the LVGL pool high-water mark,
+// which is the number the 64 KiB board budget is measured against.
+void write_ppm(const char *path) {
+  FILE *file = std::fopen(path, "wb");
+  if (file == nullptr) return;
+  std::fprintf(file, "P6\n%d %d\n255\n", kWidth, kHeight);
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      const uint16_t pixel = pixel_at(x, y);
+      const uint8_t rgb[3] = {
+          static_cast<uint8_t>(((pixel >> 11) & 0x1F) * 255 / 31),
+          static_cast<uint8_t>(((pixel >> 5) & 0x3F) * 255 / 63),
+          static_cast<uint8_t>((pixel & 0x1F) * 255 / 31),
+      };
+      std::fwrite(rgb, 1, 3, file);
+    }
+  }
+  std::fclose(file);
+}
+
+void render_demo_frame() {
+  // Do not inherit the previous test's theme or page: the dump is a review
+  // artefact, and a silent dependency on test order would make it lie.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.heading_deg = 35;
+  state.route_progress_percent = 62;
+  state.traffic = MOTO_TRAFFIC_SLOW;
+  state.has_home = 1;
+  state.home_x = 320;
+  state.home_y = 140;
+  fill_route(state, 12);
+  fill_streets(state);
+  moto_nav_ui_set_state(&state);
+  (void)capture();
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -642,21 +878,35 @@ int main(int argc, char **argv) {
   CHECK(all_black);
 
   test_frames_are_deterministic();
+  test_rebuilding_the_ui_is_idempotent();
   test_a_building_footprint_interior_is_filled();
   test_the_map_covers_the_bottom_of_the_round_canvas();
+  test_the_ring_carries_progress_and_a_north_badge();
+  test_a_refused_home_tap_shows_a_hint_and_fades();
   test_day_and_night_themes_render_different_map_colors();
   test_performance_and_lean_pages_render_attitude();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_home_glyph_is_gated_by_speed();
-  test_home_blip_is_visible_only_inside_the_radar();
+  test_home_blip_is_clamped_to_the_ring();
   test_phone_lifecycle_renders_deterministically();
   test_demo_mode_visual_contract();
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
 
-  // Terminal screens run last: they tear the full UI down.
+  // Visual check runs while the instrument is still alive; the terminal
+  // screens below delete the whole widget tree.
+  if (const char *dump = std::getenv("MOTO_UI_DUMP")) {
+    render_demo_frame();
+    write_ppm(dump);
+  }
+
+  // Terminal screens run last: they tear the full UI down. Leave a hint on
+  // screen first: its timer is the one widget-retaining timer a terminal
+  // screen used to forget, and a visible hint is the worst case.
+  moto_nav_ui_show_home_error();
+  pump(10);
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame boot_again = capture();
@@ -671,6 +921,34 @@ int main(int argc, char **argv) {
   CHECK(power_off.hash == capture().hash);
   CHECK(power_off.hash != settled_boot.hash);
 
+  // The BLE task can still deliver a snapshot between the terminal screen and
+  // the PMIC cutting power. The widget tree is already gone, and LVGL asserts
+  // on a null object. The native build turns that assert into a trap, so the
+  // failure arrives as a stack rather than as a process that spins at 100% CPU.
+  // Every entry point must be inert.
+  const Frame before_late = capture();
+  moto_ui_state_t late = base_state();
+  late.has_home = 1;
+  late.home_x = 300;
+  late.home_y = 200;
+  moto_nav_ui_set_state(&late);
+  moto_nav_ui_set_motion_state(&late);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_show_home_error();
+  moto_nav_ui_set_page(MOTO_UI_PAGE_SPEED);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+  CHECK(before_late.hash == capture().hash);
+
+  if (std::getenv("MOTO_UI_HEAP")) {
+    // Board parity: the ESP32 LVGL pool defaults to 64 KiB. Peak usage here
+    // is the number that decides whether this tree fits on the device.
+    lv_mem_monitor_t mon{};
+    lv_mem_monitor(&mon);
+    std::cerr << "LVGL heap total=" << mon.total_size << " free=" << mon.free_size
+              << " max_used=" << mon.max_used << " used_pct=" << (int)mon.used_pct
+              << " frag_pct=" << (int)mon.frag_pct << "\n";
+  }
   if (failures != 0) {
     std::cerr << failures << " nav_ui render checks failed\n";
     return EXIT_FAILURE;

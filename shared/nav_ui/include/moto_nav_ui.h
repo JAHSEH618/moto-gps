@@ -157,13 +157,29 @@ typedef struct {
     float pitch_deg;
     float longitudinal_g;
     float lateral_g;
-    /* Saved home position already projected into this canvas. The UI hides a
-       blip that would fall outside the round safe area. */
+    /* Saved home position already projected into this canvas. A blip beyond
+       the minimap ring keeps its bearing and is clamped to the ring. */
     uint8_t has_home;
     int16_t home_x;
     int16_t home_y;
 } moto_ui_state_t;
 
+/* Radius of the minimap ring, in canvas pixels. The ring carries the route
+   progress, the north badge and the safehouse blip's clamp radius, so the
+   render tests and the drawing code share one number. */
+#define MOTO_UI_RADAR_RING_RADIUS_PX 205
+
+/* Build the full UI on the active screen.
+
+   The window between this call and either terminal screen is the only one in
+   which the mutators below do anything: the boot screen, the power-off screen
+   and a second create() all tear the tree down and leave no valid widget
+   pointer behind. Two consequences for callers:
+
+   - A callback must be registered *after* create(); the tree reset also clears
+     the callback slots.
+   - A snapshot, theme or page change that arrives after a terminal screen is
+     ignored rather than applied to freed LVGL objects. */
 void moto_nav_ui_create(void);
 /** Draw the monochrome power-on wordmark before the full UI is created. */
 void moto_nav_ui_show_boot_screen(void);
@@ -201,6 +217,13 @@ void moto_nav_ui_set_demo_change_callback(
  */
 void moto_nav_ui_set_home_callback(moto_home_shortcut_callback_t callback,
                                    void *context);
+/**
+ * The phone refused the last home tap (usually: no home address is set).
+ * Shows a one-line hint on the navigation page for a few seconds. The device
+ * cannot know whether a home exists, so the only honest answer is the one the
+ * phone sends.
+ */
+void moto_nav_ui_show_home_error(void);
 
 #ifdef __cplusplus
 }
