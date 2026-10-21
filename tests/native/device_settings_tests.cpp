@@ -17,6 +17,7 @@ using moto::device::PageNavigation;
 using moto::device::PagePerformance;
 using moto::device::PageSpeed;
 using moto::device::kAllPages;
+using moto::device::kMaximumLeanOffsetCdeg;
 using moto::device::kEncodedSettingsSize;
 
 int failures = 0;
@@ -122,6 +123,92 @@ void test_tampered_blob_is_clamped() {
   CHECK(decoded.lean_zero_offset_cdeg == 3'000);
 }
 
+// The BLE contract and the NVS blob are two descriptions of one thing. If a
+// field is added to either one, the pin fails instead of the device silently
+// dropping a setting the phone believes it applied.
+void test_ble_contract_matches() {
+  using moto::ble::SettingsState;
+  using moto::ble::SettingsTheme;
+  using moto::ble::SettingsUnits;
+
+  CHECK(static_cast<std::uint8_t>(DeviceThemeMode::Official) ==
+        static_cast<std::uint8_t>(SettingsTheme::Official));
+  CHECK(static_cast<std::uint8_t>(DeviceThemeMode::Auto) ==
+        static_cast<std::uint8_t>(SettingsTheme::Auto));
+  CHECK(static_cast<std::uint8_t>(DeviceThemeMode::Day) ==
+        static_cast<std::uint8_t>(SettingsTheme::Day));
+  CHECK(static_cast<std::uint8_t>(DeviceThemeMode::Night) ==
+        static_cast<std::uint8_t>(SettingsTheme::Night));
+  CHECK(static_cast<std::uint8_t>(DeviceUnits::Kph) ==
+        static_cast<std::uint8_t>(SettingsUnits::Kph));
+  CHECK(static_cast<std::uint8_t>(DeviceUnits::Mph) ==
+        static_cast<std::uint8_t>(SettingsUnits::Mph));
+
+  CHECK(static_cast<std::uint8_t>(PageNavigation) ==
+        static_cast<std::uint8_t>(moto::ble::SettingsPageNavigation));
+  CHECK(static_cast<std::uint8_t>(PagePerformance) ==
+        static_cast<std::uint8_t>(moto::ble::SettingsPagePerformance));
+  CHECK(static_cast<std::uint8_t>(PageLean) ==
+        static_cast<std::uint8_t>(moto::ble::SettingsPageLean));
+  CHECK(static_cast<std::uint8_t>(PageSpeed) ==
+        static_cast<std::uint8_t>(moto::ble::SettingsPageSpeed));
+  CHECK(static_cast<std::uint8_t>(PageCompass) ==
+        static_cast<std::uint8_t>(moto::ble::SettingsPageCompass));
+  CHECK(static_cast<std::uint8_t>(PageMusic) ==
+        static_cast<std::uint8_t>(moto::ble::SettingsPageMusic));
+  CHECK(kAllPages == moto::ble::kSettingsAllPages);
+  CHECK(kMaximumLeanOffsetCdeg == moto::ble::kMaxSettingsLeanOffsetCdeg);
+
+  // Defaults must agree, otherwise a firmware that has never received 0x17
+  // runs different settings from a phone that assumes the defaults.
+  const SettingsState defaults =
+      moto::device::to_settings_state(DeviceSettings{}, 1);
+  const SettingsState expected{};
+  CHECK(defaults.theme == expected.theme);
+  CHECK(defaults.brightness_percent == expected.brightness_percent);
+  CHECK(defaults.units == expected.units);
+  CHECK(defaults.lean_full_scale_deg == expected.lean_full_scale_deg);
+  CHECK(defaults.performance_target_kph == expected.performance_target_kph);
+  CHECK(defaults.visible_pages == expected.visible_pages);
+  CHECK(defaults.lean_zero_offset_cdeg == expected.lean_zero_offset_cdeg);
+
+  // Every field survives a trip to the wire struct and back, and a clamped
+  // local value encodes as something the wire validation accepts.
+  DeviceSettings value;
+  value.theme = DeviceThemeMode::Night;
+  value.brightness_percent = 45;
+  value.units = DeviceUnits::Mph;
+  value.lean_full_scale_deg = 50;
+  value.performance_target_kph = 60;
+  value.visible_pages = static_cast<std::uint8_t>(kAllPages & ~PageMusic);
+  value.lean_zero_offset_cdeg = 175;
+  const SettingsState state = moto::device::to_settings_state(value, 9);
+  CHECK(state.revision == 9);
+  CHECK(state.theme == SettingsTheme::Night);
+  CHECK(state.brightness_percent == 45);
+  CHECK(state.units == SettingsUnits::Mph);
+  CHECK(state.lean_full_scale_deg == 50);
+  CHECK(state.performance_target_kph == 60);
+  CHECK(state.visible_pages == value.visible_pages);
+  CHECK(state.lean_zero_offset_cdeg == 175);
+  CHECK(moto::ble::encode_message(moto::ble::Message{state}).ok());
+  CHECK(moto::device::from_settings_state(state) == value);
+
+  // The clamp and the wire validation must agree on what is legal: a value
+  // the device clamps in must be encodable, and one it refuses must not be.
+  const std::uint8_t scales[] = {0, 31, 35, 40, 44, 45, 49, 50, 90};
+  for (const std::uint8_t scale : scales) {
+    DeviceSettings candidate = value;
+    candidate.lean_full_scale_deg = scale;
+    candidate.clamp();
+    CHECK(moto::ble::encode_message(moto::ble::Message{
+              moto::device::to_settings_state(candidate, 9)})
+              .ok());
+    CHECK(candidate == moto::device::from_settings_state(
+                           moto::device::to_settings_state(candidate, 9)));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -131,6 +218,7 @@ int main() {
   test_encode_decode_round_trip();
   test_unknown_or_short_blobs_fall_back_to_defaults();
   test_tampered_blob_is_clamped();
+  test_ble_contract_matches();
 
   if (failures != 0) {
     std::cerr << failures << " device_settings checks failed\n";

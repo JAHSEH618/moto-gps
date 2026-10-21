@@ -118,6 +118,7 @@ enum class MessageType : std::uint8_t {
   MapScene = 0x14,
   AttitudeSample = 0x15,
   HomeLocation = 0x16,
+  SettingsState = 0x17,
   DeviceCommand = 0x20,
 };
 
@@ -280,6 +281,10 @@ enum Capability : std::uint32_t {
   // HomeLocation to a peer that advertises this, so an older firmware is not
   // sent a message type it has never seen.
   CapabilityHomeLocation = 1U << 9U,
+  // The device stores its own presentation settings (theme, units, scale) and
+  // echoes them back. Without this bit the phone keeps its settings to itself
+  // rather than sending a type the firmware would reject.
+  CapabilityDeviceSettings = 1U << 10U,
 };
 
 struct ConnectionStatus {
@@ -550,6 +555,65 @@ struct HomeLocation {
   bool operator==(const HomeLocation& rhs) const noexcept;
 };
 
+// Presentation settings, written by the phone and owned by the device. The
+// device is the authority for what it displays: a phone write is a request,
+// the device applies it and echoes the applied state, and a receiver ignores
+// any revision it has already applied. That makes the echo terminate and stops
+// a reconnect from resurrecting an old theme. Both endpoints may originate a
+// revision; the sender must use a value strictly above the highest it has
+// seen. Sending this to a peer without CapabilityDeviceSettings is a phone
+// bug, not a protocol fallback: an older firmware has never seen 0x17.
+//
+// The numbering matches moto::device::DeviceSettings, which owns the NVS blob
+// and the UI. device_settings_tests pins the two together.
+enum class SettingsTheme : std::uint8_t {
+  Official = 0,
+  Auto = 1,
+  Day = 2,
+  Night = 3,
+};
+
+enum class SettingsUnits : std::uint8_t {
+  Kph = 0,
+  Mph = 1,
+};
+
+// Mirrors moto::device::PageVisibility. Navigation cannot be hidden: a state
+// without it is refused rather than silently corrected.
+enum SettingsPage : std::uint8_t {
+  SettingsPageNavigation = 1U << 0U,
+  SettingsPagePerformance = 1U << 1U,
+  SettingsPageLean = 1U << 2U,
+  SettingsPageSpeed = 1U << 3U,
+  SettingsPageCompass = 1U << 4U,
+  SettingsPageMusic = 1U << 5U,
+};
+
+inline constexpr std::uint8_t kSettingsAllPages =
+    SettingsPageNavigation | SettingsPagePerformance | SettingsPageLean |
+    SettingsPageSpeed | SettingsPageCompass | SettingsPageMusic;
+
+// Calibration offset applied to the measured Lean, in centidegrees.
+inline constexpr std::int16_t kMaxSettingsLeanOffsetCdeg = 30 * 100;
+
+// payload_revision + theme + brightness + units + lean scale + performance
+// target + page mask + lean offset (u16) + settings revision (u32).
+inline constexpr std::size_t kSettingsPayloadSize = 14;
+
+struct SettingsState {
+  SettingsTheme theme = SettingsTheme::Auto;
+  std::uint8_t brightness_percent = 80;
+  SettingsUnits units = SettingsUnits::Kph;
+  std::uint8_t lean_full_scale_deg = 45;
+  std::uint16_t performance_target_kph = 100;
+  std::uint8_t visible_pages = kSettingsAllPages;
+  std::int16_t lean_zero_offset_cdeg = 0;
+  // Monotonic; zero is reserved for "never seen" and is not encodable.
+  std::uint32_t revision = 0;
+
+  bool operator==(const SettingsState& rhs) const noexcept;
+};
+
 enum class DeviceCommandKind : std::uint8_t {
   PageSelected = 0,
   Tap = 1,
@@ -601,6 +665,7 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              MapScene,
                              AttitudeSample,
                              HomeLocation,
+                             SettingsState,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;

@@ -136,6 +136,20 @@ HomeLocation home_fixture() {
   return value;
 }
 
+SettingsState settings_fixture() {
+  SettingsState value;
+  value.theme = SettingsTheme::Night;
+  value.brightness_percent = 65;
+  value.units = SettingsUnits::Mph;
+  value.lean_full_scale_deg = 40;
+  value.performance_target_kph = 60;
+  value.visible_pages = static_cast<std::uint8_t>(
+      kSettingsAllPages & ~SettingsPageMusic);
+  value.lean_zero_offset_cdeg = -125;
+  value.revision = 5;
+  return value;
+}
+
 MapScene map_scene_fixture() {
   MapScene value;
   value.scene_revision = 7;
@@ -283,6 +297,7 @@ void dump_golden() {
   const Bytes command = encode_or_fail(Message{command_fixture()});
   const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
   const Bytes home = encode_or_fail(Message{home_fixture()});
+  const Bytes settings = encode_or_fail(Message{settings_fixture()});
   std::cout << "connection.payload=" << hex(ByteView(connection)) << '\n';
   std::cout << "connection.frame="
             << frame_hex(fragment_or_fail(MessageType::ConnectionStatus, 1,
@@ -298,6 +313,7 @@ void dump_golden() {
             << '\n';
   std::cout << "attitude.payload=" << hex(ByteView(attitude)) << '\n';
   std::cout << "home.payload=" << hex(ByteView(home)) << '\n';
+  std::cout << "settings.payload=" << hex(ByteView(settings)) << '\n';
 }
 
 void test_uuid_contract() {
@@ -349,6 +365,7 @@ void test_all_message_round_trips() {
       Message{map_scene_fixture()},
       Message{attitude_fixture()},
       Message{home_fixture()},
+      Message{settings_fixture()},
       Message{command_fixture()},
   };
   for (const Message& message : messages) {
@@ -397,6 +414,7 @@ void test_golden_vectors() {
   const Bytes command = encode_or_fail(Message{command_fixture()});
   const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
   const Bytes home = encode_or_fail(Message{home_fixture()});
+  const Bytes settings = encode_or_fail(Message{settings_fixture()});
 
   CHECK(expected.at("connection.payload") == hex(ByteView(connection)));
   CHECK(expected.at("connection.frame") ==
@@ -411,6 +429,7 @@ void test_golden_vectors() {
                                    AckRequested | Urgent)));
   CHECK(expected.at("attitude.payload") == hex(ByteView(attitude)));
   CHECK(expected.at("home.payload") == hex(ByteView(home)));
+  CHECK(expected.at("settings.payload") == hex(ByteView(settings)));
 }
 
 void test_attitude_sample_validation() {
@@ -457,6 +476,66 @@ void test_home_location_validation() {
   if (decoded.ok()) {
     CHECK(std::get<HomeLocation>(decoded.value) == home_fixture());
   }
+}
+
+void test_settings_state() {
+  CHECK(kSettingsPayloadSize == 14);
+  CHECK(static_cast<std::uint8_t>(MessageType::SettingsState) == 0x17);
+  // The capability bit is part of the handshake contract; shifting the known
+  // bits silently changes what an older firmware claims to support.
+  CHECK(CapabilityAttitudeTelemetry == (1U << 8U));
+  CHECK(CapabilityHomeLocation == (1U << 9U));
+  CHECK(CapabilityDeviceSettings == (1U << 10U));
+
+  const Bytes encoded = encode_or_fail(Message{settings_fixture()});
+  CHECK(encoded.size() == kSettingsPayloadSize);
+  const MessageResult decoded =
+      decode_message(MessageType::SettingsState, ByteView(encoded));
+  CHECK(decoded.ok());
+  if (decoded.ok()) {
+    CHECK(std::get<SettingsState>(decoded.value) == settings_fixture());
+  }
+
+  // Every field is a fixed table, not a range: a value the design has not
+  // reviewed would render a gauge that was never drawn.
+  SettingsState value = settings_fixture();
+  value.brightness_percent = 101;
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+  value = settings_fixture();
+  value.lean_full_scale_deg = 35;
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+  value = settings_fixture();
+  value.performance_target_kph = 120;
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+  value = settings_fixture();
+  value.lean_zero_offset_cdeg = kMaxSettingsLeanOffsetCdeg + 1;
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+  value = settings_fixture();
+  value.theme = static_cast<SettingsTheme>(4);
+  CHECK(encode_message(Message{value}).error == Error::InvalidEnum);
+  value = settings_fixture();
+  value.units = static_cast<SettingsUnits>(2);
+  CHECK(encode_message(Message{value}).error == Error::InvalidEnum);
+
+  // Navigation is not optional, and a bit this firmware does not know would
+  // be dropped silently by it. Both are refused instead.
+  value = settings_fixture();
+  value.visible_pages = static_cast<std::uint8_t>(kSettingsAllPages &
+                                                  ~SettingsPageNavigation);
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+  value = settings_fixture();
+  value.visible_pages = static_cast<std::uint8_t>(kSettingsAllPages | 0x40U);
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+
+  // Zero is the local "never applied" marker and must not travel.
+  value = settings_fixture();
+  value.revision = 0;
+  CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+
+  // The extreme offset is legal; the neighbouring value is not.
+  value = settings_fixture();
+  value.lean_zero_offset_cdeg = -kMaxSettingsLeanOffsetCdeg;
+  CHECK(encode_message(Message{value}).ok());
 }
 
 void test_fragmentation_and_reassembly() {
@@ -700,6 +779,7 @@ int main(int argc, char** argv) {
   test_golden_vectors();
   test_attitude_sample_validation();
   test_home_location_validation();
+  test_settings_state();
   test_fragmentation_and_reassembly();
   test_full_map_scene_budget_and_reassembly();
   test_crc_duplicate_gap_conflict_and_timeout();

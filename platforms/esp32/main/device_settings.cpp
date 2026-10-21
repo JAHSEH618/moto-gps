@@ -107,4 +107,31 @@ bool DeviceSettings::operator==(const DeviceSettings& rhs) const noexcept {
          lean_zero_offset_cdeg == rhs.lean_zero_offset_cdeg;
 }
 
+moto::ble::SettingsState to_settings_state(const DeviceSettings& settings,
+                                           std::uint32_t revision) {
+  moto::ble::SettingsState state;
+  state.theme = static_cast<moto::ble::SettingsTheme>(settings.theme);
+  state.brightness_percent = settings.brightness_percent;
+  state.units = static_cast<moto::ble::SettingsUnits>(settings.units);
+  state.lean_full_scale_deg = settings.lean_full_scale_deg;
+  state.performance_target_kph = settings.performance_target_kph;
+  state.visible_pages = settings.visible_pages;
+  state.lean_zero_offset_cdeg = settings.lean_zero_offset_cdeg;
+  state.revision = revision;
+  return state;
+}
+
+DeviceSettings from_settings_state(const moto::ble::SettingsState& state) {
+  DeviceSettings settings;
+  settings.theme = static_cast<DeviceThemeMode>(state.theme);
+  settings.brightness_percent = state.brightness_percent;
+  settings.units = static_cast<DeviceUnits>(state.units);
+  settings.lean_full_scale_deg = state.lean_full_scale_deg;
+  settings.performance_target_kph = state.performance_target_kph;
+  settings.visible_pages = state.visible_pages;
+  settings.lean_zero_offset_cdeg = state.lean_zero_offset_cdeg;
+  settings.clamp();
+  return settings;
+}
+
 }  // namespace moto::device

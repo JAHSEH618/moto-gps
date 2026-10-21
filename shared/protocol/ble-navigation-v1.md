@@ -164,6 +164,8 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x13` | MediaState | 手机→设备 | 曲目/播放变化，进度最高 1 Hz |
 | `0x14` | MapScene | 手机→设备 | 前进约 100 m、跨离线分块或路线改变时 |
 | `0x15` | AttitudeSample | 设备→手机 | Ride / Performance Run 记录期间 10 Hz，无 ACK |
+| `0x16` | HomeLocation | 手机→设备 | 家地址变化时，以及每次握手后 |
+| `0x17` | SettingsState | 双向 | 设置或主题变化时，以及每次握手后 |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -184,7 +186,10 @@ u16 heartbeat_interval_ms  >=250
 
 能力位：bit0 navigation、bit1 route geometry、bit2 traffic、bit3 media state、
 bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene、
-bit8 attitude telemetry。
+bit8 attitude telemetry、bit9 home location、bit10 device settings。
+
+`0x16` 与 `0x17` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
+根本不认识这两种类型，而不是收到后忽略。
 
 ### 6.2 Heartbeat (`0x02`, 固定 11 字节)
 
@@ -416,6 +421,63 @@ i16 longitudinal_mg     前向为正，毫 g；刹车为负
 i16 lateral_mg          右向为正，毫 g
 ```
 
+### 6.11 HomeLocation (`0x16`, 固定 15 字节)
+
+手机保存的家地址。它故意不放在 MapScene 里：没有离线地图分块时也要能画 blip，
+而且家与路线、场景版本无关。
+
+三条约束：
+
+1. 只接受 GCJ-02。设备不做坐标系转换，收到 WGS84 会把 blip 画偏几百米。
+2. `revision` 单调递增且非零；乱序或重放不能复活旧地址。
+3. `has_home=false` 是合法消息，允许手机撤销家。
+
+```text
+u8  revision
+u8  coordinate_system    2 = GCJ-02；其他值拒收
+u8  has_home             0 表示已清除
+u32 revision             非零，单调
+i32 latitude_e6
+i32 longitude_e6
+```
+
+设备把家存在自己的状态里，不转发、不落盘：地址属于手机。
+
+### 6.12 SettingsState (`0x17`, 固定 14 字节)
+
+设备显示设置的唯一来源。手机写的是**请求**，设备是显示状态的**权威**：收到更高
+revision 时应用，然后回显应用后的状态；收到不大于已应用值的 revision 时忽略。
+因此回显会自然终止，重连也不会把旧主题复活。两端都可以发起修改，发起方必须用
+严格大于自己见过的最大值的 revision。
+
+```text
+u8  revision             payload revision = 1
+u8  theme                0 Official, 1 Auto, 2 Day, 3 Night
+u8  brightness_percent   0..100
+u8  units                0 kph, 1 mph
+u8  lean_full_scale_deg  30 / 40 / 45 / 50
+u16 performance_target_kph 50 / 60 / 100
+u8  visible_pages        bit0..5，bit0 导航必须置位
+u16 lean_zero_offset_cdeg  有符号，|值| <= 3000
+u32 settings_revision    非零，单调
+```
+
+取值是固定表而不是范围：`lean_full_scale_deg=35` 或
+`performance_target_kph=75` 会被拒收，而不是被四舍五入成一个设计从未评审过的
+表盘。设备对本地存量（NVS、外部输入）做 clamp，但线上值必须已经合法。
+
+`theme` 与 `moto_ui_theme_t` 不是同一个枚举，映射必须显式：
+
+| SettingsState.theme | 设备行为 | `moto_ui_theme_t` |
+| --- | --- | --- |
+| 0 Official | 厂商主题，不覆盖 | `MOTO_UI_THEME_OFFICIAL` |
+| 1 Auto | 按环境光选择 | 由设备决定 DAY / NIGHT |
+| 2 Day | 强制日光 | `MOTO_UI_THEME_GTA_DAY` |
+| 3 Night | 强制夜间 | `MOTO_UI_THEME_GTA_NIGHT` |
+
+手机端的 Vice / Heat 分别对应 Night / Day；Auto 是设备自己的能力，手机不参与
+判光。
+
 ## 7. Display Snapshot 到共享 NavSnapshot
 
 适配器必须做值转换，不得直接操作 `moto_ui_state_t`。推荐映射如下：
@@ -487,6 +549,18 @@ AttitudeSample payload：
 
 ```text
 0178563412b80b06ffcefe4102
+```
+
+HomeLocation payload（GCJ-02，revision=3）：
+
+```text
+01020103000000d09b2f024027fb06
+```
+
+SettingsState payload（夜间、65%、mph、40°、0-60、隐藏音乐页、-1.25°、revision=5）：
+
+```text
+01034101283c001f83ff05000000
 ```
 
 机器可读的完整向量以 fixture 为准。修改任何 v1 字节都应先解释兼容性影响，并由

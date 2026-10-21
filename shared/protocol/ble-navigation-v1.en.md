@@ -192,6 +192,8 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x13` | MediaState | phone→device | track / playback change, progress at most 1 Hz |
 | `0x14` | MapScene | phone→device | after about 100 m of travel, on crossing an offline tile, or on a route change |
 | `0x15` | AttitudeSample | device→phone | 10 Hz during Ride / Performance Run recording, no Ack |
+| `0x16` | HomeLocation | phone→device | when the home address changes, and after every handshake |
+| `0x17` | SettingsState | both ways | when settings or the theme change, and after every handshake |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -212,7 +214,11 @@ u16 heartbeat_interval_ms  >=250
 
 Capability bits: bit0 navigation, bit1 route geometry, bit2 traffic, bit3 media state, bit4
 touch commands, bit5 music commands, bit6 command ACK, bit7 map scene,
-bit8 attitude telemetry.
+bit8 attitude telemetry, bit9 home location, bit10 device settings.
+
+`0x16` and `0x17` are optional messages: the phone only sends them to a peer that advertises
+the matching capability. An older firmware does not know the types at all, rather than
+receiving and ignoring them.
 
 ### 6.2 Heartbeat (`0x02`, fixed 11 bytes)
 
@@ -458,6 +464,68 @@ i16 longitudinal_mg     forward positive, milli-g; braking negative
 i16 lateral_mg          right positive, milli-g
 ```
 
+### 6.11 HomeLocation (`0x16`, fixed 15 bytes)
+
+The saved home address. It is deliberately not a MapScene field: the blip has to survive a
+scene with no offline tiles, and the home is tied to neither the route nor the scene revision.
+
+Three rules:
+
+1. GCJ-02 only. The device does not convert frames, so a WGS84 home would draw the blip a few
+   hundred metres away.
+2. `revision` is monotonic and non-zero; a reordered or replayed message must not resurrect an
+   old address.
+3. `has_home=false` is a valid message: the phone can withdraw the home.
+
+```text
+u8  revision
+u8  coordinate_system    2 = GCJ-02; anything else is refused
+u8  has_home             0 means cleared
+u32 revision             non-zero, monotonic
+i32 latitude_e6
+i32 longitude_e6
+```
+
+The device keeps the home in its own state; it neither forwards nor persists it: the address
+belongs to the phone.
+
+### 6.12 SettingsState (`0x17`, fixed 14 bytes)
+
+One source of truth for what the device displays. A phone write is a **request**; the device is
+the **authority** for what it shows. It applies a higher revision, then echoes the applied state,
+and ignores any revision it has already applied. The echo therefore terminates, and a reconnect
+cannot resurrect an old theme. Both endpoints may originate a change; the originator must use a
+revision strictly above the highest it has seen.
+
+```text
+u8  revision             payload revision = 1
+u8  theme                0 Official, 1 Auto, 2 Day, 3 Night
+u8  brightness_percent   0..100
+u8  units                0 kph, 1 mph
+u8  lean_full_scale_deg  30 / 40 / 45 / 50
+u16 performance_target_kph 50 / 60 / 100
+u8  visible_pages        bits 0..5; bit 0 (navigation) must be set
+u16 lean_zero_offset_cdeg  signed, |value| <= 3000
+u32 settings_revision    non-zero, monotonic
+```
+
+The values are a fixed table, not a range: `lean_full_scale_deg=35` or
+`performance_target_kph=75` is refused rather than rounded into a gauge nobody reviewed. The
+device clamps its own stored settings (NVS, external input), but a wire value must already be
+legal.
+
+`theme` is not `moto_ui_theme_t`; the mapping must be explicit:
+
+| SettingsState.theme | device behaviour | `moto_ui_theme_t` |
+| --- | --- | --- |
+| 0 Official | vendor theme, no override | `MOTO_UI_THEME_OFFICIAL` |
+| 1 Auto | choose by ambient light | the device picks DAY / NIGHT |
+| 2 Day | force daylight | `MOTO_UI_THEME_GTA_DAY` |
+| 3 Night | force night | `MOTO_UI_THEME_GTA_NIGHT` |
+
+The phone's Vice / Heat themes map to Night / Day; Auto is the device's own capability and the
+phone does not participate in the light decision.
+
 ## 7. Display Snapshot to the shared NavSnapshot
 
 The adapter must do value conversion and must not operate on `moto_ui_state_t` directly. The
@@ -536,6 +604,18 @@ AttitudeSample payload:
 
 ```text
 0178563412b80b06ffcefe4102
+```
+
+HomeLocation payload (GCJ-02, revision=3):
+
+```text
+01020103000000d09b2f024027fb06
+```
+
+SettingsState payload (night, 65%, mph, 40 deg, 0-60, music page hidden, -1.25 deg, revision=5):
+
+```text
+01034101283c001f83ff05000000
 ```
 
 The machine-readable complete vectors are authoritative in the fixture. Changing any v1 byte
