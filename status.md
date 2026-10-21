@@ -92,3 +92,12 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Added `test_day_and_night_themes_render_different_map_colors`; full native suite 9/9 green.
 - Web runtime builds successfully. Headless Chrome screenshots are blocked by `CVDisplayLinkCreateWithCGDisplay` in this environment; visual inspection remains manual in the browser.
 - Next: `DeviceSettings` pure model (defaults, clamp, encode/decode).
+
+## 2026-10-21T21:22:41+09:00 — Green: DeviceSettings pure model
+
+- Added `platforms/esp32/main/device_settings.hpp/.cpp`: theme mode, brightness, units, Lean full scale, Performance Run target, page visibility and Lean zero offset.
+- `clamp()` snaps to supported values (Lean 30/40/45/50, target 50/60/100, brightness 0–100, ±30° zero offset) and always keeps Navigation visible.
+- Added a versioned 9-byte NVS blob with `encoded()` / `decode()`; unknown versions and short/tampered blobs fall back to defaults or clamp.
+- Added `device_settings_tests`; full native suite is now 10/10 green.
+- Phase 1 is 6/7: only the Home/Settings icon plus the low-speed gate remains; the settings page UI and NVS adapter are still pending.
+- Next: Phase 2 `AttitudeEstimator` pure math seam (Lean, pitch, longitudinal/lateral G).

@@ -26,3 +26,6 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T21:15:28+09:00 **TODO** — Phase 1: build/run the Web preview and add the day/night theme palette.
 - 2026-10-21T21:21:18+09:00 **DONE** — Phase 1 / S2: GTA day/night palette and theme API. Web runtime builds; manual browser check remains.
 - 2026-10-21T21:21:18+09:00 **TODO** — Phase 1 / S3: `DeviceSettings` defaults, clamp and encode/decode.
+- 2026-10-21T21:22:41+09:00 **DONE** — Phase 1 / S3: `DeviceSettings` defaults, clamp, 9-byte encode/decode. Ref `2026-10-21T21:21:18+09:00`.
+- 2026-10-21T21:22:41+09:00 **TODO** — Phase 1 / S1: Home/Settings icon plus low-speed gate; settings page UI + NVS adapter still pending.
+- 2026-10-21T21:22:41+09:00 **TODO** — Phase 2: `AttitudeEstimator` pure math seam (Lean, pitch, longitudinal/lateral G).
