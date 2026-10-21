@@ -228,13 +228,33 @@ void test_heading_up_route_projection_keeps_rider_fixed() {
   CHECK(state.route_point_count == 2);
   constexpr int rider_x = MOTO_UI_CANVAS_WIDTH / 2;
   constexpr int rider_y =
-      (196 * MOTO_UI_CANVAS_HEIGHT + 180) / 360;
+      MOTO_UI_CANVAS_HEIGHT / 2;
   CHECK(state.route_points[0].x == rider_x);
   CHECK(state.route_points[0].y == rider_y);
   // Facing east means an eastbound route is drawn straight ahead/up while
   // the vehicle marker itself remains at the fixed shared-view anchor.
   CHECK(std::abs(state.route_points[1].x - rider_x) <= 1);
   CHECK(state.route_points[1].y < state.route_points[0].y);
+}
+
+void test_rider_is_anchored_at_the_centre_of_the_full_screen_radar() {
+  NavPresenter presenter;
+  NavSnapshot snapshot;
+  snapshot.state = NavState::Navigating;
+  snapshot.heading_deg = 0.0F;
+  snapshot.has_route_view = true;
+  snapshot.route_view_origin = {31.2304, 121.4737};
+  snapshot.route_view_point_count = 2;
+  snapshot.route_view_points[0] = snapshot.route_view_origin;
+  snapshot.route_view_points[1] = {31.2314, 121.4737};
+  presenter.update(snapshot);
+
+  const moto_ui_state_t& state = presenter.ui_state();
+  CHECK(state.route_point_count == 2);
+  // The Radar fills the 466 px round canvas, so the rider is the physical
+  // centre of the screen rather than the old map-strip anchor.
+  CHECK(state.route_points[0].x == 233);
+  CHECK(state.route_points[0].y == 233);
 }
 
 void test_non_finite_heading_keeps_map_projection_finite() {
@@ -254,7 +274,7 @@ void test_non_finite_heading_keeps_map_projection_finite() {
   CHECK(state.route_point_count == 2);
   constexpr int rider_x = MOTO_UI_CANVAS_WIDTH / 2;
   constexpr int rider_y =
-      (196 * MOTO_UI_CANVAS_HEIGHT + 180) / 360;
+      MOTO_UI_CANVAS_HEIGHT / 2;
   CHECK(state.route_points[0].x == rider_x);
   CHECK(state.route_points[0].y == rider_y);
 }
@@ -487,6 +507,7 @@ int main() {
   test_all_traffic_levels();
   test_metrics_are_rounded_clamped_and_deterministic();
   test_heading_up_route_projection_keeps_rider_fixed();
+  test_rider_is_anchored_at_the_centre_of_the_full_screen_radar();
   test_non_finite_heading_keeps_map_projection_finite();
   test_real_road_context_uses_the_same_heading_up_transform();
   test_map_scene_classes_buildings_and_capacity_share_route_transform();
