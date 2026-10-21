@@ -39,3 +39,5 @@ Append-only task log. New tasks are added at the end with an ISO 8601 timestamp.
 - 2026-10-21T21:28:54+09:00 **TODO** — Phase 2: feed the attitude block from the IMU bridge; wire the 0-100 timer/best to Performance Run results; use the `DeviceSettings` target and Lean full scale.
 - 2026-10-21T21:30:47+09:00 **DONE** — Phase 2: `sensor_to_bike`, IMU → sensor → bridge attitude wiring, Lean-page bridge test.
 - 2026-10-21T21:30:47+09:00 **TODO** — Phase 2: run `idf.py build`, regress the QMI axes and calibrate the Lean zero on the board; then BLE telemetry sending + iOS decode.
+- 2026-10-21T21:33:59+09:00 **DONE** — Phase 3: `PerformanceRunDetector` in the new `MotoRideCore` Swift target, 8 tests green.
+- 2026-10-21T21:33:59+09:00 **TODO** — Phase 3: wire the detector to raw CoreLocation speed and the PERF timer; Ride recorder/store/charts; BLE telemetry/iOS decode.
