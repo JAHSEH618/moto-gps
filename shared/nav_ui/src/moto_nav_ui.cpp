@@ -30,6 +30,42 @@ constexpr lv_color_t kSoft = LV_COLOR_MAKE(0xAE, 0xB2, 0xB0);
 constexpr lv_color_t kAmber = LV_COLOR_MAKE(0xE6, 0xC8, 0x4F);
 constexpr lv_color_t kRed = LV_COLOR_MAKE(0xFF, 0x4B, 0x43);
 constexpr lv_color_t kGreen = LV_COLOR_MAKE(0x69, 0xD4, 0x94);
+
+struct MapPalette {
+    lv_color_t background;
+    lv_color_t road;
+    lv_color_t road_major;
+    lv_color_t road_minor;
+    lv_color_t building;
+    lv_color_t building_landmark;
+    lv_color_t route;
+    lv_color_t route_shadow;
+};
+
+constexpr MapPalette kOfficialPalette = {
+    kBlack, kRoadGray, kRoadMajor, kRoadMinor,
+    kBuildingGray, kBuildingLandmark, kWhite, kGraphite,
+};
+constexpr MapPalette kGtaDayPalette = {
+    LV_COLOR_MAKE(0x1A, 0x1F, 0x1A),
+    LV_COLOR_MAKE(0xF6, 0xE6, 0xC5),
+    LV_COLOR_MAKE(0xF6, 0xE6, 0xC5),
+    LV_COLOR_MAKE(0xD9, 0xC9, 0xA8),
+    LV_COLOR_MAKE(0x4A, 0x2A, 0x32),
+    LV_COLOR_MAKE(0x5C, 0x36, 0x3E),
+    LV_COLOR_MAKE(0xC8, 0x60, 0xB8),
+    LV_COLOR_MAKE(0x3A, 0x1F, 0x2E),
+};
+constexpr MapPalette kGtaNightPalette = {
+    kBlack,
+    LV_COLOR_MAKE(0x46, 0x56, 0x6B),
+    LV_COLOR_MAKE(0x5A, 0x6E, 0x84),
+    LV_COLOR_MAKE(0x2E, 0x3A, 0x49),
+    LV_COLOR_MAKE(0x1A, 0x22, 0x30),
+    LV_COLOR_MAKE(0x26, 0x31, 0x42),
+    LV_COLOR_MAKE(0x39, 0xE6, 0xFF),
+    LV_COLOR_MAKE(0x0B, 0x2A, 0x33),
+};
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kCompassTickCount = 24;
 constexpr int kSpeedTickCount = 18;
@@ -79,6 +115,9 @@ struct Ui {
     bool page_dots_visible = true;
 
     lv_obj_t *nav_map = nullptr;
+    lv_obj_t *nav_map_background = nullptr;
+    moto_ui_theme_t theme = MOTO_UI_THEME_OFFICIAL;
+    MapPalette palette = kOfficialPalette;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_obj_t *nav_building_fill = nullptr;
     MapPolyline nav_building_lines[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
@@ -196,6 +235,8 @@ void reset_ui_state() {
     ui.page_dots_visible = true;
     ui.nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
     ui.phone_connection = MOTO_UI_PHONE_OFFLINE;
+    ui.theme = MOTO_UI_THEME_OFFICIAL;
+    ui.palette = kOfficialPalette;
     ui.lifecycle_visual = LifecycleVisual::Hidden;
     ui.lifecycle_target = LifecycleVisual::Hidden;
     ui.music_page_enabled = true;
@@ -451,8 +492,8 @@ void draw_building_fills(lv_event_t *event) {
         const lv_point_precise_t *points =
             &ui.nav_building_points[packed_index];
         fill.bg_color = span.building_class == 1U
-                            ? kBuildingLandmark
-                            : kBuildingGray;
+                            ? ui.palette.building_landmark
+                            : ui.palette.building;
 
         float minimum_y = static_cast<float>(points[0].y);
         float maximum_y = static_cast<float>(points[0].y);
@@ -762,7 +803,9 @@ void update_road_geometry(const moto_ui_state_t *state) {
                     ui.nav_roads[i], px(major ? 4 : (service ? 2 : 3)), 0);
                 lv_obj_set_style_line_color(
                     ui.nav_roads[i],
-                    major ? kRoadMajor : (service ? kRoadMinor : kRoadGray), 0);
+                    major ? ui.palette.road_major
+                          : (service ? ui.palette.road_minor
+                                     : ui.palette.road), 0);
                 lv_obj_remove_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
             } else {
                 lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
@@ -830,7 +873,8 @@ void update_building_geometry(const moto_ui_state_t *state) {
                     ui.nav_building_spans[i].building_class == 1U;
                 lv_obj_set_style_line_color(
                     ui.nav_buildings[i],
-                    landmark ? kBuildingLandmark : kBuildingGray, 0);
+                    landmark ? ui.palette.building_landmark
+                             : ui.palette.building, 0);
                 lv_obj_set_style_line_width(
                     ui.nav_buildings[i], px(landmark ? 2 : 1), 0);
                 lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
@@ -1625,6 +1669,19 @@ void create_navigation_page() {
     // The Radar owns the whole round canvas; the HUD is overlaid on top.
     lv_obj_set_height(ui.nav_map, MOTO_UI_CANVAS_HEIGHT);
 
+    // The map owns a solid land colour so the GTA day theme can switch the
+    // Radar background without changing the speed/compass/music pages.
+    ui.nav_map_background = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_map_background);
+    lv_obj_remove_flag(ui.nav_map_background, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(ui.nav_map_background, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.nav_map_background, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_pos(ui.nav_map_background, 0, 0);
+    lv_obj_set_style_bg_color(ui.nav_map_background,
+                              ui.palette.background, 0);
+    lv_obj_set_style_bg_opa(ui.nav_map_background, LV_OPA_COVER, 0);
+
     // Footprint fills sit beneath the building outlines. A triangle fan from
     // the footprint centroid gives the GTA-style flat blocks without a
     // polygon fill primitive or a bitmap asset.
@@ -1646,7 +1703,8 @@ void create_navigation_page() {
                                                   ui.nav_building_lines[i]);
         lv_obj_set_size(ui.nav_buildings[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
         lv_obj_set_style_line_width(ui.nav_buildings[i], px(1), 0);
-        lv_obj_set_style_line_color(ui.nav_buildings[i], kBuildingGray, 0);
+        lv_obj_set_style_line_color(ui.nav_buildings[i],
+                                     ui.palette.building, 0);
         lv_obj_set_style_line_opa(ui.nav_buildings[i], LV_OPA_COVER, 0);
         lv_obj_set_style_line_rounded(ui.nav_buildings[i], false, 0);
         lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
@@ -1660,7 +1718,7 @@ void create_navigation_page() {
         ui.nav_roads[i] = create_map_polyline(ui.nav_map, ui.nav_road_lines[i]);
         lv_obj_set_size(ui.nav_roads[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
         lv_obj_set_style_line_width(ui.nav_roads[i], px(3), 0);
-        lv_obj_set_style_line_color(ui.nav_roads[i], kRoadGray, 0);
+        lv_obj_set_style_line_color(ui.nav_roads[i], ui.palette.road, 0);
         lv_obj_set_style_line_opa(ui.nav_roads[i], LV_OPA_COVER, 0);
         lv_obj_set_style_line_rounded(ui.nav_roads[i], true, 0);
         lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
@@ -1669,12 +1727,12 @@ void create_navigation_page() {
     ui.nav_route_shadow = create_map_polyline(ui.nav_map, ui.nav_route_shadow_line);
     lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_style_line_width(ui.nav_route_shadow, px(13), 0);
-    lv_obj_set_style_line_color(ui.nav_route_shadow, kGraphite, 0);
+    lv_obj_set_style_line_color(ui.nav_route_shadow, ui.palette.route_shadow, 0);
     lv_obj_set_style_line_rounded(ui.nav_route_shadow, true, 0);
     ui.nav_route = create_map_polyline(ui.nav_map, ui.nav_route_line);
     lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_style_line_width(ui.nav_route, px(6), 0);
-    lv_obj_set_style_line_color(ui.nav_route, kWhite, 0);
+    lv_obj_set_style_line_color(ui.nav_route, ui.palette.route, 0);
     lv_obj_set_style_line_rounded(ui.nav_route, true, 0);
     ui.nav_route_motion_timer = lv_timer_create(route_motion_tick,
                                                  kRouteMotionFrameMs,
@@ -2105,7 +2163,50 @@ extern "C" void moto_nav_ui_create(void) {
     show_page(MOTO_UI_PAGE_NAVIGATION, true);
 }
 
-extern "C" void moto_nav_ui_set_state(const moto_ui_state_t *state) {
+void apply_theme_colors() {
+    if(ui.nav_map_background != nullptr) {
+        lv_obj_set_style_bg_color(ui.nav_map_background,
+                                  ui.palette.background, 0);
+    }
+    for(std::uint8_t i = 0; i < ui.nav_building_footprint_count; ++i) {
+        const bool landmark = ui.nav_building_spans[i].building_class == 1U;
+        lv_obj_set_style_line_color(
+            ui.nav_buildings[i],
+            landmark ? ui.palette.building_landmark : ui.palette.building, 0);
+    }
+    for(std::uint8_t i = 0; i < ui.nav_road_polyline_count; ++i) {
+        const std::uint8_t road_class = ui.nav_road_spans[i].road_class;
+        const bool major = road_class <= 2U;
+        const bool service = road_class >= 4U;
+        lv_obj_set_style_line_color(
+            ui.nav_roads[i],
+            major ? ui.palette.road_major
+                  : (service ? ui.palette.road_minor : ui.palette.road), 0);
+    }
+    if(ui.nav_route != nullptr) {
+        lv_obj_set_style_line_color(ui.nav_route, ui.palette.route, 0);
+    }
+    if(ui.nav_route_shadow != nullptr) {
+        lv_obj_set_style_line_color(ui.nav_route_shadow,
+                                    ui.palette.route_shadow, 0);
+    }
+    if(ui.nav_map != nullptr) {
+        lv_obj_invalidate(ui.nav_map);
+    }
+}
+
+extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
+    ui.theme = theme;
+    switch(theme) {
+        case MOTO_UI_THEME_GTA_DAY: ui.palette = kGtaDayPalette; break;
+        case MOTO_UI_THEME_GTA_NIGHT: ui.palette = kGtaNightPalette; break;
+        case MOTO_UI_THEME_OFFICIAL:
+        default: ui.palette = kOfficialPalette; break;
+    }
+    if(ui.nav_map_background != nullptr) apply_theme_colors();
+}
+
+void moto_nav_ui_set_state(const moto_ui_state_t *state) {
     if(state == nullptr || ui.screen == nullptr) return;
     show_page(state->page);
     // Hidden pages do not need to be invalidated. Page changes immediately

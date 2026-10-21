@@ -62,6 +62,12 @@ typedef enum {
 } moto_ui_page_t;
 
 typedef enum {
+    MOTO_UI_THEME_OFFICIAL = 0,
+    MOTO_UI_THEME_GTA_DAY,
+    MOTO_UI_THEME_GTA_NIGHT,
+} moto_ui_theme_t;
+
+typedef enum {
     MOTO_MUSIC_PREVIOUS = 0,
     MOTO_MUSIC_TOGGLE_PLAYBACK,
     MOTO_MUSIC_NEXT,
@@ -150,6 +156,7 @@ void moto_nav_ui_show_boot_screen(void);
 /** Draw the final monochrome frame before the PMIC removes power. */
 void moto_nav_ui_show_power_off_screen(void);
 void moto_nav_ui_set_state(const moto_ui_state_t *state);
+void moto_nav_ui_set_theme(moto_ui_theme_t theme);
 /** Apply only high-rate route/heading motion to the currently visible page. */
 void moto_nav_ui_set_motion_state(const moto_ui_state_t *state);
 /** Drive the full-screen connection/ready lifecycle on the navigation page. */
