@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apple-Quality SwiftUI Design"
+  short_description: "Stable native SwiftUI design and expressive motion"
+  default_prompt: "Use $design-swiftui-interfaces to design or review this SwiftUI experience with stable Apple-native interaction and an appropriate motion profile."

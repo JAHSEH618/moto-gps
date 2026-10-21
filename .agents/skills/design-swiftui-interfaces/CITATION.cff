@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: "SwiftUI Interface Design Skill"
+version: "0.1.0"
+date-released: "2026-07-31"
+abstract: "A stability-first Codex Agent Skill for designing, implementing, and reviewing polished native SwiftUI interfaces across Apple platforms."
+license: MIT
+repository-code: "https://github.com/ZHUOLIN0928/swiftui-interface-design-skill"
+keywords:
+  - SwiftUI
+  - interface design
+  - Human Interface Guidelines
+  - accessibility
+  - motion design
+  - Liquid Glass
+  - Codex Skill
+authors:
+  - name: "SwiftUI Interface Design Skill contributors"
