@@ -84,7 +84,8 @@ class PhoneNavBridge {
 #endif
   void send_page_command(moto_ui_page_t page);
   void send_music_command(moto_music_command_t command);
-  void send_device_command(moto::ble::DeviceCommand command);
+  // Returns the command id written to the wire, or 0 when nothing was sent.
+  std::uint16_t send_device_command(moto::ble::DeviceCommand command);
   // The device asked for a route home. Public so the host tests can exercise
   // the send path without synthesising an LVGL tap.
   void home_command();
@@ -99,6 +100,10 @@ class PhoneNavBridge {
   moto::nav::NavSnapshot snapshot_{};
   // Newest accepted HomeLocation revision for this session.
   std::uint32_t home_revision_ = 0;
+  // Command id of the last HomeShortcut. The phone answers InvalidState when no
+  // home is set; the device cannot know that on its own, so the refusal has to
+  // come back as a visible hint instead of a silent no-op.
+  std::uint16_t pending_home_command_id_ = 0;
   // Only the render task writes these retained copies. They let state_mutex_
   // be released before waiting for LVGL or running the relatively expensive
   // road/building projection.
@@ -125,6 +130,7 @@ class PhoneNavBridge {
     RenderNavigation = 1U << 0U,
     RenderMotion = 1U << 1U,
     RenderMedia = 1U << 2U,
+    RenderHomeError = 1U << 3U,
   };
   std::atomic<std::uint32_t> pending_render_flags_{0};
 #ifdef ESP_PLATFORM

@@ -121,6 +121,61 @@ void test_home_shortcut_sends_the_intent() {
   CHECK(sender.commands.size() == 1);
 }
 
+void test_refused_home_tap_reaches_the_screen() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  MusicSenderContext sender;
+  bridge.set_sender(record_music_sender, &sender);
+  bridge.install_ui_callbacks();
+  bridge.on_link_state(true);
+
+  moto::test::emit_home_shortcut();
+  CHECK(sender.commands.size() == 1);
+  if (sender.commands.empty()) return;
+  const std::uint16_t home_command = sender.commands[0].command_id;
+  CHECK(home_command != 0);
+
+  // An Ack for someone else's command must not put a hint on screen.
+  moto::ble::Ack unrelated;
+  unrelated.acknowledged_sequence = 12;
+  unrelated.status = moto::ble::AckStatus::InvalidState;
+  unrelated.command_id = static_cast<std::uint16_t>(home_command + 1);
+  CHECK(bridge.on_message(make_message(unrelated, 12)) ==
+        moto::ble::AckStatus::Ok);
+  bridge.render_pending_for_test();
+  CHECK(moto::test::phone_nav_bridge_home_error_count() == 0);
+
+  // The phone has no home. The device cannot know, so the refusal has to be
+  // visible: a tap that silently does nothing is indistinguishable from a bug.
+  moto::ble::Ack refused;
+  refused.acknowledged_sequence = 13;
+  refused.status = moto::ble::AckStatus::InvalidState;
+  refused.command_id = home_command;
+  CHECK(bridge.on_message(make_message(refused, 13)) ==
+        moto::ble::AckStatus::Ok);
+  bridge.render_pending_for_test();
+  CHECK(moto::test::phone_nav_bridge_home_error_count() == 1);
+
+  // A repeated Ack for the same command is not a new failure.
+  CHECK(bridge.on_message(make_message(refused, 14)) ==
+        moto::ble::AckStatus::Ok);
+  bridge.render_pending_for_test();
+  CHECK(moto::test::phone_nav_bridge_home_error_count() == 1);
+
+  // A successful tap produces no hint at all.
+  moto::test::emit_home_shortcut();
+  CHECK(sender.commands.size() == 2);
+  moto::ble::Ack accepted;
+  accepted.acknowledged_sequence = 15;
+  accepted.status = moto::ble::AckStatus::Ok;
+  accepted.command_id = sender.commands[1].command_id;
+  CHECK(bridge.on_message(make_message(accepted, 15)) ==
+        moto::ble::AckStatus::Ok);
+  bridge.render_pending_for_test();
+  CHECK(moto::test::phone_nav_bridge_home_error_count() == 1);
+}
+
 void test_navigation_and_touch_updates_are_serialized() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
@@ -710,6 +765,7 @@ void test_home_location_projects_onto_the_radar() {
 
 int main() {
   test_sender_is_called_without_bridge_state_lock();  test_home_shortcut_sends_the_intent();
+  test_refused_home_tap_reaches_the_screen();
   test_navigation_and_touch_updates_are_serialized();
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();
   test_phone_connection_lifecycle_reaches_the_ui();

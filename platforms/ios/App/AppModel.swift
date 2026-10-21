@@ -86,6 +86,12 @@ final class AppModel: ObservableObject {
         mediaController.onStateChange = { [weak self] state in
             self?.bluetooth.sendMediaState(state)
         }
+        // Views write the store directly, so mirror it to the device here
+        // instead of at every call site. The central retains the newest value
+        // and re-sends it after each handshake.
+        homeStore.onChange = { [weak self] _ in
+            self?.broadcastHomeLocation()
+        }
         searchLocation.onLocationChange = { [weak self] point in
             guard let self else { return }
             let query = self.destinationQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -114,6 +120,8 @@ final class AppModel: ObservableObject {
                 self.failRoutePreview("暂时无法获取当前位置，请到开阔位置后重试")
             }
         }
+
+        broadcastHomeLocation()
 
         #if DEBUG
         // Offline UI checks must not request device permissions or contact services.
@@ -286,6 +294,17 @@ final class AppModel: ObservableObject {
         guard !isUpdatingGateway else { return .invalidState }
         selectPlace(place)
         return .accepted
+    }
+
+    /// Mirror the saved home to the device. The address is converted to GCJ-02
+    /// inside `HomeLocationBroadcast`, exactly once.
+    private func broadcastHomeLocation() {
+        bluetooth.sendHomeLocation(
+            HomeLocationBroadcast(
+                revision: homeStore.revision,
+                address: homeStore.place?.location
+            )
+        )
     }
 
     /// The sample the ride screen may show, or `nil` when none has arrived yet

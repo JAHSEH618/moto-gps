@@ -19,6 +19,7 @@ void* demo_callback_context = nullptr;
 moto_home_shortcut_callback_t home_callback = nullptr;
 void* home_callback_context = nullptr;
 int apply_count = 0;
+int home_error_count = 0;
 int board_lock_count = 0;
 bool board_lock_available = true;
 std::string last_road_name;
@@ -177,11 +178,17 @@ extern "C" void moto_nav_ui_set_home_callback(
   home_callback_context = context;
 }
 
+extern "C" void moto_nav_ui_show_home_error(void) {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  ++home_error_count;
+}
+
 namespace moto::test {
 
 void reset_phone_nav_bridge_probe() {
   const std::lock_guard<std::mutex> lock(probe_mutex);
   apply_count = 0;
+  home_error_count = 0;
   board_lock_count = 0;
   board_lock_available = true;
   last_road_name.clear();
@@ -268,6 +275,11 @@ void emit_home_shortcut() {
   if (callback == nullptr) return;
   const std::lock_guard<std::recursive_mutex> lock(board_mutex);
   callback(context);
+}
+
+int phone_nav_bridge_home_error_count() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return home_error_count;
 }
 
 int phone_nav_bridge_apply_count() {

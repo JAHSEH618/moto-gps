@@ -5,6 +5,7 @@
 namespace {
 
 int apply_count = 0;
+int home_error_count = 0;
 moto_ui_state_t applied_state{};
 std::string applied_road_name;
 std::string applied_next_road_name;
@@ -54,17 +55,21 @@ extern "C" void moto_nav_ui_set_demo_change_callback(
 extern "C" void moto_nav_ui_set_home_callback(
     moto_home_shortcut_callback_t,
     void*) {}
+extern "C" void moto_nav_ui_show_home_error(void) { ++home_error_count; }
 
 namespace moto::test {
 
 void reset_nav_ui_probe() {
   apply_count = 0;
+  home_error_count = 0;
   applied_state = {};
   applied_road_name.clear();
   applied_next_road_name.clear();
 }
 
 int nav_ui_apply_count() { return apply_count; }
+
+int nav_ui_home_error_count() { return home_error_count; }
 
 const moto_ui_state_t& last_applied_nav_ui_state() {
   return applied_state;
