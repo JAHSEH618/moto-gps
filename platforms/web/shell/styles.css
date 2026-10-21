@@ -47,6 +47,13 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Keyboard focus must stay visible; the app is fully operable from a keyboard
+   on the desktop preview. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
 [hidden] {
   display: none !important;
 }
