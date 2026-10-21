@@ -162,12 +162,13 @@ function fold(entries) {
       }
     }
     const match = bestMatch(entry, candidates);
+    if (!entry.ref && STANDALONE.test(entry.body)) {
+      // The author declared that this completion had no originating task, so
+      // text similarity is a coincidence, not an uncited closure.
+      infos.push(`${entry.timestamp}: standalone completion`);
+      continue;
+    }
     if (!match || (!entry.ref && match.score < 0.55)) {
-      // No originating task: standalone work. Fine, but say so when the
-      // completion looks like it is restating an existing task.
-      if (STANDALONE.test(entry.body)) {
-        infos.push(`${entry.timestamp}: standalone completion`);
-      }
       continue;
     }
     if (entry.ref && candidates.length > 1 && match.score < 0.35) {
