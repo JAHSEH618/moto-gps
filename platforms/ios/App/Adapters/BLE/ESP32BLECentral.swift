@@ -184,6 +184,7 @@ final class ESP32BLECentral: NSObject {
 
     var onSnapshotChange: ((BLEDeviceSnapshot) -> Void)?
     var onDeviceCommand: ((MotoBLEDeviceCommand) -> BLECommandDisposition)?
+    var onAttitudeSample: ((MotoBLEAttitudeSample) -> Void)?
     private(set) var snapshot = BLEDeviceSnapshot() {
         didSet { onSnapshotChange?(snapshot) }
     }
@@ -1424,7 +1425,12 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                 }
                 return
             }
-            guard let command = inbound.deviceCommand else { return }
+            guard let command = inbound.deviceCommand else {
+                if let attitude = inbound.attitudeSample {
+                    onAttitudeSample?(attitude)
+                }
+                return
+            }
             snapshot.lastCommandID = command.commandID
 
             let status: BLECommandDisposition
