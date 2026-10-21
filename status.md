@@ -67,3 +67,11 @@ Append-only work log. Every entry is added at the end with an ISO 8601 timestamp
 - Biggest visual gap: the map layer is still `px(232)` = 300 px tall. The anchor moved to y=233, but the Radar is not yet full-screen and the HUD still uses the old split layout.
 - Main risks: triangle-fan AA seam; red WIP commit on the feature branch; 500 m map radius will look sparse at full-screen density; e-scooter top speed is still unknown for 0-100 testing; font/licensing work is design-only.
 - Recommended order: finish the building fill, expand the map layer and HUD, add the day/night theme, add Home/Settings plus the low-speed gate, then the `DeviceSettings` model; run the Web preview after the full-screen layout.
+
+## 2026-10-21T21:14:31+09:00 — Green: building fill, debug dump removed
+
+- Replaced the antialiased triangle fan with a hard-edged scanline span fill.
+- The fill test now checks the centre and the two old fan-spoke points `(125,125)` and `(175,175)`; all are filled.
+- Removed the temporary pixel-grid debug dump from `nav_ui_render_tests.cpp`.
+- `nav_ui_render_tests` green; full native suite 9/9 green.
+- Next red test: map covers the bottom of the round canvas (full-screen map layer).
