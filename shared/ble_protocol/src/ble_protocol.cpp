@@ -693,6 +693,8 @@ BytesResult encode_payload(const T& value) {
     writer.u16(value.performance_target_kph);
     writer.u8(value.visible_pages);
     writer.u16(static_cast<std::uint16_t>(value.lean_zero_offset_cdeg));
+    writer.u8(value.ambient_night ? 1U : 0U);
+    writer.u8(value.show_buildings ? 1U : 0U);
     writer.u32(value.revision);
   } else if constexpr (std::is_same_v<T, AttitudeSample>) {
     writer.u32(value.monotonic_ms);
@@ -1628,11 +1630,12 @@ MessageResult decode_home_location(ByteView payload) {
 bool SettingsState::operator==(const SettingsState& rhs) const noexcept {
   return std::tie(theme, brightness_percent, units, lean_full_scale_deg,
                   performance_target_kph, visible_pages,
-                  lean_zero_offset_cdeg, revision) ==
+                  lean_zero_offset_cdeg, ambient_night, show_buildings,
+                  revision) ==
          std::tie(rhs.theme, rhs.brightness_percent, rhs.units,
                   rhs.lean_full_scale_deg, rhs.performance_target_kph,
                   rhs.visible_pages, rhs.lean_zero_offset_cdeg,
-                  rhs.revision);
+                  rhs.ambient_night, rhs.show_buildings, rhs.revision);
 }
 
 MessageResult decode_settings_state(ByteView payload) {
@@ -1646,6 +1649,16 @@ MessageResult decode_settings_state(ByteView payload) {
     value.performance_target_kph = reader.u16();
     value.visible_pages = reader.u8();
     value.lean_zero_offset_cdeg = static_cast<std::int16_t>(reader.u16());
+    // One byte each, but 0/1 is the whole table. Anything else is refused
+    // rather than read as "true", so a future tri-state cannot be silently
+    // reinterpreted by this decoder.
+    const std::uint8_t ambient_night = reader.u8();
+    const std::uint8_t show_buildings = reader.u8();
+    if (ambient_night > 1U || show_buildings > 1U) {
+      reader.fail(Error::InvalidEnum);
+    }
+    value.ambient_night = ambient_night == 1U;
+    value.show_buildings = show_buildings == 1U;
     value.revision = reader.u32();
     reader.require_end();
   }

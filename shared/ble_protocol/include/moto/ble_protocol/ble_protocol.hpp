@@ -597,8 +597,15 @@ inline constexpr std::uint8_t kSettingsAllPages =
 inline constexpr std::int16_t kMaxSettingsLeanOffsetCdeg = 30 * 100;
 
 // payload_revision + theme + brightness + units + lean scale + performance
-// target + page mask + lean offset (u16) + settings revision (u32).
-inline constexpr std::size_t kSettingsPayloadSize = 14;
+// target + page mask + lean offset (u16) + ambient night + show buildings +
+// settings revision (u32).
+//
+// The two display bytes took this from 14 to 16 bytes without a payload
+// revision bump. That is a deliberate, coordinated break: both endpoints ship
+// together in this project, and a stale decoder rejects the trailing bytes
+// loudly (Error::TrailingBytes) instead of applying a settings set with the
+// wrong meaning. A revision bump would have rejected every other message too.
+inline constexpr std::size_t kSettingsPayloadSize = 16;
 
 struct SettingsState {
   SettingsTheme theme = SettingsTheme::Auto;
@@ -608,6 +615,13 @@ struct SettingsState {
   std::uint16_t performance_target_kph = 100;
   std::uint8_t visible_pages = kSettingsAllPages;
   std::int16_t lean_zero_offset_cdeg = 0;
+  // The phone's day/night fact, not a preference: the device has no clock and
+  // no light sensor, so SettingsTheme::Auto can only resolve against this.
+  // The device echoes it unchanged, so a phone sees its own value back.
+  bool ambient_night = false;
+  // Building footprints are a readability decision, not scenery. Off by
+  // default: at 466 px they crowd out the roads that matter while moving.
+  bool show_buildings = false;
   // Monotonic; zero is reserved for "never seen" and is not encodable.
   std::uint32_t revision = 0;
 

@@ -443,7 +443,7 @@ i32 longitude_e6
 
 设备把家存在自己的状态里，不转发、不落盘：地址属于手机。
 
-### 6.12 SettingsState (`0x17`, 固定 14 字节)
+### 6.12 SettingsState (`0x17`, 固定 16 字节)
 
 设备显示设置的唯一来源。手机写的是**请求**，设备是显示状态的**权威**：收到更高
 revision 时应用，然后回显应用后的状态；收到不大于已应用值的 revision 时忽略。
@@ -459,8 +459,19 @@ u8  lean_full_scale_deg  30 / 40 / 45 / 50
 u16 performance_target_kph 50 / 60 / 100
 u8  visible_pages        bit0..5，bit0 导航必须置位
 u16 lean_zero_offset_cdeg  有符号，|值| <= 3000
+u8  ambient_night        0/1，手机所在地现在是白天还是夜晚
+u8  show_buildings       0/1，是否绘制建筑轮廓与填充
 u32 settings_revision    非零，单调
 ```
+
+`ambient_night` 不是偏好，而是**观测**：设备没有时钟、没有光线传感器，`Auto` 只能靠这个
+字节解析。设备原样回显它，所以手机看到的是自己发来的值。`show_buildings` 是**可读性**
+决策而不是布景，默认关闭——466 px 上密集的楼块会挤掉骑行中真正需要看清的道路。
+
+这两个字节把载荷从 14 字节扩到 16 字节，**没有**升 `payload revision`。这是一次两端同时
+落地的协同变更：本项目手机与固件同批发布，旧解码器会因为 `require_end()` 看到多余字节而
+明确报错（`TrailingPayload`），而不是按错误语义应用一组设置；升 revision 会把其它所有消息
+也一起拒掉，代价更大。旧固件收到 0x17 只会因能力位缺失而不发，不会误读。
 
 取值是固定表而不是范围：`lean_full_scale_deg=35` 或
 `performance_target_kph=75` 会被拒收，而不是被四舍五入成一个设计从未评审过的
@@ -557,10 +568,10 @@ HomeLocation payload（GCJ-02，revision=3）：
 01020103000000d09b2f024027fb06
 ```
 
-SettingsState payload（夜间、65%、mph、40°、0-60、隐藏音乐页、-1.25°、revision=5）：
+SettingsState payload（夜间、65%、mph、40°、0-60、隐藏音乐页、-1.25°、夜间环境、显示楼块、revision=5）：
 
 ```text
-01034101283c001f83ff05000000
+01034101283c001f83ff010105000000
 ```
 
 机器可读的完整向量以 fixture 为准。修改任何 v1 字节都应先解释兼容性影响，并由

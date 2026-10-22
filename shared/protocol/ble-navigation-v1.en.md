@@ -489,7 +489,7 @@ i32 longitude_e6
 The device keeps the home in its own state; it neither forwards nor persists it: the address
 belongs to the phone.
 
-### 6.12 SettingsState (`0x17`, fixed 14 bytes)
+### 6.12 SettingsState (`0x17`, fixed 16 bytes)
 
 One source of truth for what the device displays. A phone write is a **request**; the device is
 the **authority** for what it shows. It applies a higher revision, then echoes the applied state,
@@ -506,8 +506,20 @@ u8  lean_full_scale_deg  30 / 40 / 45 / 50
 u16 performance_target_kph 50 / 60 / 100
 u8  visible_pages        bits 0..5; bit 0 (navigation) must be set
 u16 lean_zero_offset_cdeg  signed, |value| <= 3000
+u8  ambient_night        0/1; is it day or night where the phone is
+u8  show_buildings       0/1; draw building outlines and fills
 u32 settings_revision    non-zero, monotonic
 ```
+
+`ambient_night` is an **observation**, not a preference: the device has no clock and no light
+sensor, so `Auto` can only resolve against this byte. The device echoes it unchanged, so a phone
+sees its own value back. `show_buildings` is a **readability** decision rather than scenery and
+defaults to off: at 466 px a dense block layer crowds out the roads that matter while riding.
+
+The two bytes take the payload from 14 to 16 bytes **without** a payload revision bump. This is a
+coordinated change: phone and firmware ship together in this project, and a stale decoder rejects
+the trailing bytes loudly (`TrailingPayload`) instead of applying a settings set with the wrong
+meaning. A revision bump would have rejected every other message as well.
 
 The values are a fixed table, not a range: `lean_full_scale_deg=35` or
 `performance_target_kph=75` is refused rather than rounded into a gauge nobody reviewed. The
@@ -612,10 +624,10 @@ HomeLocation payload (GCJ-02, revision=3):
 01020103000000d09b2f024027fb06
 ```
 
-SettingsState payload (night, 65%, mph, 40 deg, 0-60, music page hidden, -1.25 deg, revision=5):
+SettingsState payload (night, 65%, mph, 40 deg, 0-60, music page hidden, -1.25 deg, ambient night, buildings shown, revision=5):
 
 ```text
-01034101283c001f83ff05000000
+01034101283c001f83ff010105000000
 ```
 
 The machine-readable complete vectors are authoritative in the fixture. Changing any v1 byte

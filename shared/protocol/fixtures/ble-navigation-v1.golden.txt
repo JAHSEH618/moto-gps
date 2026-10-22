@@ -4,6 +4,9 @@
 # CapabilityHomeLocation, and the other payload layouts are unchanged.
 # SettingsState (0x17) is additive for the same reason: it is gated on
 # CapabilityDeviceSettings and no existing payload moved.
+# The 0x17 payload grew from 14 to 16 bytes on 2026-10-22 (ambient_night and
+# show_buildings) without a payload revision bump; both endpoints were updated
+# together and the old shape is now rejected as trailing bytes.
 connection.payload=01010101017f00000078563412b900e803
 connection.frame=b701010301000000110001010101017f00000078563412b900e8035469
 navigation.payload=0103020007029300a61062bf040302012a0000007801000039300000fc030000340800006d380000e3013200a32326007d00000ce4b89ce995bfe5ae89e8a19712e5898de696b9e8b7afe58fa3e58fb3e8bdac
@@ -12,4 +15,4 @@ command.payload=0112341203ffffffff40302010
 command.frames20=b701200d341200000d000112341203ffffff6793;b701200e341208000d00ff40302010ef35
 attitude.payload=0178563412b80b06ffcefe4102
 home.payload=01020103000000d09b2f024027fb06
-settings.payload=01034101283c001f83ff05000000
+settings.payload=01034101283c001f83ff010105000000
