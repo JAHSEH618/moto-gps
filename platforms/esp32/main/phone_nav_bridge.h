@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "attitude_estimator.hpp"
+#include "device_settings.hpp"
 #include "moto/ble_protocol/ble_protocol.hpp"
 #include "moto_nav_presenter.hpp"
 #include "motion_heading_fusion.hpp"
@@ -34,6 +35,20 @@ class PhoneNavBridge {
   void render_pending_for_test();
 #endif
   void on_link_state(bool active);
+  // Persists an applied settings set. The bridge never touches NVS itself:
+  // the firmware installs moto::device::save_settings, and the host tests
+  // install a recorder so they can assert that a wire change was stored.
+  using SettingsStoreCallback =
+      bool (*)(const moto::device::DeviceSettings& settings);
+  void set_settings_store(SettingsStoreCallback callback);
+  // Applies settings the device already owns (boot replay). Must run on the
+  // task that holds the LVGL lock, after moto_nav_ui_create(), because a tree
+  // reset clears the theme and the building visibility.
+  void apply_settings(const moto::device::DeviceSettings& settings,
+                      bool ambient_night);
+  // Echoes the applied settings with the revision that was applied. Public so
+  // the host tests can assert the echo without a second bridge instance.
+  void send_settings_state();
   void on_imu_sample(
       float heading_rate_dps,
       const moto::motion::AttitudeEstimate& attitude,
@@ -71,6 +86,8 @@ class PhoneNavBridge {
   void consume_media(const moto::ble::MediaState& input);
   moto::ble::AckStatus consume_map_scene(const moto::ble::MapScene& input);
   void consume_home_location(const moto::ble::HomeLocation& input);
+  moto::ble::AckStatus consume_settings(
+      const moto::ble::SettingsState& input);
   // Requires state_mutex_. This helper never calls LVGL or the BLE sender.
   void apply_geometry_locked(moto::nav::NavSnapshot& target);
   moto::nav::NavSnapshot& phone_snapshot_locked() noexcept;
@@ -100,6 +117,13 @@ class PhoneNavBridge {
   moto::nav::NavSnapshot snapshot_{};
   // Newest accepted HomeLocation revision for this session.
   std::uint32_t home_revision_ = 0;
+  // Newest applied settings revision. Deliberately not reset on link loss or
+  // reboot: the device is the authority, and replaying an older revision would
+  // resurrect a theme the rider already left.
+  moto::device::DeviceSettings settings_{};
+  std::uint32_t settings_revision_ = 0;
+  bool ambient_night_ = false;
+  SettingsStoreCallback settings_store_ = nullptr;
   // Command id of the last HomeShortcut. The phone answers InvalidState when no
   // home is set; the device cannot know that on its own, so the refusal has to
   // come back as a visible hint instead of a silent no-op.
@@ -126,11 +150,14 @@ class PhoneNavBridge {
   moto_ui_phone_connection_t render_phone_connection_ =
       MOTO_UI_PHONE_OFFLINE;
   bool render_demo_active_ = false;
+  moto::device::DeviceSettings render_settings_{};
+  bool render_ambient_night_ = false;
   enum RenderFlag : std::uint32_t {
     RenderNavigation = 1U << 0U,
     RenderMotion = 1U << 1U,
     RenderMedia = 1U << 2U,
     RenderHomeError = 1U << 3U,
+    RenderDisplay = 1U << 4U,
   };
   std::atomic<std::uint32_t> pending_render_flags_{0};
 #ifdef ESP_PLATFORM

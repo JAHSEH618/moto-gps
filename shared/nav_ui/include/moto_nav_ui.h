@@ -196,6 +196,12 @@ void moto_nav_ui_set_theme(moto_ui_theme_t theme);
     like a theme, must be applied again after create() because the tree reset
     clears it. Repeating the current value is a no-op. */
 void moto_nav_ui_set_ambient_night(uint8_t is_night);
+/** Show or hide building footprints (fills and outlines together). Defaults to
+    hidden: at 466 px a dense block layer competes with the roads that matter
+    while moving, and the phone is the surface that owns this trade. Like a
+    theme, it must be re-applied after create() because the tree reset clears
+    it. Repeating the current value is a no-op. */
+void moto_nav_ui_set_show_buildings(uint8_t visible);
 /** Apply only high-rate route/heading motion to the currently visible page. */
 void moto_nav_ui_set_motion_state(const moto_ui_state_t *state);
 /** Drive the full-screen connection/ready lifecycle on the navigation page. */

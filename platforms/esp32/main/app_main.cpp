@@ -12,6 +12,7 @@
 #include "moto_nav_ui.h"
 #include "motion_heading_sensor.h"
 #include "phone_nav_bridge.h"
+#include "settings_store.h"
 
 namespace {
 constexpr char kTag[] = "moto_gps";
@@ -165,6 +166,11 @@ extern "C" void app_main(void) {
     return;
   }
 
+  // Read the stored settings before the tree exists: the phone may not connect
+  // for minutes, and booting into the vendor theme first would flash a
+  // different palette at the rider on every power cycle.
+  const moto::device::DeviceSettings boot_settings =
+      moto::device::load_settings();
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
   static PhoneNavBridge phone_bridge(presenter);
@@ -178,6 +184,10 @@ extern "C" void app_main(void) {
   presenter.update(initial_snapshot);
   presenter.apply_to_lvgl();
   moto_nav_ui_set_music_page_enabled(0);
+  // Replay after create(): the tree reset clears the theme and the building
+  // visibility, so applying before it would leave defaults on screen.
+  phone_bridge.apply_settings(boot_settings, false);
+  phone_bridge.set_settings_store(moto::device::save_settings);
   phone_bridge.install_ui_callbacks();
   board_port_unlock();
 

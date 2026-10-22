@@ -43,5 +43,10 @@ std::string phone_nav_bridge_media_artist();
 bool phone_nav_bridge_last_demo_active();
 moto_maneuver_t phone_nav_bridge_last_maneuver();
 uint32_t phone_nav_bridge_last_distance_to_maneuver_m();
+moto_ui_theme_t phone_nav_bridge_last_theme();
+int phone_nav_bridge_theme_apply_count();
+uint8_t phone_nav_bridge_last_ambient_night();
+uint8_t phone_nav_bridge_last_show_buildings();
+int phone_nav_bridge_buildings_apply_count();
 
 }  // namespace moto::test

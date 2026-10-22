@@ -74,13 +74,22 @@ std::array<std::uint8_t, kEncodedSettingsSize> DeviceSettings::encoded() const {
       static_cast<std::uint16_t>(clamped.lean_zero_offset_cdeg);
   bytes[7] = static_cast<std::uint8_t>(offset & 0xFFU);
   bytes[8] = static_cast<std::uint8_t>(offset >> 8U);
+  bytes[9] = clamped.show_buildings ? 1U : 0U;
   return bytes;
 }
 
 DeviceSettings DeviceSettings::decode(const std::uint8_t* data,
                                       std::size_t size) {
-  if(data == nullptr || size < kEncodedSettingsSize ||
-     data[0] != kSettingsVersion) {
+  if(data == nullptr) {
+    return DeviceSettings{};
+  }
+  // v1 blobs predate show_buildings. Upgrade them instead of resetting the
+  // rider's theme, units and lean scale on the first boot after a flash.
+  const std::size_t required =
+      data[0] == kSettingsVersionLegacy ? kEncodedSettingsSizeV1
+      : data[0] == kSettingsVersion       ? kEncodedSettingsSize
+                                          : 0U;
+  if(required == 0U || size < required) {
     return DeviceSettings{};
   }
 
@@ -94,6 +103,8 @@ DeviceSettings DeviceSettings::decode(const std::uint8_t* data,
   const std::uint16_t offset = static_cast<std::uint16_t>(data[7]) |
                                (static_cast<std::uint16_t>(data[8]) << 8U);
   settings.lean_zero_offset_cdeg = static_cast<std::int16_t>(offset);
+  settings.show_buildings =
+      required == kEncodedSettingsSize && data[9] != 0U;
   settings.clamp();
   return settings;
 }
@@ -104,11 +115,13 @@ bool DeviceSettings::operator==(const DeviceSettings& rhs) const noexcept {
          lean_full_scale_deg == rhs.lean_full_scale_deg &&
          performance_target_kph == rhs.performance_target_kph &&
          visible_pages == rhs.visible_pages &&
-         lean_zero_offset_cdeg == rhs.lean_zero_offset_cdeg;
+         lean_zero_offset_cdeg == rhs.lean_zero_offset_cdeg &&
+         show_buildings == rhs.show_buildings;
 }
 
 moto::ble::SettingsState to_settings_state(const DeviceSettings& settings,
-                                           std::uint32_t revision) {
+                                           std::uint32_t revision,
+                                           bool ambient_night) {
   moto::ble::SettingsState state;
   state.theme = static_cast<moto::ble::SettingsTheme>(settings.theme);
   state.brightness_percent = settings.brightness_percent;
@@ -117,6 +130,8 @@ moto::ble::SettingsState to_settings_state(const DeviceSettings& settings,
   state.performance_target_kph = settings.performance_target_kph;
   state.visible_pages = settings.visible_pages;
   state.lean_zero_offset_cdeg = settings.lean_zero_offset_cdeg;
+  state.ambient_night = ambient_night;
+  state.show_buildings = settings.show_buildings;
   state.revision = revision;
   return state;
 }
@@ -130,6 +145,7 @@ DeviceSettings from_settings_state(const moto::ble::SettingsState& state) {
   settings.performance_target_kph = state.performance_target_kph;
   settings.visible_pages = state.visible_pages;
   settings.lean_zero_offset_cdeg = state.lean_zero_offset_cdeg;
+  settings.show_buildings = state.show_buildings;
   settings.clamp();
   return settings;
 }

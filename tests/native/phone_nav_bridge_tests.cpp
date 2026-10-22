@@ -95,6 +95,135 @@ void test_sender_is_called_without_bridge_state_lock() {  moto::nav::NavPresente
   CHECK(sender.last_page == moto::ble::DisplayPage::Speed);
 }
 
+struct SettingsSenderContext {
+  std::vector<moto::ble::SettingsState> states;
+  std::vector<std::uint8_t> flags;
+};
+
+bool record_settings_sender(const moto::ble::Message& message,
+                            std::uint8_t flags,
+                            void* context) {
+  auto* sender = static_cast<SettingsSenderContext*>(context);
+  const auto* state = std::get_if<moto::ble::SettingsState>(&message);
+  if (state == nullptr) return false;
+  sender->states.push_back(*state);
+  sender->flags.push_back(flags);
+  return true;
+}
+
+moto::device::DeviceSettings stored_settings{};
+int stored_settings_count = 0;
+
+bool record_settings_store(const moto::device::DeviceSettings& settings) {
+  stored_settings = settings;
+  ++stored_settings_count;
+  return true;
+}
+
+moto::ble::SettingsState settings_request(moto::ble::SettingsTheme theme,
+                                          std::uint32_t revision) {
+  moto::ble::SettingsState request;
+  request.theme = theme;
+  request.brightness_percent = 60;
+  request.units = moto::ble::SettingsUnits::Mph;
+  request.lean_full_scale_deg = 45;
+  request.performance_target_kph = 100;
+  request.visible_pages = moto::ble::kSettingsAllPages;
+  request.lean_zero_offset_cdeg = 0;
+  request.ambient_night = false;
+  request.show_buildings = true;
+  request.revision = revision;
+  return request;
+}
+
+void test_settings_apply_echo_and_persist() {
+  moto::test::reset_phone_nav_bridge_probe();
+  stored_settings = {};
+  stored_settings_count = 0;
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  SettingsSenderContext sender;
+  bridge.set_sender(record_settings_sender, &sender);
+  bridge.set_settings_store(record_settings_store);
+  bridge.on_link_state(true);
+
+  const moto::ble::SettingsState request =
+      settings_request(moto::ble::SettingsTheme::Night, 1);
+  CHECK(bridge.on_message(make_message(request, 1)) ==
+        moto::ble::AckStatus::Ok);
+  // Applied, persisted, and echoed with the same revision so the phone can
+  // stop retrying.
+  CHECK(stored_settings_count == 1);
+  CHECK(stored_settings.show_buildings);
+  CHECK(sender.states.size() == 1);
+  CHECK(sender.states[0].revision == 1);
+  CHECK(sender.states[0].theme == moto::ble::SettingsTheme::Night);
+  CHECK(sender.states[0].show_buildings);
+  // Settings are a display change, not an urgent one.
+  CHECK(sender.flags.size() == 1 && sender.flags[0] == 0);
+
+  // LVGL writes belong to the render task, never to the BLE callback.
+  CHECK(moto::test::phone_nav_bridge_theme_apply_count() == 0);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_theme() ==
+        MOTO_UI_THEME_GTA_NIGHT);
+  CHECK(moto::test::phone_nav_bridge_last_show_buildings() == 1);
+
+  // An equal revision is a replay: no re-apply, no re-store, no echo.
+  sender.states.clear();
+  CHECK(bridge.on_message(make_message(request, 2)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(stored_settings_count == 1);
+  CHECK(sender.states.empty());
+
+  // AUTO is resolved on the device from the phone's ambient flag, and the
+  // phone does not get to pick a palette for it.
+  const moto::ble::SettingsState auto_night =
+      settings_request(moto::ble::SettingsTheme::Auto, 2);
+  auto auto_night_with_flag = auto_night;
+  auto_night_with_flag.ambient_night = true;
+  CHECK(bridge.on_message(make_message(auto_night_with_flag, 3)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_ambient_night() == 1);
+  CHECK(moto::test::phone_nav_bridge_last_theme() == MOTO_UI_THEME_AUTO);
+
+  // A higher revision carrying the same values still echoes (the phone may be
+  // confirming after a reconnect) but must not rewrite NVS.
+  auto same_values = auto_night_with_flag;
+  same_values.revision = 3;
+  CHECK(bridge.on_message(make_message(same_values, 4)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(stored_settings_count == 2);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_theme_apply_count() >= 2);
+  CHECK(moto::test::phone_nav_bridge_last_theme() == MOTO_UI_THEME_AUTO);
+}
+
+// Boot replay: the stored settings must reach the UI before the phone says
+// anything, because the tree reset clears the theme and the building layer.
+void test_boot_settings_replay_reaches_the_ui() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+
+  moto::device::DeviceSettings stored;
+  stored.theme = moto::device::DeviceThemeMode::Day;
+  stored.show_buildings = true;
+  bridge.apply_settings(stored, false);
+
+  CHECK(moto::test::phone_nav_bridge_last_theme() == MOTO_UI_THEME_GTA_DAY);
+  CHECK(moto::test::phone_nav_bridge_last_ambient_night() == 0);
+  CHECK(moto::test::phone_nav_bridge_last_show_buildings() == 1);
+
+  // Nothing to echo: no link has ever supplied a revision.
+  SettingsSenderContext sender;
+  bridge.set_sender(record_settings_sender, &sender);
+  bridge.on_link_state(true);
+  bridge.send_settings_state();
+  CHECK(sender.states.empty());
+}
+
 void test_home_shortcut_sends_the_intent() {
   moto::nav::NavPresenter presenter;
   PhoneNavBridge bridge(presenter);
@@ -764,7 +893,9 @@ void test_home_location_projects_onto_the_radar() {
 }  // namespace
 
 int main() {
-  test_sender_is_called_without_bridge_state_lock();  test_home_shortcut_sends_the_intent();
+  test_sender_is_called_without_bridge_state_lock();  test_settings_apply_echo_and_persist();
+  test_boot_settings_replay_reaches_the_ui();
+  test_home_shortcut_sends_the_intent();
   test_refused_home_tap_reaches_the_screen();
   test_navigation_and_touch_updates_are_serialized();
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();

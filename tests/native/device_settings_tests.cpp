@@ -19,6 +19,8 @@ using moto::device::PageSpeed;
 using moto::device::kAllPages;
 using moto::device::kMaximumLeanOffsetCdeg;
 using moto::device::kEncodedSettingsSize;
+using moto::device::kEncodedSettingsSizeV1;
+using moto::device::kSettingsVersionLegacy;
 
 int failures = 0;
 
@@ -40,6 +42,8 @@ void test_motorcycle_defaults() {
   CHECK(settings.performance_target_kph == 100);
   CHECK(settings.visible_pages == kAllPages);
   CHECK(settings.lean_zero_offset_cdeg == 0);
+  // Readability first: blocks are opt-in, not scenery that arrives by default.
+  CHECK(!settings.show_buildings);
 }
 
 void test_clamp_snaps_to_supported_values() {
@@ -87,6 +91,7 @@ void test_encode_decode_round_trip() {
   settings.visible_pages =
       PageNavigation | PagePerformance | PageLean | PageSpeed;
   settings.lean_zero_offset_cdeg = -1'234;
+  settings.show_buildings = true;
 
   const auto bytes = settings.encoded();
   CHECK(bytes.size() == kEncodedSettingsSize);
@@ -97,12 +102,36 @@ void test_encode_decode_round_trip() {
 
 void test_unknown_or_short_blobs_fall_back_to_defaults() {
   auto bytes = DeviceSettings{}.encoded();
-  bytes[0] = 2;
+  bytes[0] = 3;
   CHECK(DeviceSettings::decode(bytes.data(), bytes.size()) ==
         DeviceSettings{});
 
   CHECK(DeviceSettings::decode(nullptr, 0) == DeviceSettings{});
   CHECK(DeviceSettings::decode(bytes.data(), 4) == DeviceSettings{});
+}
+
+// A v1 blob predates show_buildings. Resetting theme, units and lean scale on
+// the first boot after a flash would be a regression the rider can see, so the
+// old shape is upgraded in place with the new field at its default.
+void test_v1_blob_is_upgraded_not_discarded() {
+  auto bytes = DeviceSettings{}.encoded();
+  bytes[0] = kSettingsVersionLegacy;
+  bytes[1] = static_cast<std::uint8_t>(DeviceThemeMode::Night);
+  bytes[2] = 35;
+  bytes[3] = static_cast<std::uint8_t>(DeviceUnits::Mph);
+  bytes[4] = 30;
+  bytes[5] = 50;
+  bytes[6] = PageNavigation | PageSpeed;
+
+  const DeviceSettings decoded =
+      DeviceSettings::decode(bytes.data(), kEncodedSettingsSizeV1);
+  CHECK(decoded.theme == DeviceThemeMode::Night);
+  CHECK(decoded.brightness_percent == 35);
+  CHECK(decoded.units == DeviceUnits::Mph);
+  CHECK(decoded.lean_full_scale_deg == 30);
+  CHECK(decoded.performance_target_kph == 50);
+  CHECK(decoded.visible_pages == (PageNavigation | PageSpeed));
+  CHECK(!decoded.show_buildings);
 }
 
 void test_tampered_blob_is_clamped() {
@@ -113,6 +142,7 @@ void test_tampered_blob_is_clamped() {
   bytes[6] = 0xFF; // visible pages
   bytes[7] = 0xFF; // lean offset low byte
   bytes[8] = 0x7F; // lean offset high byte -> 32767
+  bytes[9] = 7;    // show buildings: any non-zero byte reads as set
 
   const DeviceSettings decoded =
       DeviceSettings::decode(bytes.data(), bytes.size());
@@ -121,6 +151,7 @@ void test_tampered_blob_is_clamped() {
   CHECK(decoded.performance_target_kph == 100);
   CHECK(decoded.visible_pages == kAllPages);
   CHECK(decoded.lean_zero_offset_cdeg == 3'000);
+  CHECK(decoded.show_buildings);
 }
 
 // The BLE contract and the NVS blob are two descriptions of one thing. If a
@@ -171,6 +202,8 @@ void test_ble_contract_matches() {
   CHECK(defaults.performance_target_kph == expected.performance_target_kph);
   CHECK(defaults.visible_pages == expected.visible_pages);
   CHECK(defaults.lean_zero_offset_cdeg == expected.lean_zero_offset_cdeg);
+  CHECK(defaults.show_buildings == expected.show_buildings);
+  CHECK(!defaults.ambient_night);
 
   // Every field survives a trip to the wire struct and back, and a clamped
   // local value encodes as something the wire validation accepts.
@@ -182,7 +215,10 @@ void test_ble_contract_matches() {
   value.performance_target_kph = 60;
   value.visible_pages = static_cast<std::uint8_t>(kAllPages & ~PageMusic);
   value.lean_zero_offset_cdeg = 175;
-  const SettingsState state = moto::device::to_settings_state(value, 9);
+  value.show_buildings = true;
+  const SettingsState state = moto::device::to_settings_state(value, 9, true);
+  CHECK(state.ambient_night);
+  CHECK(state.show_buildings);
   CHECK(state.revision == 9);
   CHECK(state.theme == SettingsTheme::Night);
   CHECK(state.brightness_percent == 45);
@@ -217,6 +253,7 @@ int main() {
   test_navigation_page_cannot_be_hidden();
   test_encode_decode_round_trip();
   test_unknown_or_short_blobs_fall_back_to_defaults();
+  test_v1_blob_is_upgraded_not_discarded();
   test_tampered_blob_is_clamped();
   test_ble_contract_matches();
 

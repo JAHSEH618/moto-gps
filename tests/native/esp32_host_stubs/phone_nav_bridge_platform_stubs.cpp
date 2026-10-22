@@ -20,6 +20,11 @@ moto_home_shortcut_callback_t home_callback = nullptr;
 void* home_callback_context = nullptr;
 int apply_count = 0;
 int home_error_count = 0;
+moto_ui_theme_t last_theme = MOTO_UI_THEME_OFFICIAL;
+int theme_apply_count = 0;
+uint8_t last_ambient_night = 0;
+uint8_t last_show_buildings = 0;
+int buildings_apply_count = 0;
 int board_lock_count = 0;
 bool board_lock_available = true;
 std::string last_road_name;
@@ -183,12 +188,34 @@ extern "C" void moto_nav_ui_show_home_error(void) {
   ++home_error_count;
 }
 
+extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  last_theme = theme;
+  ++theme_apply_count;
+}
+
+extern "C" void moto_nav_ui_set_ambient_night(uint8_t is_night) {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  last_ambient_night = is_night;
+}
+
+extern "C" void moto_nav_ui_set_show_buildings(uint8_t visible) {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  last_show_buildings = visible;
+  ++buildings_apply_count;
+}
+
 namespace moto::test {
 
 void reset_phone_nav_bridge_probe() {
   const std::lock_guard<std::mutex> lock(probe_mutex);
   apply_count = 0;
   home_error_count = 0;
+  last_theme = MOTO_UI_THEME_OFFICIAL;
+  theme_apply_count = 0;
+  last_ambient_night = 0;
+  last_show_buildings = 0;
+  buildings_apply_count = 0;
   board_lock_count = 0;
   board_lock_available = true;
   last_road_name.clear();
@@ -285,6 +312,31 @@ int phone_nav_bridge_home_error_count() {
 int phone_nav_bridge_apply_count() {
   const std::lock_guard<std::mutex> lock(probe_mutex);
   return apply_count;
+}
+
+moto_ui_theme_t phone_nav_bridge_last_theme() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return last_theme;
+}
+
+int phone_nav_bridge_theme_apply_count() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return theme_apply_count;
+}
+
+uint8_t phone_nav_bridge_last_ambient_night() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return last_ambient_night;
+}
+
+uint8_t phone_nav_bridge_last_show_buildings() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return last_show_buildings;
+}
+
+int phone_nav_bridge_buildings_apply_count() {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  return buildings_apply_count;
 }
 
 int phone_nav_bridge_board_lock_count() {

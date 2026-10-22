@@ -1,0 +1,89 @@
+#include "settings_store.h"
+
+#include <cstddef>
+
+#include "esp_log.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+
+namespace moto::device {
+namespace {
+
+constexpr char kTag[] = "settings_store";
+constexpr char kNamespace[] = "moto_device";
+constexpr char kKey[] = "settings";
+
+// app_main loads settings before the BLE transport starts, and the transport
+// is the other caller of nvs_flash_init(). ESP-IDF returns ESP_OK for a second
+// init, so whichever runs first owns the setup; the erase branch mirrors the
+// transport's because a first boot after a repartition is exactly when NVS has
+// no free pages.
+bool ensure_nvs() {
+  esp_err_t result = nvs_flash_init();
+  if(result == ESP_ERR_NVS_NO_FREE_PAGES ||
+     result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_LOGW(kTag, "NVS layout changed; rebuilding this firmware's NVS");
+    result = nvs_flash_erase();
+    if(result == ESP_OK) {
+      result = nvs_flash_init();
+    }
+  }
+  if(result != ESP_OK) {
+    ESP_LOGE(kTag, "NVS initialization failed: %s", esp_err_to_name(result));
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+DeviceSettings load_settings() {
+  if(!ensure_nvs()) {
+    return DeviceSettings{};
+  }
+  nvs_handle_t handle = 0;
+  if(nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) {
+    // A fresh install has no namespace yet. Defaults are the correct answer.
+    return DeviceSettings{};
+  }
+  std::uint8_t blob[kEncodedSettingsSize]{};
+  std::size_t size = sizeof(blob);
+  const esp_err_t result = nvs_get_blob(handle, kKey, blob, &size);
+  nvs_close(handle);
+  if(result != ESP_OK) {
+    ESP_LOGI(kTag, "no stored settings (%s); using defaults",
+             esp_err_to_name(result));
+    return DeviceSettings{};
+  }
+  const DeviceSettings settings = DeviceSettings::decode(blob, size);
+  ESP_LOGI(kTag, "loaded settings v%u theme=%u buildings=%u",
+           static_cast<unsigned>(blob[0]),
+           static_cast<unsigned>(settings.theme),
+           settings.show_buildings ? 1U : 0U);
+  return settings;
+}
+
+bool save_settings(const DeviceSettings& settings) {
+  if(!ensure_nvs()) {
+    return false;
+  }
+  nvs_handle_t handle = 0;
+  esp_err_t result = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if(result != ESP_OK) {
+    ESP_LOGE(kTag, "nvs_open failed: %s", esp_err_to_name(result));
+    return false;
+  }
+  const auto blob = settings.encoded();
+  result = nvs_set_blob(handle, kKey, blob.data(), blob.size());
+  if(result == ESP_OK) {
+    result = nvs_commit(handle);
+  }
+  nvs_close(handle);
+  if(result != ESP_OK) {
+    ESP_LOGE(kTag, "settings write failed: %s", esp_err_to_name(result));
+    return false;
+  }
+  return true;
+}
+
+}  // namespace moto::device
