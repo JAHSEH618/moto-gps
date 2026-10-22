@@ -15,6 +15,7 @@ set(MOTO_SHARED_BLE_PROTOCOL_SOURCE
 idf_component_register(
     SRCS
         "app_main.cpp"
+        "attitude_estimator.cpp"
         "ble_nav_transport_nimble.cpp"
         "board_port_waveshare_1_75c.cpp"
         "device_settings.cpp"
