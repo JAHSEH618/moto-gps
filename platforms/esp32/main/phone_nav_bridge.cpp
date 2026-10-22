@@ -22,6 +22,31 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kDemoRouteStartM = 0.0;
 constexpr double kDemoSpeedMps = 12.0;
 
+// SettingsTheme and moto_ui_theme_t are deliberately different enums with
+// different orders (Auto is 1 on the wire and 3 in the UI). Never cast.
+moto_ui_theme_t theme_for(moto::device::DeviceThemeMode mode) {
+  switch (mode) {
+    case moto::device::DeviceThemeMode::Day:
+      return MOTO_UI_THEME_GTA_DAY;
+    case moto::device::DeviceThemeMode::Night:
+      return MOTO_UI_THEME_GTA_NIGHT;
+    case moto::device::DeviceThemeMode::Auto:
+      return MOTO_UI_THEME_AUTO;
+    case moto::device::DeviceThemeMode::Official:
+    default:
+      return MOTO_UI_THEME_OFFICIAL;
+  }
+}
+
+// One place, one order: the ambient flag first because set_theme(AUTO)
+// resolves against it, then the theme, then the layer the rider sees.
+void apply_settings_to_ui(const moto::device::DeviceSettings& settings,
+                          bool ambient_night) {
+  moto_nav_ui_set_ambient_night(ambient_night ? 1U : 0U);
+  moto_nav_ui_set_theme(theme_for(settings.theme));
+  moto_nav_ui_set_show_buildings(settings.show_buildings ? 1U : 0U);
+}
+
 struct DemoPose {
   moto::nav::Gcj02Point point{};
   float heading_deg = 0.0F;
@@ -588,6 +613,8 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           return consume_map_scene(value);
         } else if constexpr (std::is_same_v<T, moto::ble::HomeLocation>) {
           consume_home_location(value);
+        } else if constexpr (std::is_same_v<T, moto::ble::SettingsState>) {
+          return consume_settings(value);
         } else if constexpr (std::is_same_v<T, moto::ble::Ack>) {
           ESP_LOGD(kTag, "phone ack sequence=%u command=%u status=%u",
                    value.acknowledged_sequence, value.command_id,
@@ -936,6 +963,79 @@ void PhoneNavBridge::consume_home_location(
   present_navigation();
 }
 
+void PhoneNavBridge::set_settings_store(
+    PhoneNavBridge::SettingsStoreCallback callback) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  settings_store_ = callback;
+}
+
+void PhoneNavBridge::apply_settings(
+    const moto::device::DeviceSettings& settings, bool ambient_night) {
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    settings_ = settings;
+    ambient_night_ = ambient_night;
+  }
+  // Called from the task that holds the LVGL lock (boot) and from the render
+  // task (replay); both own the display at this point.
+  apply_settings_to_ui(settings, ambient_night);
+}
+
+moto::ble::AckStatus PhoneNavBridge::consume_settings(
+    const moto::ble::SettingsState& input) {
+  moto::device::DeviceSettings applied{};
+  PhoneNavBridge::SettingsStoreCallback store = nullptr;
+  bool changed = false;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    // Both endpoints may originate a revision, so a replayed or reordered
+    // message must not resurrect a theme the rider already left. Equal also
+    // means "already applied": this is what terminates the echo.
+    if (input.revision <= settings_revision_) {
+      return moto::ble::AckStatus::Ok;
+    }
+    settings_revision_ = input.revision;
+    ambient_night_ = input.ambient_night;
+    applied = moto::device::from_settings_state(input);
+    changed = applied != settings_;
+    settings_ = applied;
+    store = settings_store_;
+  }
+  // NVS writes can take milliseconds; never hold state_mutex_ across one.
+  if (changed && store != nullptr && !store(applied)) {
+    // The rider's change is on screen but will not survive a reboot. Say so
+    // in the log instead of pretending the write succeeded.
+    ESP_LOGW(kTag, "settings applied but not persisted to NVS");
+  }
+  request_render(RenderDisplay);
+  // Echo the applied state with the same revision, so the phone can confirm
+  // that what it asked for is what the device now runs.
+  send_settings_state();
+  return moto::ble::AckStatus::Ok;
+}
+
+void PhoneNavBridge::send_settings_state() {
+  moto::ble::SettingsState state;
+  PhoneNavBridge::SendCallback sender = nullptr;
+  void* sender_context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    // Revision zero means the device has never applied a settings set; there
+    // is nothing honest to echo yet.
+    if (settings_revision_ == 0 || sender_ == nullptr || !link_active_) {
+      return;
+    }
+    state = moto::device::to_settings_state(settings_, settings_revision_,
+                                            ambient_night_);
+    sender = sender_;
+    sender_context = sender_context_;
+  }
+  const moto::ble::Message message = state;
+  // Settings are not urgent: a theme change is not worth preempting a map
+  // frame, and the phone's revision gate makes ordering safe.
+  sender(message, 0, sender_context);
+}
+
 void PhoneNavBridge::apply_geometry_locked(moto::nav::NavSnapshot& target) {
   if (!geometry_.complete || target.route_id.empty()) {
     target.has_route_view = false;
@@ -1003,6 +1103,10 @@ void PhoneNavBridge::render_pending() {
     if (media) {
       render_media_state_ = media_state_;
     }
+    if ((requested & RenderDisplay) != 0U) {
+      render_settings_ = settings_;
+      render_ambient_night_ = ambient_night_;
+    }
   }
 
   // Projection is the expensive part of a motion frame (hundreds of map
@@ -1023,6 +1127,9 @@ void PhoneNavBridge::render_pending() {
 #endif
     request_render(requested);
     return;
+  }
+  if ((requested & RenderDisplay) != 0U) {
+    apply_settings_to_ui(render_settings_, render_ambient_night_);
   }
   if (navigation) {
     moto_nav_ui_set_phone_connection(render_phone_connection_);

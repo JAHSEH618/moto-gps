@@ -251,6 +251,8 @@ void test_rebuilding_the_ui_is_idempotent() {
 void test_a_building_footprint_interior_is_filled() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  // The block layer is opt-in; see test_buildings_are_opt_in.
+  moto_nav_ui_set_show_buildings(1);
   moto_ui_state_t state = base_state();
   // Keep a route so the connection lifecycle overlay stays hidden; the
   // route is drawn below the building and never crosses its interior.
@@ -281,6 +283,7 @@ void test_a_building_footprint_interior_is_filled() {
 void test_the_map_covers_the_bottom_of_the_round_canvas() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_show_buildings(1);
   moto_ui_state_t state = base_state();
   // A route keeps the lifecycle overlay hidden; the route itself sits at the
   // bottom edge, away from the sampled building.
@@ -421,9 +424,60 @@ void test_a_refused_home_tap_shows_a_hint_and_fades() {
   CHECK(lv_obj_has_flag(hint, LV_OBJ_FLAG_HIDDEN));
 }
 
+// Buildings are a readability trade, not scenery: hidden after create() until
+// the phone asks. This is the only test that asserts the default, because the
+// rest of the suite enables the layer it samples.
+void test_buildings_are_opt_in() {
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_ui_state_t state = base_state();
+  // Keep a route so the lifecycle overlay stays hidden; the route is drawn
+  // below the building and never crosses its interior.
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 280};
+  state.route_points[1] = {60, 280};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 4;
+  state.building_points[0] = {100, 100};
+  state.building_points[1] = {200, 100};
+  state.building_points[2] = {200, 200};
+  state.building_points[3] = {100, 200};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 4, 0};
+  moto_nav_ui_set_state(&state);
+  // create() resets the link to offline, so going online again raises the
+  // 920 ms CONNECTED confirmation over the map. Let it expire first: sampling
+  // through it would read the overlay's colour, not the building layer.
+  pump(240);
+  capture();
+
+  // Default after create(): the footprint interior is bare land and the
+  // outline is gone too, so a hidden layer cannot leave a hollow ghost.
+  CHECK(pixel_at(150, 150) == rgb565(0x05, 0x06, 0x07));
+  CHECK(pixel_at(100, 100) == rgb565(0x05, 0x06, 0x07));
+
+  moto_nav_ui_set_show_buildings(1);
+  capture();
+  CHECK(pixel_at(150, 150) == rgb565(0x24, 0x29, 0x2C));
+
+  // The phone repeats its settings after every handshake and every echo; a
+  // repeat must not invalidate the map layer.
+  const Frame shown = capture();
+  moto_nav_ui_set_show_buildings(1);
+  CHECK(shown.hash == capture().hash);
+
+  moto_nav_ui_set_show_buildings(0);
+  capture();
+  CHECK(pixel_at(150, 150) == rgb565(0x05, 0x06, 0x07));
+}
+
 void test_day_and_night_themes_render_different_map_colors() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_show_buildings(1);
   moto_ui_state_t state = base_state();
   state.route_point_count = 2;
   state.route_points[0] = {40, 440};
@@ -457,6 +511,7 @@ void test_day_and_night_themes_render_different_map_colors() {
 void test_auto_theme_follows_the_ambient_night_flag() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_show_buildings(1);
   moto_ui_state_t state = base_state();
   state.route_point_count = 2;
   state.route_points[0] = {40, 440};
@@ -978,6 +1033,7 @@ int main(int argc, char **argv) {
 
   test_frames_are_deterministic();
   test_rebuilding_the_ui_is_idempotent();
+  test_buildings_are_opt_in();
   test_a_building_footprint_interior_is_filled();
   test_the_map_covers_the_bottom_of_the_round_canvas();
   test_the_ring_carries_progress_and_a_north_badge();

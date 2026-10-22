@@ -131,6 +131,11 @@ struct Ui {
     // Day/night signal supplied by the phone. Only MOTO_UI_THEME_AUTO reads
     // it; an explicit theme stays authoritative.
     bool ambient_night = false;
+    // Building footprints are one visibility decision covering the fill layer
+    // and the outline lines. Hidden by default: at 466 px the block layer
+    // competes with the roads that matter while moving, and the phone owns
+    // the trade through SettingsState.show_buildings.
+    bool show_buildings = false;
     MapPalette palette = kOfficialPalette;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_obj_t *nav_building_fill = nullptr;
@@ -627,10 +632,6 @@ void draw_building_fills(lv_event_t *event) {
         footprint < ui.nav_building_footprint_count; ++footprint) {
         const moto_ui_building_span_t span = ui.nav_building_spans[footprint];
         const std::uint8_t count = span.point_count;
-        if(count < 3) {
-            packed_index += static_cast<std::size_t>(count) + 1U;
-            continue;
-        }
         const lv_point_precise_t *points =
             &ui.nav_building_points[packed_index];
         fill.bg_color = span.building_class == 1U
@@ -958,6 +959,29 @@ void update_road_geometry(const moto_ui_state_t *state) {
 }
 
 
+// The fill layer and the outline lines are one layer to the rider. Toggling
+// only one of them leaves either a hollow ghost or a solid block with no edge,
+// so both are driven from this single place. Lives in the anonymous namespace
+// because the public setter only forwards to it.
+void apply_building_visibility() {
+    if(ui.nav_building_fill != nullptr) {
+        if(ui.show_buildings) {
+            lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui.nav_building_fill, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    for(std::uint8_t i = 0; i < MOTO_UI_BUILDING_FOOTPRINT_CAPACITY; ++i) {
+        if(ui.nav_buildings[i] == nullptr) continue;
+        // A slot past footprint_count is unused, not merely off-screen.
+        if(ui.show_buildings && i < ui.nav_building_footprint_count) {
+            lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
 void update_building_geometry(const moto_ui_state_t *state) {
     const std::uint8_t point_count = std::min<std::uint8_t>(
         state->building_point_count, MOTO_UI_BUILDING_POINT_CAPACITY);
@@ -1019,11 +1043,9 @@ void update_building_geometry(const moto_ui_state_t *state) {
                              : ui.palette.building, 0);
                 lv_obj_set_style_line_width(
                     ui.nav_buildings[i], px(landmark ? 2 : 1), 0);
-                lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
             }
         }
+        apply_building_visibility();
     }
     if(snap) apply_building_geometry_frame();
 }
@@ -2031,13 +2053,14 @@ void create_navigation_page() {
     // polygon fill primitive or a bitmap asset.
     ui.nav_building_fill = lv_obj_create(ui.nav_map);
     lv_obj_remove_style_all(ui.nav_building_fill);
+    // Matches the default of the settings flag; the phone's replay unhides it.
+    lv_obj_add_flag(ui.nav_building_fill, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(ui.nav_building_fill, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_pos(ui.nav_building_fill, 0, 0);
     lv_obj_add_event_cb(ui.nav_building_fill, draw_building_fills,
                         LV_EVENT_DRAW_MAIN, nullptr);
-
     // Real building footprints are quiet closed outlines beneath both roads
     // and the selected route. No inferred rectangles or decorative fill is
     // generated on-device.
@@ -2673,6 +2696,16 @@ extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
         default: ui.palette = kOfficialPalette; break;
     }
     if(ui.nav_map_background != nullptr) apply_theme_colors();
+}
+
+extern "C" void moto_nav_ui_set_show_buildings(uint8_t visible) {
+    if(!ui.live) return;
+    const bool show = visible != 0;
+    // The phone re-sends settings on every session and after every echo;
+    // a repeat must not invalidate the map layer.
+    if(ui.show_buildings == show) return;
+    ui.show_buildings = show;
+    apply_building_visibility();
 }
 
 extern "C" void moto_nav_ui_set_ambient_night(uint8_t is_night) {
