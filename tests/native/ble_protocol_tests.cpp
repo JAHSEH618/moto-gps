@@ -146,6 +146,8 @@ SettingsState settings_fixture() {
   value.visible_pages = static_cast<std::uint8_t>(
       kSettingsAllPages & ~SettingsPageMusic);
   value.lean_zero_offset_cdeg = -125;
+  value.ambient_night = true;
+  value.show_buildings = true;
   value.revision = 5;
   return value;
 }
@@ -479,7 +481,7 @@ void test_home_location_validation() {
 }
 
 void test_settings_state() {
-  CHECK(kSettingsPayloadSize == 14);
+  CHECK(kSettingsPayloadSize == 16);
   CHECK(static_cast<std::uint8_t>(MessageType::SettingsState) == 0x17);
   // The capability bit is part of the handshake contract; shifting the known
   // bits silently changes what an older firmware claims to support.
@@ -526,6 +528,26 @@ void test_settings_state() {
   value = settings_fixture();
   value.visible_pages = static_cast<std::uint8_t>(kSettingsAllPages | 0x40U);
   CHECK(encode_message(Message{value}).error == Error::OutOfRange);
+
+  // The two display bytes are a 0/1 table, not "non-zero means true": a
+  // future tri-state must be refused here rather than flattened by this
+  // decoder and echoed back as a value the phone never asked for.
+  Bytes wire = encode_or_fail(Message{settings_fixture()});
+  wire[10] = 2;
+  CHECK(decode_message(MessageType::SettingsState, ByteView(wire)).error ==
+        Error::InvalidEnum);
+  wire = encode_or_fail(Message{settings_fixture()});
+  wire[11] = 2;
+  CHECK(decode_message(MessageType::SettingsState, ByteView(wire)).error ==
+        Error::InvalidEnum);
+
+  // The 14-byte shape from before the display bytes is refused, not
+  // reinterpreted: a short payload would otherwise apply settings that are
+  // missing two fields.
+  wire = encode_or_fail(Message{settings_fixture()});
+  CHECK(decode_message(MessageType::SettingsState,
+                       ByteView(wire.data(), 14))
+            .error == Error::TruncatedPayload);
 
   // Zero is the local "never applied" marker and must not travel.
   value = settings_fixture();
