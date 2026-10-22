@@ -355,3 +355,13 @@ The assert-handler change earned its keep immediately: `-DMOTO_NATIVE_LVGL_HEAP_
 **Verification.** `ctest` 11/11 with the render suite at 19 cases, the 64 KiB-only build reproduced intentionally (exit 133, SIGTRAP in `lv_event_add`), `node scripts/todo_status.mjs --check` clean at 10 open tasks, and `scripts/verify.sh` green through todo log / native / Swift / iOS.
 
 **State.** Committed on `feat/gta-attitude` and pushed to `origin`.
+
+## 2026-10-22T09:03:06+09:00 — Local review session torn down
+
+**Stopped, on request.** The demo at `http://127.0.0.1:4173/platforms/web/shell/index.html?demo=1` was served by a bare `python -m http.server 4173 --directory .` — not by a script in this repo, so there is nothing to uninstall. The process (PID 96045) is stopped and port 4173 is free.
+
+**The simulator set is now empty.** The Simulator app was quit and all nine devices were deleted: 26.2 iPhone 17 Pro; 27.0 iPhone 17 Pro, iPhone Air, iPad Pro 11-inch (M5), iPad mini (A17 Pro), iPad Air 13-inch (M4), iPad Air 11-inch (M4), iPad (A16); 27.1 iPhone Duo. The three runtime images stay — 26.2, 27.0 and 27.1 — because deleting them would discard the hand-registered 27.0 runtime that fixed Chinese review, and they are multi-GB downloads.
+
+**Two consequences, both recorded in the log.** The device matrix claimed at `00:55:00` no longer exists on disk, and it was already inaccurate: the iPhone SE it names was gone, and five iPads had come back after that entry said they were deleted. So `2026-10-21T22:41:30+09:00` (re-shoot every screen on 26.2 and 27.1) is blocked on `xcrun simctl create` rather than on the app. And `scripts/sim_font_gate.sh` reports a setup failure (exit 1) with no booted device — that is not the "layout only" verdict (exit 2), and it should not be read as one.
+
+**State.** No code changed. Only this log, `docs/todo.md` and this section.
