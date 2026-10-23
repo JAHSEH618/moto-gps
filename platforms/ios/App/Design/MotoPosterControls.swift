@@ -119,31 +119,29 @@ struct MotoToggleRow: View {
 
 // MARK: - Sheet scaffold
 
-/// Poster sheet chrome: paper ground, a band-thin rule at the top of the
-/// content, square panels and a text-only dismiss in the corner. Replaces
-/// `NavigationStack` + `Form`, which brought rounded cards and system blue.
-struct MotoPosterSheet<Content: View>: View {
+/// Poster sheet chrome: a full-bleed magenta band carrying the title, then
+/// paper. The band is the same object as the instrument's rim — brand, not
+/// state — and it is why the sheet has no navigation bar and no large title.
+struct MotoPosterSheet<Actions: View, Content: View>: View {
+    let kicker: String
     let title: String
-    let dismissTitle: String
     let sheetIdentifier: String
-    let dismissIdentifier: String
-    let onDismiss: () -> Void
+    @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
 
     @Environment(\.motoPalette) private var palette
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.motoType) private var type
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            MotoRule()
             ScrollView {
-                VStack(spacing: MotoMetrics.s5) {
+                VStack(spacing: MotoMetrics.s6) {
                     content()
                 }
                 .padding(.horizontal, MotoMetrics.s4)
-                .padding(.top, MotoMetrics.s4)
-                .padding(.bottom, MotoMetrics.s6)
+                .padding(.top, MotoMetrics.s5)
+                .padding(.bottom, MotoMetrics.s7)
             }
         }
         .background(palette.bg)
@@ -151,44 +149,218 @@ struct MotoPosterSheet<Content: View>: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: MotoMetrics.s3) {
-            Text(title)
-                .font(.system(.title3, weight: .semibold))
-                .foregroundStyle(palette.ink)
-            Spacer(minLength: MotoMetrics.s2)
-            Button(action: onDismiss) {
-                Text(dismissTitle)
-                    .font(.system(.body, weight: .semibold))
+        HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
+            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                Text(kicker)
+                    .font(type.mono(.micro))
+                    .tracking(MotoMetrics.microTracking)
+                    .foregroundStyle(MotoPalette.onBand.opacity(0.72))
+                Text(title)
+                    .font(.system(.largeTitle, weight: .heavy))
                     .foregroundStyle(MotoPalette.onBand)
-                    .padding(.horizontal, MotoMetrics.s3)
-                    .padding(.vertical, MotoMetrics.s2)
-                    .background(MotoPalette.band)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(dismissIdentifier)
+            Spacer(minLength: MotoMetrics.s2)
+            actions()
+                .padding(.bottom, MotoMetrics.s1)
         }
         .padding(.horizontal, MotoMetrics.s4)
-        // Clear of the sheet's rounded corner, which would otherwise clip the
-        // band plate and read as a rendering bug.
         .padding(.top, MotoMetrics.s5)
         .padding(.bottom, MotoMetrics.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MotoPalette.band)
     }
 }
 
-// MARK: - Section label
+extension MotoPosterSheet where Actions == MotoBandButton {
+    init(
+        kicker: String,
+        title: String,
+        sheetIdentifier: String,
+        dismissTitle: String,
+        dismissIdentifier: String,
+        onDismiss: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            kicker: kicker,
+            title: title,
+            sheetIdentifier: sheetIdentifier,
+            actions: { MotoBandButton(dismissTitle, identifier: dismissIdentifier, action: onDismiss) },
+            content: content
+        )
+    }
+}
 
-/// Kicker for a group of rows. Sentence case, ink-muted, no caps tracking: the
-/// tracked caps label is reserved for mono data, and an eyebrow above every
-/// section is exactly the template look DESIGN.md rejects.
-struct MotoSectionTitle: View {
+/// A header action. On the band, so it is ink type rather than a second plate:
+/// one filled surface per screen already.
+struct MotoBandButton: View {
+    let title: String
+    let identifier: String
+    let action: () -> Void
+
+    init(_ title: String, identifier: String, action: @escaping () -> Void) {
+        self.title = title
+        self.identifier = identifier
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(.subheadline, weight: .bold))
+                .foregroundStyle(MotoPalette.onBand)
+                .padding(.vertical, MotoMetrics.s2)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Header text action, for a sheet that has two.
+struct MotoHeaderButton: View {
+    let title: String
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(.subheadline, weight: .medium))
+                .foregroundStyle(MotoPalette.onBand.opacity(0.8))
+                .padding(.vertical, MotoMetrics.s2)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+// MARK: - Prose
+
+/// Body copy on paper. Sentence case, real line spacing, never mono: the poster
+/// grammar puts monospace on caps labels and data, and prose in the reading face.
+struct MotoProse: View {
     let text: String
+    var tone: Tone = .ink
+
+    enum Tone { case ink, muted }
+
     @Environment(\.motoPalette) private var palette
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Text(text)
-            .font(.system(.subheadline, weight: .semibold))
-            .foregroundStyle(palette.inkMuted(contrast: contrast))
+            .font(.system(.body))
+            .foregroundStyle(tone == .ink ? palette.ink : palette.inkMuted(contrast: contrast))
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Sections
+
+/// Numbered section head. The index is a poster numeral, not decoration: it is
+/// how the pause menu reads, and it makes four groups of prose scannable without
+/// a tracked eyebrow above each one.
+struct MotoSectionTitle: View {
+    var index: String?
+    let text: String
+
+    @Environment(\.motoPalette) private var palette
+    @Environment(\.motoType) private var type
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MotoMetrics.s2) {
+            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
+                if let index {
+                    Text(index)
+                        .font(type.display(.displayMD))
+                        .tracking(MotoMetrics.displayTracking)
+                        .foregroundStyle(MotoPalette.band)
+                        .accessibilityHidden(true)
+                }
+                Text(text)
+                    .font(.system(.headline, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            MotoRule()
+        }
+    }
+}
+
+// MARK: - Hero
+
+/// One enormous word per sheet. The instrument's rule is that nothing competes
+/// with the hero, so this is the only thing above `title` size on the screen.
+struct MotoHeroWord: View {
+    let word: String
+    var detail: String?
+    var tone: Tone = .ink
+
+    enum Tone { case ink, band }
+
+    @Environment(\.motoPalette) private var palette
+    @Environment(\.motoType) private var type
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MotoMetrics.s2) {
+            Text(word)
+                .font(type.display(.displayXL))
+                .tracking(MotoMetrics.displayTracking)
+                .foregroundStyle(tone == .band ? MotoPalette.band : palette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            if let detail {
+                Text(detail)
+                    .font(type.mono(.label))
+                    .tracking(MotoMetrics.labelTracking)
+                    .foregroundStyle(palette.inkMuted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Link row
+
+/// Third-party link or a disclosure that leaves the sheet. The arrow is the
+/// band colour because it is an action, not data.
+struct MotoLinkRow: View {
+    let title: String
+    let destination: URL
+    var identifier: String?
+
+    @Environment(\.motoPalette) private var palette
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            openURL(destination)
+        } label: {
+            HStack(spacing: MotoMetrics.s3) {
+                Text(title)
+                    .font(.system(.body))
+                    .foregroundStyle(palette.ink)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: MotoMetrics.s2)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(.footnote, weight: .bold))
+                    .foregroundStyle(MotoPalette.band)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, MotoMetrics.s4)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier ?? "poster-link-\(title)")
     }
 }

@@ -71,8 +71,13 @@ struct ContentView: View {
         // simulator while a UI test drives taps is a lot of machinery for a
         // layout review.
         .task {
-            if ProcessInfo.processInfo.arguments.contains("--moto-open-device-sheet") {
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--moto-open-device-sheet") {
                 showsDeviceDetails = true
+            } else if arguments.contains("--moto-open-privacy") {
+                showsDataUse = true
+            } else if arguments.contains("--moto-open-gateway") {
+                showsGatewaySettings = true
             }
         }
         #endif
@@ -706,30 +711,37 @@ struct ContentView: View {
 
     private var deviceDetails: some View {
         MotoPosterSheet(
+            kicker: "DEVICE 01",
             title: "我的圆屏",
-            dismissTitle: "完成",
             sheetIdentifier: "device-details-sheet",
+            dismissTitle: "完成",
             dismissIdentifier: "device-details-done",
             onDismiss: { showsDeviceDetails = false }
         ) {
-            VStack(spacing: MotoMetrics.s3) {
-                Image(systemName: "location.north.circle")
-                    .font(.system(size: 52, weight: .light))
-                    .foregroundStyle(palette.ink)
-                    .accessibilityHidden(true)
-                Text(deviceName)
-                    .font(.system(.title2, weight: .bold))
-                    .foregroundStyle(palette.ink)
-                MotoLabel(text: deviceDetail, tone: .muted, token: .micro, uppercased: false)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: MotoMetrics.s4) {
+                HStack(alignment: .top) {
+                    Image(systemName: "location.north.circle")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(palette.ink)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: MotoMetrics.s2)
+                    MotoLabel(
+                        text: deviceName,
+                        tone: .muted,
+                        uppercased: false
+                    )
+                }
+                // The one enormous thing on this sheet: whether the bar is
+                // talking to the phone. Everything else is a setting.
+                MotoHeroWord(
+                    word: model.deviceReady ? "ONLINE" : "OFFLINE",
+                    detail: deviceDetail
+                )
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, MotoMetrics.s3)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(text: "连接")
+                MotoSectionTitle(index: "01", text: "连接")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoRow(title: "状态") {
@@ -758,7 +770,7 @@ struct ContentView: View {
             }
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(text: "圆屏显示")
+                MotoSectionTitle(index: "02", text: "圆屏显示")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoSegment(
@@ -787,7 +799,7 @@ struct ContentView: View {
             }
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(text: "定位")
+                MotoSectionTitle(index: "03", text: "定位")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoRow(title: "搜索位置") {

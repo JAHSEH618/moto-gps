@@ -261,6 +261,28 @@ Known conflicts and rulings:
 
 Baseline static audit (`audit_swiftui_ui.py platforms/ios`): 30 MEDIUM, 0 HIGH/CRITICAL. The six that touch UI — hardcoded font sizes in the old `ContentView`, fixed frames, index-derived `ForEach` identity — are removed by the screen rewrite rather than patched.
 
+## Poster sheet (phone surfaces)
+
+Every sheet that is not the map uses the same four moves. They are what make a
+phone screen read as the instrument rather than as a styled form.
+
+1. **Band header, full bleed.** A `#F34DAA` block at the top, carrying a mono
+   micro kicker (`DEVICE 01`, `POLICY 04`), the title at `.largeTitle` heavy in
+   `onBand`, and the dismiss as ink type on the band. No navigation bar, no
+   large-title collapse, no second plate in the header.
+2. **One hero word per sheet.** `OFFLINE` / `ONLINE`, in the display face at
+   76pt, with a mono detail line under it. Nothing else on the sheet is above
+   `headline` size, which is the instrument's rule applied to a phone.
+3. **Numbered sections.** `01 连接`, `02 圆屏显示`, with the index in the display
+   face at 34 in `band`, the label at `headline`, and a 1px rule under the pair.
+   The number is order, not decoration — the same grammar as the pause menu.
+4. **Square panels, hairlines, no cards.** Rows are `MotoRow` inside one
+   `MotoPanel` per group; a switch keeps its platform shape and takes the band
+   as its tint.
+
+Prose is set in the reading face (PingFang) at `.body` with 3pt line spacing —
+never in mono, never in a tracked caps label.
+
 ## Do / Don't
 
 - Do keep the frame loud and the data quiet. Don't texture a numeral.
