@@ -33,8 +33,9 @@ bool save_mount_basis(const StoredMount& mount);
 bool tlog_selftest_done();
 void mark_tlog_selftest_done();
 
-// Runtime FIFO toggle (NVS `imu.fifo`), default on. The bench A/B needs to
-// switch acquisition without reflashing.
+// Runtime FIFO toggle (NVS `imu.fifo`), default off: latch polling is the
+// production chain. The bench A/B needs to switch acquisition without
+// reflashing.
 bool load_imu_fifo_enabled();
 bool save_imu_fifo_enabled(bool enabled);
 

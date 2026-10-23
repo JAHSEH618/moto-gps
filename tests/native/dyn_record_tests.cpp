@@ -100,6 +100,34 @@ void test_record_round_trips() {
   CHECK(meta_decoded.lever_arm_mm == 900);
   CHECK(meta_decoded.firmware_hash == 0x12345678);
   CHECK(meta_decoded.mount.up[1] == 10000);
+
+  moto::device::ImuStatsRecord stats;
+  stats.t_ms = 123456;
+  stats.samples = 112;
+  stats.avail_zero = 3;
+  stats.lock_waits = 7;
+  stats.i2c_errors = 1;
+  stats.missed_reads = 2;
+  stats.flash_skips = 4;
+  stats.interval_max_us = 8930;
+  stats.interval_avg_us = 4466;
+  stats.mode = 2;
+  stats.flags = 1;
+  const auto stats_blob = moto::device::encode_imu_stats(stats);
+  moto::device::ImuStatsRecord stats_decoded;
+  CHECK(moto::device::decode_imu_stats(stats_blob.data(), stats_blob.size(),
+                                       &stats_decoded));
+  CHECK(stats_decoded.t_ms == 123456);
+  CHECK(stats_decoded.samples == 112);
+  CHECK(stats_decoded.avail_zero == 3);
+  CHECK(stats_decoded.lock_waits == 7);
+  CHECK(stats_decoded.i2c_errors == 1);
+  CHECK(stats_decoded.missed_reads == 2);
+  CHECK(stats_decoded.flash_skips == 4);
+  CHECK(stats_decoded.interval_max_us == 8930);
+  CHECK(stats_decoded.interval_avg_us == 4466);
+  CHECK(stats_decoded.mode == 2);
+  CHECK(stats_decoded.flags == 1);
 }
 
 void test_block_crc_detects_corruption() {

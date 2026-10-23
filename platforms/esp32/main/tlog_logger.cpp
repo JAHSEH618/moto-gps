@@ -51,6 +51,21 @@ bool TlogLogger::erase_sector(std::uint32_t offset) {
   return true;
 }
 
+bool TlogLogger::sector_is_erased(std::uint32_t offset) {
+  if (offset % kBlockSize != 0 || offset + kBlockSize > capacity_) return false;
+  alignas(4) std::uint8_t chunk[256];
+  for (std::uint32_t done = 0; done < kBlockSize; done += sizeof(chunk)) {
+    if (esp_partition_read(static_cast<const esp_partition_t*>(partition_),
+                           offset + done, chunk, sizeof(chunk)) != ESP_OK) {
+      return false;
+    }
+    for (std::size_t i = 0; i < sizeof(chunk); ++i) {
+      if (chunk[i] != 0xFFU) return false;
+    }
+  }
+  return true;
+}
+
 bool TlogLogger::write_block() {
   if (!block_dirty_) return true;
   if (block_base_ + kBlockSize > capacity_) {
@@ -74,11 +89,22 @@ bool TlogLogger::write_block() {
   block_[26] = static_cast<std::uint8_t>((crc >> 16U) & 0xFFU);
   block_[27] = static_cast<std::uint8_t>((crc >> 24U) & 0xFFU);
 
-  if (!erase_sector(block_base_)) {
+  // Never erase at runtime: the erase is tens of milliseconds with the cache
+  // off, which used to freeze the IMU bus. Only write into a sector the host
+  // tool already erased; if it is dirty, stop and let the status slot say so.
+  if (!sector_is_erased(block_base_)) {
     ++write_errors_;
     ready_ = false;
+    dirty_ = true;
+    ESP_LOGE(kTag,
+             "LOG DIRTY at 0x%x; recording stopped. Erase the tlog partition "
+             "from the host (parttool.py erase_partition --partition-name "
+             "tlog)",
+             static_cast<unsigned>(block_base_));
     return false;
   }
+  // A page write is sub-millisecond; the guard is still taken so an IMU read
+  // cannot start in the middle of it.
   if (!flash_guard_take(500)) {
     ready_ = false;
     return false;
@@ -196,11 +222,21 @@ bool TlogLogger::begin(const TlogSessionInfo& session) {
   wrote_session_meta_ = false;
   block_dirty_ = false;
   full_ = false;
+  dirty_ = false;
   block_base_ = find_append_offset();
   if (block_base_ + kBlockSize > capacity_) {
     full_ = true;
     ready_ = false;
     ESP_LOGW(kTag, "tlog partition is full");
+    return false;
+  }
+  if (!sector_is_erased(block_base_)) {
+    dirty_ = true;
+    ready_ = false;
+    ESP_LOGE(kTag,
+             "LOG DIRTY at 0x%x; recording disabled until the host erases the "
+             "tlog partition",
+             static_cast<unsigned>(block_base_));
     return false;
   }
   if (!start_block()) return false;
@@ -284,6 +320,25 @@ void TlogLogger::note_mode(std::uint8_t mode, std::uint16_t odr_hz,
               meta.size());
   payload_used_ =
       static_cast<std::uint16_t>(payload_used_ + 1 + meta.size());
+  block_dirty_ = true;
+}
+
+void TlogLogger::append_stats(const ImuStatsRecord& stats) {
+  if (!ready_ || full_ || dirty_) return;
+  if (payload_used_ + 1 + kImuStatsRecordSize >
+      kBlockSize - kBlockHeaderSize) {
+    if (!write_block()) return;
+    if (!start_block()) {
+      ready_ = false;
+      return;
+    }
+  }
+  const auto encoded = encode_imu_stats(stats);
+  block_[kBlockHeaderSize + payload_used_] = kRecordImuStats;
+  std::memcpy(block_ + kBlockHeaderSize + payload_used_ + 1, encoded.data(),
+              encoded.size());
+  payload_used_ =
+      static_cast<std::uint16_t>(payload_used_ + 1 + encoded.size());
   block_dirty_ = true;
 }
 

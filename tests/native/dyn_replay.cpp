@@ -12,6 +12,7 @@ namespace {
 
 using moto::device::DynRecord;
 using moto::device::GnssRecord;
+using moto::device::ImuStatsRecord;
 using moto::device::MountRecord;
 using moto::device::SessionMeta;
 
@@ -191,6 +192,35 @@ std::string replay_to_csv(const std::vector<std::uint8_t>& file) {
                       static_cast<unsigned>(meta.firmware_hash));
         csv += line;
         set_mount(estimator, mount, meta.mount);
+        continue;
+      }
+      if (type == moto::device::kRecordImuStats) {
+        ImuStatsRecord record;
+        if (offset + moto::device::kImuStatsRecordSize > end ||
+            !moto::device::decode_imu_stats(
+                block + offset, moto::device::kImuStatsRecordSize, &record)) {
+          break;
+        }
+        offset += moto::device::kImuStatsRecordSize;
+        char line[224];
+        std::snprintf(
+            line, sizeof(line),
+            "# imu t=%u mode=%u samples=%u avail0=%u lockwait=%u i2c=%u "
+            "missed=%u flash=%u flashgaps=%u dt_max=%u dt_avg=%u dirty=%u full=%u\n",
+            static_cast<unsigned>(record.t_ms),
+            static_cast<unsigned>(record.mode),
+            static_cast<unsigned>(record.samples),
+            static_cast<unsigned>(record.avail_zero),
+            static_cast<unsigned>(record.lock_waits),
+            static_cast<unsigned>(record.i2c_errors),
+            static_cast<unsigned>(record.missed_reads),
+            static_cast<unsigned>(record.flash_skips),
+            static_cast<unsigned>(record.flash_gaps),
+            static_cast<unsigned>(record.interval_max_us),
+            static_cast<unsigned>(record.interval_avg_us),
+            static_cast<unsigned>(record.flags & 1U),
+            static_cast<unsigned>((record.flags >> 1U) & 1U));
+        csv += line;
         continue;
       }
       break;  // unknown type: stop this block

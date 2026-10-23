@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -7,6 +8,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +20,7 @@
 #include "esp_app_desc.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include "tlog_logger.hpp"
 
@@ -32,6 +35,20 @@ constexpr char kTag[] = "moto_gps";
 static moto::device::TlogLogger tlog;
 static bool g_calibration_unverified = true;
 static MotionHeadingSensor* g_sensor = nullptr;
+static PhoneNavBridge* g_bridge = nullptr;
+static TaskHandle_t g_task_cmd = nullptr;
+static TaskHandle_t g_task_ui_flags = nullptr;
+static TaskHandle_t g_task_demo = nullptr;
+static TaskHandle_t g_task_power = nullptr;
+// Bench-only lean sweep: a repeatable 40 Hz UI load for the page frame-rate
+// measurement. Zero means off.
+static volatile std::uint32_t g_ui_bench_lean_until_ms = 0;
+static std::uint64_t g_dbg_render_us0 = 0;
+static std::uint32_t g_dbg_frames0 = 0;
+
+std::uint64_t ui_debug_clock_us() {
+  return static_cast<std::uint64_t>(esp_timer_get_time());
+}
 
 moto::device::MountRecord mount_record_from(
     const moto::motion::MountCalibration& mount) {
@@ -48,19 +65,67 @@ moto::device::MountRecord mount_record_from(
   return record;
 }
 
-void lean_mode_changed(bool fifo_active, void*) {
+void lean_mode_changed(std::uint8_t mode, void*) {
   // The session record is the only honest place for a mid-session fallback:
-  // the first block was written before this happened.
-  tlog.note_mode(fifo_active ? 1 : 0, fifo_active ? 448 : 125,
-                 fifo_active ? 112 : 125);
+  // the first block was written before this happened. Modes: 0 poll, 1 FIFO,
+  // 2 latch.
+  const bool fast = mode == 1 || mode == 2;
+  tlog.note_mode(mode, fast ? 448 : 125, fast ? 112 : 125);
+}
+
+const char* task_state_name(eTaskState state) {
+  switch (state) {
+    case eRunning: return "running";
+    case eReady: return "ready";
+    case eBlocked: return "blocked";
+    case eSuspended: return "suspended";
+    case eDeleted: return "deleted";
+    case eInvalid:
+    default: return "invalid";
+  }
+}
+
+void log_task_entry(const char* name, TaskHandle_t handle) {
+  if (handle == nullptr) {
+    ESP_LOGI(kTag, "task %-16s not started", name);
+    return;
+  }
+  const UBaseType_t words = uxTaskGetStackHighWaterMark(handle);
+  ESP_LOGI(kTag, "task %-16s state=%-9s stack_free=%u B", name,
+           task_state_name(eTaskGetState(handle)),
+           static_cast<unsigned>(words * sizeof(StackType_t)));
+}
+
+// Bench deadlock probe (`sys tasks`). A hang in the LVGL task, the sensor
+// task, a calibration callback or a flash/I2C lock shows up as a task whose
+// state is blocked forever and whose remaining stack is still measurable.
+// NimBLE's own tasks are not in this registry; they are not part of the
+// acquisition or render path.
+void log_tasks() {
+  ESP_LOGI(kTag, "task dump (app tasks):");
+  log_task_entry("moto_qmi_heading", g_sensor != nullptr ? g_sensor->task_handle()
+                                                         : nullptr);
+  log_task_entry("moto_ui_render",
+                 g_bridge != nullptr ? g_bridge->render_task_handle() : nullptr);
+  log_task_entry("moto_cmd", g_task_cmd);
+  log_task_entry("moto_ui_flags", g_task_ui_flags);
+  log_task_entry("moto_demo", g_task_demo);
+  log_task_entry("moto_power", g_task_power);
+  log_task_entry("moto_current", xTaskGetCurrentTaskHandle());
+  ESP_LOGI(kTag, "free heap: internal %u B, PSRAM %u B",
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 }
 
 void ui_flags_task(void*) {
   while (true) {
-    moto_nav_ui_set_lean_flags(
-        g_calibration_unverified ? 1 : 0,
-        (g_sensor != nullptr && !g_sensor->fifo_active()) ? 1 : 0,
-        tlog.full() ? 1 : 0);
+    const bool imu_poll =
+        g_sensor == nullptr ||
+        g_sensor->acquisition_mode() ==
+            MotionHeadingSensor::AcquisitionMode::Poll;
+    moto_nav_ui_set_lean_flags(g_calibration_unverified ? 1 : 0,
+                               imu_poll ? 1 : 0, tlog.full() ? 1 : 0,
+                               tlog.dirty() ? 1 : 0);
     vTaskDelay(pdMS_TO_TICKS(500));
   }
 }
@@ -82,38 +147,194 @@ void serial_command_task(void* context) {
     }
     line[used] = '\0';
     used = 0;
-    const moto::motion::FifoStats& stats = sensor->fifo_stats();
     if (std::strcmp(line, "imu stats") == 0) {
-      ESP_LOGI(kTag,
-               "imu mode=%s reason=%s batches=%u received=%u produced=%u "
-               "lost=%u overflow=%u window_max_us=%u window_avg_us=%u",
-               sensor->fifo_active() ? "fifo" : "poll",
-               sensor->fifo_fallback_reason() != nullptr
-                   ? sensor->fifo_fallback_reason()
-                   : "-",
-               static_cast<unsigned>(stats.batches),
-               static_cast<unsigned>(stats.received),
-               static_cast<unsigned>(stats.produced),
-               static_cast<unsigned>(stats.lost),
-               static_cast<unsigned>(stats.overflow),
-               static_cast<unsigned>(stats.window_us_max),
-               static_cast<unsigned>(stats.window_samples == 0
-                                         ? 0
-                                         : stats.window_us_sum /
-                                               stats.window_samples));
+      const moto::motion::LatchStats& latch = sensor->latch_stats();
+      const moto::motion::FifoStats& fifo = sensor->fifo_stats();
+      const char* reason = sensor->fallback_reason();
+      if (sensor->latch_active() || !sensor->fifo_active()) {
+        const std::uint32_t cycles = latch.cycles == 0 ? 1 : latch.cycles;
+        ESP_LOGI(kTag,
+                 "imu mode=%s reason=%s samples=%u cycles=%u avail0=%u "
+                 "avail0_pct=%u.%02u lockwait=%u lockto=%u i2c=%u missed=%u "
+                 "flash=%u flashgaps=%u dt_max_us=%u dt_avg_us=%u",
+                 sensor->mode_name(), reason != nullptr ? reason : "-",
+                 static_cast<unsigned>(latch.samples),
+                 static_cast<unsigned>(latch.cycles),
+                 static_cast<unsigned>(latch.avail_zero),
+                 static_cast<unsigned>(latch.avail_zero * 100U / cycles),
+                 static_cast<unsigned>((latch.avail_zero * 10000U / cycles) %
+                                       100U),
+                 static_cast<unsigned>(latch.lock_waits),
+                 static_cast<unsigned>(latch.lock_timeouts),
+                 static_cast<unsigned>(latch.i2c_errors),
+                 static_cast<unsigned>(latch.missed_reads),
+                 static_cast<unsigned>(latch.flash_skips),
+                 static_cast<unsigned>(latch.flash_gaps),
+                 static_cast<unsigned>(latch.interval_us_max),
+                 static_cast<unsigned>(latch.intervals == 0
+                                           ? 0
+                                           : latch.interval_us_sum /
+                                                 latch.intervals));
+      }
+      if (sensor->fifo_active()) {
+        ESP_LOGI(kTag,
+                 "imu mode=fifo reason=%s batches=%u received=%u produced=%u "
+                 "lost=%u overflow=%u window_max_us=%u window_avg_us=%u",
+                 reason != nullptr ? reason : "-",
+                 static_cast<unsigned>(fifo.batches),
+                 static_cast<unsigned>(fifo.received),
+                 static_cast<unsigned>(fifo.produced),
+                 static_cast<unsigned>(fifo.lost),
+                 static_cast<unsigned>(fifo.overflow),
+                 static_cast<unsigned>(fifo.window_us_max),
+                 static_cast<unsigned>(fifo.window_samples == 0
+                                           ? 0
+                                           : fifo.window_us_sum /
+                                                 fifo.window_samples));
+      }
+    } else if (std::strcmp(line, "imu stats reset") == 0) {
+      sensor->reset_imu_stats();
+      ESP_LOGI(kTag, "latch counters reset");
     } else if (std::strcmp(line, "imu lean") == 0) {
       ESP_LOGI(kTag, "lean=%.2f pitch=%.2f quality=%u flags=0x%04x mode=%s",
                static_cast<double>(sensor->last_lean_deg()),
                static_cast<double>(sensor->last_pitch_deg()),
                static_cast<unsigned>(sensor->last_quality()),
                static_cast<unsigned>(sensor->last_flags()),
-               sensor->fifo_active() ? "fifo" : "poll");
+               sensor->mode_name());
     } else if (std::strcmp(line, "imu fifo off") == 0) {
       sensor->request_fifo_mode(false);
-      ESP_LOGI(kTag, "FIFO disabled; restarting acquisition");
+      ESP_LOGI(kTag, "FIFO disabled; restarting acquisition on latch");
     } else if (std::strcmp(line, "imu fifo on") == 0) {
       sensor->request_fifo_mode(true);
-      ESP_LOGI(kTag, "FIFO enabled; restarting acquisition");
+      ESP_LOGI(kTag, "FIFO enabled for A/B; restarting acquisition");
+    } else if (std::strcmp(line, "sys tasks") == 0) {
+      log_tasks();
+    } else if (std::strncmp(line, "ui page ", 8) == 0) {
+      // Bench-only page switch: lets the frame-time window be attributed to a
+      // page without touching the screen. The touch path stays authoritative
+      // for the rider.
+      const char* name = line + 8;
+      int page = -1;
+      if (std::strcmp(name, "nav") == 0) page = MOTO_UI_PAGE_NAVIGATION;
+      else if (std::strcmp(name, "performance") == 0) page = MOTO_UI_PAGE_PERFORMANCE;
+      else if (std::strcmp(name, "lean") == 0) page = MOTO_UI_PAGE_LEAN;
+      else if (std::strcmp(name, "speed") == 0) page = MOTO_UI_PAGE_SPEED;
+      else if (std::strcmp(name, "compass") == 0) page = MOTO_UI_PAGE_COMPASS;
+      else if (std::strcmp(name, "music") == 0) page = MOTO_UI_PAGE_MUSIC;
+      else page = std::atoi(name);
+      if (page < 0 || page >= MOTO_UI_PAGE_COUNT) {
+        ESP_LOGW(kTag, "ui page: unknown page '%s'", name);
+      } else if (board_port_lock(1'000)) {
+        moto_nav_ui_set_page(static_cast<moto_ui_page_t>(page));
+        board_port_unlock();
+        ESP_LOGI(kTag, "ui page=%d", page);
+      } else {
+        ESP_LOGW(kTag, "ui page: LVGL lock timeout");
+      }
+    } else if (std::strncmp(line, "ui bench lean", 13) == 0) {
+      const int seconds = std::atoi(line + 13);
+      if (seconds > 0) {
+        const std::uint64_t now_ms =
+            static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
+        g_ui_bench_lean_until_ms =
+            static_cast<std::uint32_t>(now_ms + seconds * 1'000U);
+        if (board_port_lock(1'000)) {
+          moto_nav_ui_set_page(MOTO_UI_PAGE_LEAN);
+          board_port_unlock();
+        }
+        ESP_LOGI(kTag,
+                 "lean bench: %d s synthetic +/-30 deg at 40 Hz on the lean "
+                 "page",
+                 seconds);
+      } else {
+        g_ui_bench_lean_until_ms = 0;
+        ESP_LOGI(kTag, "lean bench cancelled");
+      }
+    } else if (std::strcmp(line, "ui dbg on") == 0) {
+      moto_nav_ui_debug_set_enabled(1);
+      ESP_LOGI(kTag, "lean profiling on");
+    } else if (std::strcmp(line, "ui dbg off") == 0) {
+      moto_nav_ui_debug_set_enabled(0);
+      ESP_LOGI(kTag, "lean profiling off");
+    } else if (std::strncmp(line, "ui dbg hide ", 12) == 0) {
+      const char* arg = line + 12;
+      std::uint32_t bit = 0;
+      if (std::strncmp(arg, "sun", 3) == 0) {
+        bit = MOTO_UI_DBG_HIDE_SUN;
+      } else if (std::strncmp(arg, "horizon", 7) == 0) {
+        bit = MOTO_UI_DBG_HIDE_HORIZON;
+      } else if (std::strncmp(arg, "hero", 4) == 0) {
+        bit = MOTO_UI_DBG_HIDE_HERO;
+      } else if (std::strncmp(arg, "halo", 4) == 0) {
+        bit = MOTO_UI_DBG_HIDE_HALO;
+      } else if (std::strncmp(arg, "chrome", 6) == 0) {
+        bit = MOTO_UI_DBG_HIDE_CHROME;
+      } else if (std::strncmp(arg, "scene", 5) == 0) {
+        bit = MOTO_UI_DBG_HIDE_SCENE;
+      }
+      if (bit == 0) {
+        ESP_LOGW(kTag,
+                 "ui dbg hide: use sun|horizon|hero|halo|chrome|scene [0|1]");
+      } else {
+        const char* value = std::strchr(arg, ' ');
+        std::uint32_t mask = moto_nav_ui_debug_hidden();
+        const bool show = value != nullptr && std::atoi(value + 1) == 0;
+        if (show) {
+          mask &= ~bit;
+        } else {
+          mask |= bit;
+        }
+        if (board_port_lock(1'000)) {
+          moto_nav_ui_debug_set_hidden(mask);
+          board_port_unlock();
+          ESP_LOGI(kTag, "ui dbg hide mask=0x%02x%s",
+                   static_cast<unsigned>(mask), show ? " (shown)" : "");
+        } else {
+          ESP_LOGW(kTag, "ui dbg hide: LVGL lock timeout");
+        }
+      }
+    } else if (std::strcmp(line, "ui dbg reset") == 0) {
+      moto_nav_ui_debug_reset();
+      board_port_display_totals(&g_dbg_render_us0, &g_dbg_frames0);
+      board_port_reset_display_timing();
+      ESP_LOGI(kTag, "lean profiling window reset");
+    } else if (std::strcmp(line, "ui dbg") == 0) {
+      std::uint64_t render_us = 0;
+      std::uint32_t frames = 0;
+      board_port_display_totals(&render_us, &frames);
+      const std::uint32_t frame_count = frames - g_dbg_frames0;
+      const std::uint64_t render_delta = render_us - g_dbg_render_us0;
+      moto_ui_debug_stats_t stats{};
+      moto_nav_ui_debug_stats(&stats);
+      if (frame_count == 0) {
+        ESP_LOGW(kTag, "lean dbg: no frames; run ui bench lean and reset first");
+      } else {
+        const double per_frame = 1.0 / static_cast<double>(frame_count);
+        const double total_ms =
+            static_cast<double>(render_delta) / 1000.0 * per_frame;
+        const double sun_ms =
+            static_cast<double>(stats.sun_us) / 1000.0 * per_frame;
+        const double horizon_ms =
+            static_cast<double>(stats.horizon_us) / 1000.0 * per_frame;
+        const double hero_ms =
+            static_cast<double>(stats.hero_us) / 1000.0 * per_frame;
+        ESP_LOGI(kTag,
+                 "lean dbg: frames=%u total=%.2fms sun=%.2f horizon=%.2f "
+                 "hero(incl halo)=%.2f other=%.2f draws=%u/%u/%u hide=0x%02x",
+                 static_cast<unsigned>(frame_count), total_ms, sun_ms,
+                 horizon_ms, hero_ms,
+                 total_ms - sun_ms - horizon_ms - hero_ms,
+                 static_cast<unsigned>(stats.sun_draws),
+                 static_cast<unsigned>(stats.horizon_draws),
+                 static_cast<unsigned>(stats.hero_draws),
+                 static_cast<unsigned>(moto_nav_ui_debug_hidden()));
+      }
+    } else if (std::strcmp(line, "ui perf reset") == 0) {
+      board_port_reset_display_timing();
+      ESP_LOGI(kTag, "display timing window reset");
+    } else if (std::strcmp(line, "ui perf") == 0) {
+      board_port_log_display_timing();
     }
   }
 }
@@ -220,9 +441,68 @@ void update_motion_heading(
     float heading_rate_dps,
     const moto::motion::AttitudeEstimate& attitude,
     const RawImuSample& raw, std::uint64_t sample_ms, void* context) {
-  static_cast<PhoneNavBridge*>(context)->on_imu_sample(
-      heading_rate_dps, attitude, sample_ms);
+  if (g_ui_bench_lean_until_ms == 0) {
+    static_cast<PhoneNavBridge*>(context)->on_imu_sample(
+        heading_rate_dps, attitude, sample_ms);
+  }
+  const std::int64_t tlog_started_us = esp_timer_get_time();
   tlog.append(sample_ms, raw, attitude);
+  // A 4 KiB page write is the only synchronous flash work left on the sensor
+  // task. If it took long enough to matter, tell the latch reader so the next
+  // over-budget interval is filed under "flash", not "missed".
+  if (esp_timer_get_time() - tlog_started_us > 2'000 && g_sensor != nullptr) {
+    g_sensor->note_flash_blocking();
+  }
+
+  // The on-disk half of the acceptance set. Ten seconds is short enough to
+  // catch a flash-induced gap inside one bench run and long enough that the
+  // record does not compete with the 112 Hz stream.
+  static std::uint64_t last_stats_ms = 0;
+  if (g_sensor != nullptr && sample_ms - last_stats_ms >= 10'000U) {
+    last_stats_ms = sample_ms;
+    moto::device::ImuStatsRecord record;
+    record.t_ms = static_cast<std::uint32_t>(sample_ms);
+    record.mode = static_cast<std::uint8_t>(g_sensor->acquisition_mode());
+    if (record.mode ==
+        static_cast<std::uint8_t>(
+            MotionHeadingSensor::AcquisitionMode::Latch)) {
+      const moto::motion::LatchStats& s = g_sensor->latch_stats();
+      const auto clamp16 = [](std::uint32_t value) {
+        return static_cast<std::uint16_t>(std::min<std::uint32_t>(value, 65535));
+      };
+      record.samples = s.samples;
+      record.avail_zero = s.avail_zero;
+      record.lock_waits = s.lock_waits;
+      record.i2c_errors = clamp16(s.i2c_errors);
+      record.missed_reads = clamp16(s.missed_reads);
+      record.flash_skips = clamp16(s.flash_skips);
+      record.flash_gaps = clamp16(s.flash_gaps);
+      record.interval_max_us = clamp16(s.interval_us_max);
+      record.interval_avg_us =
+          clamp16(s.intervals == 0
+                      ? 0
+                      : static_cast<std::uint32_t>(s.interval_us_sum /
+                                                   s.intervals));
+    } else if (record.mode ==
+               static_cast<std::uint8_t>(
+                   MotionHeadingSensor::AcquisitionMode::Fifo)) {
+      const moto::motion::FifoStats& s = g_sensor->fifo_stats();
+      const auto clamp16 = [](std::uint32_t value) {
+        return static_cast<std::uint16_t>(std::min<std::uint32_t>(value, 65535));
+      };
+      record.samples = s.received;
+      record.missed_reads = clamp16(s.lost);
+      record.interval_max_us = clamp16(s.window_us_max);
+      record.interval_avg_us =
+          clamp16(s.window_samples == 0
+                      ? 0
+                      : static_cast<std::uint32_t>(s.window_us_sum /
+                                                   s.window_samples));
+    }
+    record.flags = static_cast<std::uint8_t>((tlog.dirty() ? 1U : 0U) |
+                                             (tlog.full() ? 2U : 0U));
+    tlog.append_stats(record);
+  }
 }
 
 void demo_tick_task(void* context) {
@@ -230,6 +510,33 @@ void demo_tick_task(void* context) {
   while (true) {
     const auto now_ms = static_cast<std::uint64_t>(esp_timer_get_time()) /
                         1'000U;
+    if (g_ui_bench_lean_until_ms != 0) {
+      static std::uint32_t bench_attempts = 0;
+      static std::uint32_t bench_applied = 0;
+      if (now_ms >= g_ui_bench_lean_until_ms) {
+        g_ui_bench_lean_until_ms = 0;
+        ESP_LOGI(kTag, "lean bench finished: attempts=%u applied=%u",
+                 static_cast<unsigned>(bench_attempts),
+                 static_cast<unsigned>(bench_applied));
+      } else {
+        ++bench_attempts;
+        if (board_port_lock(1'000)) {
+          ++bench_applied;
+          const double phase = static_cast<double>(now_ms % 2'000U) / 2'000.0;
+          moto_ui_state_t state{};
+          state.page = MOTO_UI_PAGE_LEAN;
+          state.mode = MOTO_UI_NAVIGATING;
+          state.has_attitude = 1;
+          state.lean_deg = static_cast<float>(
+              30.0 * std::sin(phase * 2.0 * 3.141592653589793));
+          state.speed_kph = 0;
+          moto_nav_ui_set_state(&state);
+          board_port_unlock();
+        }
+      }
+      vTaskDelay(pdMS_TO_TICKS(25));
+      continue;
+    }
     bridge->update_demo(now_ms);
     // Match the display and route interpolation at 40 Hz. Keeping all three
     // clocks phase-compatible avoids periodic long frame gaps.
@@ -306,6 +613,7 @@ extern "C" void app_main(void) {
 
   ESP_LOGI(kTag, "starting %dx%d RGB565 firmware target",
            MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
+  moto_nav_ui_debug_set_clock(ui_debug_clock_us);
 
   // Read the stored settings before the first frame: the boot screen belongs
   // to the same paper system as the instrument, and booting it green (or in
@@ -380,6 +688,7 @@ extern "C" void app_main(void) {
   // the entire display/BSP startup call chain, which can trip the FreeRTOS
   // main-task canary before this line is even reached.  Keep the immutable
   // initial state in static storage just like the bridge's retained snapshots.
+  g_bridge = &phone_bridge;
   static const moto::nav::NavSnapshot initial_snapshot{};
   presenter.update(initial_snapshot);
   presenter.apply_to_lvgl();
@@ -420,12 +729,14 @@ extern "C" void app_main(void) {
     motion_sensor.set_mount(stored_mount.calibration());
     g_calibration_unverified = false;
   }
-  moto_nav_ui_set_lean_flags(g_calibration_unverified ? 1 : 0, 0, 0);
+  moto_nav_ui_set_lean_flags(g_calibration_unverified ? 1 : 0, 0, 0, 0);
   moto::device::TlogSessionInfo session_info;
   const bool fifo_wanted = moto::device::load_imu_fifo_enabled();
-  session_info.mode = fifo_wanted ? 1 : 0;
-  session_info.odr_hz = fifo_wanted ? 448 : 125;
-  session_info.sample_hz = fifo_wanted ? 112 : 125;
+  // Latch polling is the production chain (mode 2); FIFO remains an A/B
+  // option (mode 1); plain polling is only the fallback (mode 0).
+  session_info.mode = fifo_wanted ? 1 : 2;
+  session_info.odr_hz = 448;
+  session_info.sample_hz = 112;
   session_info.mount = mount_record_from(motion_sensor.mount());
   if (const esp_app_desc_t* desc = esp_app_get_description()) {
     std::memcpy(&session_info.firmware_hash, desc->app_elf_sha256, 4);
@@ -442,11 +753,11 @@ extern "C" void app_main(void) {
              esp_err_to_name(motion_result));
   } else {
     if (xTaskCreate(serial_command_task, "moto_cmd", 4'096, &motion_sensor, 1,
-                    nullptr) != pdPASS) {
+                    &g_task_cmd) != pdPASS) {
       ESP_LOGW(kTag, "serial command task could not start");
     }
     if (xTaskCreate(ui_flags_task, "moto_ui_flags", 3'072, nullptr, 1,
-                    nullptr) != pdPASS) {
+                    &g_task_ui_flags) != pdPASS) {
       ESP_LOGW(kTag, "UI flag task could not start");
     }
   }
@@ -454,11 +765,11 @@ extern "C" void app_main(void) {
   // Demo generation fills the retained snapshot in place, but geometry and
   // LVGL projection still use deeper C++ call frames than a trivial task.
   if (xTaskCreate(demo_tick_task, "moto_demo", 6'144, &phone_bridge, 2,
-                  nullptr) != pdPASS) {
+                  &g_task_demo) != pdPASS) {
     ESP_LOGW(kTag, "navigation demo task could not start");
   }
   if (xTaskCreate(power_button_task, "moto_power", 3'072, nullptr, 3,
-                  nullptr) != pdPASS) {
+                  &g_task_power) != pdPASS) {
     ESP_LOGW(kTag, "PWR long-hold task could not start");
   }
 

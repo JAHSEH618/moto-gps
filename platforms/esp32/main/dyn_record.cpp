@@ -215,4 +215,40 @@ bool decode_session_meta(const std::uint8_t* data, std::size_t size,
   return decode_mount_record(data + 20, size - 20, &m->mount);
 }
 
+std::array<std::uint8_t, kImuStatsRecordSize> encode_imu_stats(
+    const ImuStatsRecord& r) {
+  std::array<std::uint8_t, kImuStatsRecordSize> out{};
+  put_u32(&out[0], r.t_ms);
+  put_u32(&out[4], r.samples);
+  put_u32(&out[8], r.avail_zero);
+  put_u32(&out[12], r.lock_waits);
+  put_u16(&out[16], r.i2c_errors);
+  put_u16(&out[18], r.missed_reads);
+  put_u16(&out[20], r.flash_skips);
+  put_u16(&out[22], r.interval_max_us);
+  put_u16(&out[24], r.interval_avg_us);
+  put_u16(&out[28], r.flash_gaps);
+  out[26] = r.mode;
+  out[27] = r.flags;
+  return out;
+}
+
+bool decode_imu_stats(const std::uint8_t* data, std::size_t size,
+                      ImuStatsRecord* r) {
+  if (data == nullptr || r == nullptr || size < kImuStatsRecordSize) return false;
+  r->t_ms = get_u32(data + 0);
+  r->samples = get_u32(data + 4);
+  r->avail_zero = get_u32(data + 8);
+  r->lock_waits = get_u32(data + 12);
+  r->i2c_errors = get_u16(data + 16);
+  r->missed_reads = get_u16(data + 18);
+  r->flash_skips = get_u16(data + 20);
+  r->interval_max_us = get_u16(data + 22);
+  r->interval_avg_us = get_u16(data + 24);
+  r->flash_gaps = get_u16(data + 28);
+  r->mode = data[26];
+  r->flags = data[27];
+  return true;
+}
+
 }  // namespace moto::device

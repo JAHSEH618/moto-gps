@@ -17,6 +17,7 @@ __pycache__/
 platforms/esp32/managed_components/
 platforms/esp32/sdkconfig
 platforms/esp32/sdkconfig.old
+platforms/esp32/sdkconfig.*.bak
 platforms/ios/.build/
 platforms/ios/.swiftpm/
 platforms/ios/DerivedData/

@@ -4,8 +4,10 @@
 
 #include "attitude_estimator.hpp"
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
 #include "lean_estimator.hpp"
 #include "qmi8658_fifo.hpp"
+#include "qmi8658_latch.hpp"
 
 // The raw sample (sensor frame) travels with the estimate so the development
 // recorder can store what the estimator actually saw, not just its output.
@@ -23,7 +25,13 @@ class MotionHeadingSensor {
       const RawImuSample& raw,
       std::uint64_t sample_ms,
       void* context);
-  using ModeCallback = void (*)(bool fifo_active, void* context);
+  // 0 poll, 1 FIFO, 2 latch. The tlog session record needs the same number.
+  enum class AcquisitionMode : std::uint8_t {
+    Poll = 0,
+    Fifo = 1,
+    Latch = 2,
+  };
+  using ModeCallback = void (*)(std::uint8_t mode, void* context);
 
   MotionHeadingSensor() = default;
   MotionHeadingSensor(const MotionHeadingSensor&) = delete;
@@ -44,11 +52,29 @@ class MotionHeadingSensor {
   void request_static_calibration();
   void set_calibration_callback(CalibrationCallback callback, void* context);
 
-  // Runtime FIFO toggle (NVS imu.fifo). Applied by restarting the sample loop.
+  // Runtime acquisition switch (NVS imu.fifo). Off selects the default latch
+  // chain; on selects the FIFO A/B chain. Applied by restarting the loop.
   void request_fifo_mode(bool enabled);
-  bool fifo_active() const { return fifo_active_; }
-  const moto::motion::FifoStats& fifo_stats() const { return fifo_stats_; }
-  const char* fifo_fallback_reason() const { return fifo_reason_; }
+  bool fifo_active() const {
+    return mode_ == static_cast<std::uint8_t>(AcquisitionMode::Fifo);
+  }
+  bool latch_active() const {
+    return mode_ == static_cast<std::uint8_t>(AcquisitionMode::Latch);
+  }
+  AcquisitionMode acquisition_mode() const {
+    return static_cast<AcquisitionMode>(mode_);
+  }
+  const char* mode_name() const;
+  // Set for the life of the sensor task; used by the `sys tasks` bench command.
+  TaskHandle_t task_handle() const { return task_handle_; }
+  const moto::motion::FifoStats& fifo_stats() const { return fifo_.stats(); }
+  const moto::motion::LatchStats& latch_stats() const { return latch_.stats(); }
+  // Reason the active chain fell back, or nullptr when it did not.
+  const char* fallback_reason() const;
+  void reset_imu_stats();
+  // Tells the latch reader that the interval just after this moment contains a
+  // synchronous flash page write, so an over-budget gap is attributed to flash.
+  void note_flash_blocking() { latch_.note_flash_blocking(); }
   // Last estimates, for the `imu lean` bench command. Written by the sensor
   // task, read by the command task; single floats, no locking.
   float last_lean_deg() const { return last_lean_deg_; }
@@ -61,15 +87,19 @@ class MotionHeadingSensor {
 
  private:
   static void task_entry(void* context);
+  static void latch_timer_notify(void* context);
   void run();
   void poll_loop(bool& restart);
-  void fifo_loop(moto::motion::Qmi8658Fifo& fifo, bool& restart);
+  void fifo_loop(bool& restart);
+  void latch_loop(bool& restart);
+  void configure_poll_mode();
+  void announce_mode(AcquisitionMode mode);
   void run_calibration();
-  void emit(const RawImuSample& raw, std::uint64_t sample_ms);
+  void emit(const RawImuSample& raw, std::int64_t sample_us);
 
   qmi8658_dev_t device_{};
   moto::motion::LeanEstimator lean_{};
-  std::uint64_t last_emit_ms_ = 0;
+  std::int64_t last_emit_us_ = 0;
   bool have_emit_ = false;
   float temperature_c_ = 0.0F;
   int temperature_countdown_ = 0;
@@ -83,13 +113,18 @@ class MotionHeadingSensor {
   CalibrationCallback calibration_callback_ = nullptr;
   void* calibration_context_ = nullptr;
   volatile int fifo_request_ = -1;  // -1 none, 0 off, 1 on
-  volatile bool fifo_active_ = false;
+  volatile std::uint8_t mode_ = 0;  // AcquisitionMode
+  volatile bool latch_failed_ = false;
+  volatile bool latch_active_ = false;
   volatile float last_lean_deg_ = 0.0F;
   volatile float last_pitch_deg_ = 0.0F;
   volatile uint8_t last_quality_ = 0;
   volatile uint16_t last_flags_ = 0;
   const char* fifo_reason_ = nullptr;
-  moto::motion::FifoStats fifo_stats_{};
+  const char* latch_reason_ = nullptr;
+  moto::motion::Qmi8658Fifo fifo_{};
+  moto::motion::Qmi8658Latch latch_{};
+  TaskHandle_t task_handle_ = nullptr;
   ModeCallback mode_callback_ = nullptr;
   void* mode_context_ = nullptr;
 };

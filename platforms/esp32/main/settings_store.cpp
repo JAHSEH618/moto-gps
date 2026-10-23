@@ -91,13 +91,16 @@ bool save_settings(const DeviceSettings& settings) {
 }
 
 bool load_imu_fifo_enabled() {
-  if (!ensure_nvs()) return true;
+  // Latch polling is the production acquisition chain (DESIGN_V2 r2 §3.2).
+  // FIFO stays in the firmware for A/B comparison only and is off by default,
+  // including on a fresh NVS.
+  if (!ensure_nvs()) return false;
   nvs_handle_t handle = 0;
-  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return true;
-  std::uint8_t value = 1;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+  std::uint8_t value = 0;
   const esp_err_t result = nvs_get_u8(handle, kImuFifoKey, &value);
   nvs_close(handle);
-  return result != ESP_OK ? true : value != 0;
+  return result != ESP_OK ? false : value != 0;
 }
 
 bool save_imu_fifo_enabled(bool enabled) {

@@ -171,6 +171,15 @@ const MapPalette &palette_for_theme(moto_ui_theme_t theme, bool ambient_night) {
 // settings and kept outside Ui (teardown_ui() would otherwise reset it).
 moto_ui_theme_t g_boot_theme = MOTO_UI_THEME_GTA_NIGHT;
 
+// Lean-page profiling. Off by default; the platform supplies the clock only in
+// the firmware, so the Web/shared build carries the branches but no esp_timer
+// dependency.
+moto_ui_debug_clock_t g_debug_clock = nullptr;
+bool g_debug_enabled = false;
+std::uint32_t g_debug_hidden = 0;
+moto_ui_debug_stats_t g_debug_stats{};
+void apply_debug_hidden();
+
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kDesignWidth = 360;
 constexpr std::uint32_t kPageDotsVisibleMs = 5'000;
@@ -395,7 +404,7 @@ struct Ui {
     lv_obj_t *perf_long_g = nullptr;
     lv_obj_t *perf_lat_g = nullptr;
     lv_obj_t *perf_gg_dot = nullptr;
-    lv_obj_t *lean_value = nullptr;
+    char lean_text[24]{};
     lv_obj_t *lean_scene = nullptr;
     lv_obj_t *lean_marks = nullptr;
     lv_obj_t *lean_blip = nullptr;
@@ -410,6 +419,7 @@ struct Ui {
     float lean_peak_right = 0.0F;
     bool lean_has = false;
     bool lean_scene_dirty = true;
+    std::uint32_t lean_scene_tick_ms = 0;
 
     lv_obj_t *compass_heading = nullptr;
     lv_obj_t *compass_cardinal = nullptr;
@@ -457,6 +467,7 @@ struct Ui {
     volatile uint8_t lean_flag_cal = 0;
     volatile uint8_t lean_flag_poll = 0;
     volatile uint8_t lean_flag_full = 0;
+    volatile uint8_t lean_flag_dirty = 0;
     uint8_t lean_cal_applied = 255;
     uint8_t lean_cal_value_applied = 255;
     uint8_t lean_flags_applied = 255;
@@ -655,8 +666,7 @@ void stroke_ring(lv_layer_t *layer, int radius, int width, lv_color_t color) {
     lv_draw_arc(layer, &dsc);
 }
 
-void draw_instrument_frame(lv_event_t *event) {
-    lv_layer_t *layer = lv_event_get_layer(event);
+void draw_instrument_frame_layer(lv_layer_t *layer) {
     // The bezel is painted over the map, so no sliver of map can show between
     // the rim and the glass edge.
     // Bezel 222..233, band 212..222, casing 197..212. The three rings share
@@ -736,6 +746,10 @@ lv_obj_t *make_speed_limit_sign(lv_obj_t *parent, int design_size) {
 }
 
 // Paper + bezel. Content is created after this call and therefore above it.
+void draw_instrument_frame(lv_event_t *event) {
+    draw_instrument_frame_layer(lv_event_get_layer(event));
+}
+
 void make_page_surface(lv_obj_t *page, moto_ui_page_t index) {
     lv_obj_set_style_bg_color(page, ui.palette.frame, 0);
     lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
@@ -767,6 +781,7 @@ void apply_text_colors() {
             apply_text_outline(slot.object, slot.role);
         }
     }
+    apply_debug_hidden();
     for(std::uint8_t i = 0; i < ui.themed_fill_count; ++i) {
         const Ui::ThemedFill slot = ui.themed_fills[i];
         if(slot.object == nullptr) continue;
@@ -2198,18 +2213,106 @@ void update_performance(const moto_ui_state_t *state) {
 
 }
 
+// Four spans along the datum line, each keeping the old and new position of
+// that span. The dirty rectangles stay thin, so the scene's paper fill and the
+// hero are not redrawn across the whole rotated bounding box. The clip stays
+// inside r=196 so the frame rings above the scene are never touched.
+constexpr int kLeanInvalidSegments = 4;
+
+void lean_point(float lean, double along, double &x, double &y) {
+    constexpr double kHorizon = 74.0;
+    const double a = -static_cast<double>(lean) * kPi / 180.0;
+    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    x = cx + std::cos(a) * along - std::sin(a) * kHorizon;
+    y = cy + std::sin(a) * along + std::cos(a) * kHorizon;
+}
+
+void lean_sun_center(float lean, double &x, double &y) {
+    lean_point(lean, -122.0, x, y);
+}
+
+void invalidate_lean_change(float old_lean, float new_lean) {
+    const int32_t cx = MOTO_UI_CANVAS_WIDTH / 2;
+    const int32_t cy = MOTO_UI_CANVAS_HEIGHT / 2;
+    constexpr int32_t kInner = 196;
+    const auto clip = [&](lv_area_t &area) {
+        area.x1 = std::max(area.x1, cx - kInner);
+        area.y1 = std::max(area.y1, cy - kInner);
+        area.x2 = std::min(area.x2, cx + kInner);
+        area.y2 = std::min(area.y2, cy + kInner);
+    };
+    constexpr double kSpan = 352.0;
+    constexpr double kPad = 8.0;
+    for(int i = 0; i < kLeanInvalidSegments; ++i) {
+        const double t0 = -kSpan / 2.0 + kSpan * i / kLeanInvalidSegments;
+        const double t1 =
+            -kSpan / 2.0 + kSpan * (i + 1) / kLeanInvalidSegments;
+        double ox0, oy0, ox1, oy1, nx0, ny0, nx1, ny1;
+        lean_point(old_lean, t0, ox0, oy0);
+        lean_point(old_lean, t1, ox1, oy1);
+        lean_point(new_lean, t0, nx0, ny0);
+        lean_point(new_lean, t1, nx1, ny1);
+        lv_area_t area;
+        area.x1 = static_cast<int32_t>(std::floor(
+            std::min({ox0, ox1, nx0, nx1}) - kPad));
+        area.y1 = static_cast<int32_t>(std::floor(
+            std::min({oy0, oy1, ny0, ny1}) - kPad));
+        area.x2 = static_cast<int32_t>(std::ceil(
+            std::max({ox0, ox1, nx0, nx1}) + kPad));
+        area.y2 = static_cast<int32_t>(std::ceil(
+            std::max({oy0, oy1, ny0, ny1}) + kPad));
+        clip(area);
+        if(area.x1 <= area.x2 && area.y1 <= area.y2) {
+            lv_obj_invalidate_area(ui.lean_scene, &area);
+        }
+    }
+    double osx, osy, nsx, nsy;
+    lean_sun_center(old_lean, osx, osy);
+    lean_sun_center(new_lean, nsx, nsy);
+    lv_area_t sun;
+    sun.x1 = static_cast<int32_t>(std::floor(std::min(osx, nsx) - 36.0));
+    sun.y1 = static_cast<int32_t>(std::floor(std::min(osy, nsy) - 36.0));
+    sun.x2 = static_cast<int32_t>(std::ceil(std::max(osx, nsx) + 36.0));
+    sun.y2 = static_cast<int32_t>(std::ceil(std::max(osy, nsy) + 36.0));
+    clip(sun);
+    if(sun.x1 <= sun.x2 && sun.y1 <= sun.y2) {
+        lv_obj_invalidate_area(ui.lean_scene, &sun);
+    }
+}
+
 void update_lean(const moto_ui_state_t *state) {
-    if(ui.lean_value == nullptr) return;
+    if(ui.lean_scene == nullptr) return;
     const bool has = state->has_attitude != 0;
     const float lean = has ? static_cast<float>(state->lean_deg) : 0.0F;
 
-    char text[24];
+    // Peaks are data, not pixels: keep them at the sample rate so a short
+    // spike cannot fall between two display frames.
     if(has) {
-        std::snprintf(text, sizeof(text), "%+0.0f°",
-                      static_cast<double>(lean));
-        lv_label_set_text(ui.lean_value, text);
         ui.lean_peak_left = std::max(ui.lean_peak_left, -lean);
         ui.lean_peak_right = std::max(ui.lean_peak_right, lean);
+    }
+
+    // DESIGN_V2 §2.7: lean is a 10 Hz / 1 deg / 0.6 deg-hysteresis display.
+    // The estimator still runs at 112 Hz; only the page is throttled. This is
+    // also what keeps one full-page repaint off the 40 Hz render budget.
+    const std::uint32_t now = lv_tick_get();
+    const bool has_changed = ui.lean_has != has;
+    const bool due = static_cast<std::uint32_t>(now - ui.lean_scene_tick_ms) >=
+                     100U;
+    const bool moved = std::fabs(ui.lean_deg - lean) > 0.6F;
+    if(!(has_changed || ui.lean_scene_dirty || (due && moved))) return;
+
+    const float previous_lean = ui.lean_deg;
+    ui.lean_has = has;
+    ui.lean_deg = lean;
+    ui.lean_scene_dirty = false;
+    ui.lean_scene_tick_ms = now;
+
+    char text[24];
+    if(has) {
+        std::snprintf(ui.lean_text, sizeof(ui.lean_text), "%+0.0f°",
+                      static_cast<double>(lean));
         if(ui.lean_peak_left > 0.5F) {
             std::snprintf(text, sizeof(text), "L %0.0f°",
                           static_cast<double>(ui.lean_peak_left));
@@ -2225,25 +2328,21 @@ void update_lean(const moto_ui_state_t *state) {
             lv_label_set_text(ui.lean_max_r, "R --");
         }
         lv_obj_add_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
+        if((g_debug_hidden & MOTO_UI_DBG_HIDE_SCENE) == 0) {
+            lv_obj_remove_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
+        }
         lv_obj_remove_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     } else {
         // A 176 px hyphen renders as two solid bricks, not a dash. The NO IMU
         // plate carries the state; leave the poster's centre empty.
-        lv_label_set_text(ui.lean_value, "");
+        ui.lean_text[0] = '\0';
         lv_label_set_text(ui.lean_max_l, "L --");
         lv_label_set_text(ui.lean_max_r, "R --");
         lv_obj_remove_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if(ui.lean_has != has || ui.lean_scene_dirty ||
-       std::fabs(ui.lean_deg - lean) > 0.05F) {
-        ui.lean_has = has;
-        ui.lean_deg = lean;
-        ui.lean_scene_dirty = false;
-        lv_obj_invalidate(ui.lean_scene);
-    }
+    invalidate_lean_change(previous_lean, lean);
 
     if(has) {
         // Rim position: 0 at twelve o'clock, positive clockwise. Radius 196
@@ -2943,7 +3042,8 @@ void lean_status_tick(lv_timer_t *) {
     }
     const uint8_t flags = static_cast<uint8_t>(
         (ui.lean_flag_cal != 0 ? 1U : 0U) | (ui.lean_flag_poll != 0 ? 2U : 0U) |
-        (ui.lean_flag_full != 0 ? 4U : 0U));
+        (ui.lean_flag_full != 0 ? 4U : 0U) |
+        (ui.lean_flag_dirty != 0 ? 8U : 0U));
     if(ui.lean_status_text == nullptr) return;
     if(ui.lean_cal_state == ui.lean_cal_applied &&
        ui.lean_cal_value == ui.lean_cal_value_applied &&
@@ -2978,7 +3078,9 @@ void lean_status_tick(lv_timer_t *) {
             std::snprintf(text, sizeof(text), "CAL FAIL\nRANGE");
             break;
         default:
-            if((flags & 4U) != 0U) {
+            if((flags & 8U) != 0U) {
+                std::snprintf(text, sizeof(text), "LOG DIRTY");
+            } else if((flags & 4U) != 0U) {
                 std::snprintf(text, sizeof(text), "LOG FULL");
             } else if((flags & 2U) != 0U) {
                 std::snprintf(text, sizeof(text), "IMU POLL");
@@ -2998,8 +3100,7 @@ void lean_status_tick(lv_timer_t *) {
     }
 }
 
-void draw_lean_marks(lv_event_t *event) {
-    lv_layer_t *layer = lv_event_get_layer(event);
+void draw_lean_marks_layer(lv_layer_t *layer) {
     const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
     const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
     // A protractor printed on the band: every 15 degrees, long marks at the
@@ -3026,6 +3127,46 @@ void draw_lean_marks(lv_event_t *event) {
 // frame: the disc stays still and the world tilts, which is exactly what the
 // rider sees over the bars. The sun gives the horizon a second reference so a
 // ten-degree lean is readable without reading the number.
+void apply_debug_hidden() {
+    if(ui.lean_scene != nullptr) {
+        if((g_debug_hidden & MOTO_UI_DBG_HIDE_SCENE) != 0) {
+            lv_obj_add_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
+        } else if(ui.lean_has) {
+            lv_obj_remove_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_invalidate(ui.lean_scene);
+    }
+    if(ui.lean_marks != nullptr) {
+        if((g_debug_hidden & MOTO_UI_DBG_HIDE_CHROME) != 0) {
+            lv_obj_add_flag(ui.lean_marks, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(ui.lean_marks, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if(ui.page_discs[MOTO_UI_PAGE_LEAN] != nullptr) {
+        if((g_debug_hidden & MOTO_UI_DBG_HIDE_CHROME) != 0) {
+            lv_obj_add_flag(ui.page_discs[MOTO_UI_PAGE_LEAN],
+                            LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(ui.page_discs[MOTO_UI_PAGE_LEAN],
+                               LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if(ui.page_frames[MOTO_UI_PAGE_LEAN] != nullptr) {
+        if((g_debug_hidden & MOTO_UI_DBG_HIDE_CHROME) != 0) {
+            lv_obj_add_flag(ui.page_frames[MOTO_UI_PAGE_LEAN],
+                            LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(ui.page_frames[MOTO_UI_PAGE_LEAN],
+                               LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void draw_lean_marks(lv_event_t *event) {
+    draw_lean_marks_layer(lv_event_get_layer(event));
+}
+
 void draw_lean_scene(lv_event_t *event) {
     lv_layer_t *layer = lv_event_get_layer(event);
     // No attitude yet is still a valid composition: draw the horizon level and
@@ -3049,32 +3190,101 @@ void draw_lean_scene(lv_event_t *event) {
 
     // The sun is a half disc whose flat edge is the horizon. It orbits the
     // centre with the world instead of spinning in place.
-    double sx, sy;
-    at(-122.0, horizon, sx, sy);
-    lv_draw_arc_dsc_t arc;
-    lv_draw_arc_dsc_init(&arc);
-    arc.center = {static_cast<int32_t>(std::lround(sx)),
-                  static_cast<int32_t>(std::lround(sy))};
-    arc.rounded = 0;
-    arc.start_angle = static_cast<lv_value_precise_t>(a * 180.0 / kPi + 180.0);
-    arc.end_angle = static_cast<lv_value_precise_t>(a * 180.0 / kPi + 360.0);
-    arc.width = 60;
-    arc.radius = 30;
-    arc.color = ui.palette.outline;
-    arc.opa = LV_OPA_COVER;
-    lv_draw_arc(layer, &arc);
-    arc.width = 54;
-    arc.radius = 27;
-    arc.color = ui.palette.coral;
-    lv_draw_arc(layer, &arc);
+    if((g_debug_hidden & MOTO_UI_DBG_HIDE_SUN) == 0) {
+        const std::uint64_t started =
+            (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
+        double sx, sy;
+        at(-122.0, horizon, sx, sy);
+        lv_draw_arc_dsc_t arc;
+        lv_draw_arc_dsc_init(&arc);
+        arc.center = {static_cast<int32_t>(std::lround(sx)),
+                      static_cast<int32_t>(std::lround(sy))};
+        arc.rounded = 0;
+        arc.start_angle =
+            static_cast<lv_value_precise_t>(a * 180.0 / kPi + 180.0);
+        arc.end_angle =
+            static_cast<lv_value_precise_t>(a * 180.0 / kPi + 360.0);
+        arc.width = 60;
+        arc.radius = 30;
+        arc.color = ui.palette.outline;
+        arc.opa = LV_OPA_COVER;
+        lv_draw_arc(layer, &arc);
+        arc.width = 54;
+        arc.radius = 27;
+        arc.color = ui.palette.coral;
+        lv_draw_arc(layer, &arc);
+        if(started != 0) {
+            g_debug_stats.sun_us +=
+                static_cast<std::uint32_t>(g_debug_clock() - started);
+            ++g_debug_stats.sun_draws;
+        }
+    }
 
     // One datum line, cased so it survives crossing the numeral.
-    double hx1, hy1, hx2, hy2;
-    at(-176.0, horizon, hx1, hy1);
-    at(176.0, horizon, hx2, hy2);
-    lv_point_precise_t line[2] = {pt(hx1, hy1), pt(hx2, hy2)};
-    draw_segment(layer, ui.palette.outline, 11, LV_OPA_COVER, line, 2);
-    draw_segment(layer, ui.palette.ink, 5, LV_OPA_COVER, line, 2);
+    if((g_debug_hidden & MOTO_UI_DBG_HIDE_HORIZON) == 0) {
+        const std::uint64_t started =
+            (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
+        double hx1, hy1, hx2, hy2;
+        at(-176.0, horizon, hx1, hy1);
+        at(176.0, horizon, hx2, hy2);
+        lv_point_precise_t line[2] = {pt(hx1, hy1), pt(hx2, hy2)};
+        draw_segment(layer, ui.palette.outline, 11, LV_OPA_COVER, line, 2);
+        draw_segment(layer, ui.palette.ink, 5, LV_OPA_COVER, line, 2);
+        if(started != 0) {
+            g_debug_stats.horizon_us +=
+                static_cast<std::uint32_t>(g_debug_clock() - started);
+            ++g_debug_stats.horizon_draws;
+        }
+    }
+
+    if(ui.lean_has && ui.lean_text[0] != '\0' &&
+       (g_debug_hidden & MOTO_UI_DBG_HIDE_HERO) == 0) {
+        const std::uint64_t started =
+            (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
+        lv_draw_label_dsc_t label;
+        lv_draw_label_dsc_init(&label);
+        label.text = ui.lean_text;
+        label.font = &moto_font_hero_176;
+        label.color = ui.palette.ink;
+        label.align = LV_TEXT_ALIGN_LEFT;
+        label.opa = LV_OPA_COVER;
+        const int halo_width =
+            (g_debug_hidden & MOTO_UI_DBG_HIDE_HALO) != 0 ? 0 : px(5);
+        label.outline_stroke_width = halo_width;
+        label.outline_stroke_color = ui.palette.outline;
+        label.outline_stroke_opa =
+            halo_width > 0 ? LV_OPA_COVER : LV_OPA_TRANSP;
+        lv_point_t size;
+        lv_text_get_size(&size, ui.lean_text, &moto_font_hero_176, 0, 0,
+                        LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_area_t area;
+        area.x1 = static_cast<int32_t>(std::lround(cx - size.x / 2.0));
+        area.y1 = static_cast<int32_t>(std::lround(cy - size.y / 2.0));
+        area.x2 = area.x1 + size.x - 1;
+        area.y2 = area.y1 + size.y - 1;
+        lv_draw_label(layer, &label, &area);
+        if(started != 0) {
+            g_debug_stats.hero_us +=
+                static_cast<std::uint32_t>(g_debug_clock() - started);
+            ++g_debug_stats.hero_draws;
+        }
+    }
+}
+
+// A full-screen drawing layer must never be scrollable. lv_obj_create() sets
+// LV_OBJ_FLAG_SCROLLABLE, and remove_style_all() does not clear flags; a
+// scrollable overlay swallows the horizontal drag that pages with, which is
+// exactly how the Lean page used to trap the rider. Every canvas layer on this
+// page is born through this helper.
+lv_obj_t *make_draw_canvas(lv_obj_t *parent, lv_event_cb_t draw) {
+    lv_obj_t *canvas = lv_obj_create(parent);
+    lv_obj_remove_style_all(canvas);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(canvas, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_pos(canvas, 0, 0);
+    lv_obj_add_event_cb(canvas, draw, LV_EVENT_DRAW_MAIN, nullptr);
+    return canvas;
 }
 
 void create_lean_page() {
@@ -3082,35 +3292,39 @@ void create_lean_page() {
     make_page_surface(page, MOTO_UI_PAGE_LEAN);
 
     // v2 calibration entry (DESIGN_V2 §3.3 step 1): a long press anywhere on
-    // the Lean page. It is created under the artwork and stays transparent;
-    // the other layers are not clickable, so hit testing still finds this one.
-    // The sensor rejects the request unless the bike is stationary.
-    lv_obj_t *calibration = lv_obj_create(page);
-    lv_obj_remove_style_all(calibration);
-    lv_obj_set_size(calibration, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_set_style_bg_opa(calibration, LV_OPA_TRANSP, 0);
-    lv_obj_set_name_static(calibration, "moto-lean-calibration");
-    lv_obj_add_flag(calibration, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(calibration, lean_press_event, LV_EVENT_PRESSED,
-                        nullptr);
-    lv_obj_add_event_cb(calibration, lean_release_event, LV_EVENT_RELEASED,
-                        nullptr);
-    lv_obj_add_event_cb(calibration, lean_release_event, LV_EVENT_PRESS_LOST,
-                        nullptr);
+    // the Lean page. The handler lives on the page container instead of a
+    // transparent full-screen child: the page already owns the touch surface,
+    // is not scrollable (make_layer), and bubbles gestures to the pager. The
+    // old overlay was scrollable, so a horizontal drag scrolled it instead of
+    // reaching the pager and the page appeared to freeze. The sensor rejects
+    // the request unless the bike is stationary.
+    lv_obj_set_name_static(page, "moto-lean-page");
+    lv_obj_add_event_cb(page, lean_press_event, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(page, lean_release_event, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(page, lean_release_event, LV_EVENT_PRESS_LOST, nullptr);
 
-    ui.lean_marks = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.lean_marks);
-    lv_obj_clear_flag(ui.lean_marks, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.lean_marks, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_add_event_cb(ui.lean_marks, draw_lean_marks, LV_EVENT_DRAW_MAIN,
-                        nullptr);
-
-    ui.lean_scene = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.lean_scene);
-    lv_obj_clear_flag(ui.lean_scene, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.lean_scene, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_add_event_cb(ui.lean_scene, draw_lean_scene, LV_EVENT_DRAW_MAIN,
-                        nullptr);
+    ui.lean_marks = make_draw_canvas(page, draw_lean_marks);
+    ui.lean_scene = make_draw_canvas(page, draw_lean_scene);
+    // The scene owns its paper. An opaque, disc-clipped layer lets LVGL skip
+    // everything below it (the page disc) when only the horizon moves; a
+    // transparent full-screen layer used to force a whole-page repaint on
+    // every lift update. 414 px reaches the paper edge under the casing; the
+    // frame is moved above the scene below, so the casing stays on top.
+    lv_obj_set_size(ui.lean_scene, 414, 414);
+    lv_obj_center(ui.lean_scene);
+    lv_obj_set_style_radius(ui.lean_scene, LV_RADIUS_CIRCLE, 0);
+    // clip_corner is unnecessary: the scene's content (horizon, sun, hero) is
+    // inside the circle. Turning it off avoids a rounded clip mask on every
+    // dirty strip. The background itself is still the rounded style.
+    lv_obj_set_style_clip_corner(ui.lean_scene, false, 0);
+    lv_obj_set_style_bg_color(ui.lean_scene, ui.palette.ground, 0);
+    lv_obj_set_style_bg_opa(ui.lean_scene, LV_OPA_COVER, 0);
+    // The scene owns the Lean page's paper: hide the page disc underneath so
+    // LVGL does not repaint it (and the frame rings) on every horizon update.
+    if(ui.page_discs[MOTO_UI_PAGE_LEAN] != nullptr) {
+        lv_obj_add_flag(ui.page_discs[MOTO_UI_PAGE_LEAN],
+                        LV_OBJ_FLAG_HIDDEN);
+    }
 
     // The rider point. It rides the rim at the current angle, so the value has
     // a place on the dial as well as a number.
@@ -3125,9 +3339,9 @@ void create_lean_page() {
     lv_obj_set_style_border_width(ui.lean_blip, 3, 0);
     lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
 
-    ui.lean_value = make_text(page, &moto_font_hero_176, TextRole::Display,
-                              "");
-    lv_obj_align(ui.lean_value, LV_ALIGN_CENTER, 0, 0);
+    // The hero is drawn inside draw_lean_scene, not as a label: a separate
+    // transparent label forced LVGL to build and composite an extra layer for
+    // every dirty strip. The number is part of the same scene layer now.
 
     ui.lean_max_l_plate =
         make_plate(page, "L --", 90, 26, &ui.lean_max_l);
@@ -3140,15 +3354,10 @@ void create_lean_page() {
     lv_obj_align(ui.lean_state, LV_ALIGN_CENTER, 0, px(78));
     lv_obj_add_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
 
-    ui.lean_progress = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.lean_progress);
-    lv_obj_clear_flag(ui.lean_progress, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.lean_progress, MOTO_UI_CANVAS_WIDTH,
-                    MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_add_event_cb(ui.lean_progress, draw_lean_progress,
-                        LV_EVENT_DRAW_MAIN, nullptr);
+    ui.lean_progress = make_draw_canvas(page, draw_lean_progress);
 
-    // One status slot: CAL / countdown / result / IMU POLL / LOG FULL. It sits
+    // One status slot: CAL / countdown / result / IMU POLL / LOG FULL / LOG
+    // DIRTY. It sits
     // below the hero and above nothing else, so it never competes with the
     // horizon (v2 r1 §6.2).
     ui.lean_status_plate = make_plate(page, "", 150, 56, &ui.lean_status_text);
@@ -3157,6 +3366,13 @@ void create_lean_page() {
     lv_obj_set_style_text_align(ui.lean_status_text, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(ui.lean_status_text, -4, 0);
     lv_obj_add_flag(ui.lean_status_plate, LV_OBJ_FLAG_HIDDEN);
+
+    // Static chrome lives above the scene so the scene's dirty region never
+    // touches it. The blip is above the casing; frame and marks are below it
+    // but above the horizon.
+    lv_obj_move_foreground(ui.page_frames[MOTO_UI_PAGE_LEAN]);
+    lv_obj_move_foreground(ui.lean_marks);
+    lv_obj_move_foreground(ui.lean_blip);
 
     ui.lean_press_timer = lv_timer_create(lean_press_tick, 30, nullptr);
     lv_timer_pause(ui.lean_press_timer);
@@ -3449,6 +3665,10 @@ void apply_theme_colors() {
         lv_obj_set_style_bg_color(ui.nav_map_background,
                                   ui.palette.background, 0);
     }
+    if(ui.lean_scene != nullptr) {
+        lv_obj_set_style_bg_color(ui.lean_scene, ui.palette.ground, 0);
+        lv_obj_invalidate(ui.lean_scene);
+    }
     if(ui.nav_lifecycle != nullptr) {
         lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.ground, 0);
     }
@@ -3685,9 +3905,47 @@ extern "C" void moto_nav_ui_set_lean_cal_state(
     ui.lean_countdown_ms = 0;
 }
 
+extern "C" void moto_nav_ui_debug_set_clock(moto_ui_debug_clock_t clock) {
+    g_debug_clock = clock;
+}
+
+extern "C" void moto_nav_ui_debug_set_enabled(uint8_t enabled) {
+    g_debug_enabled = enabled != 0;
+}
+
+extern "C" uint8_t moto_nav_ui_debug_enabled(void) {
+    return g_debug_enabled ? 1U : 0U;
+}
+
+extern "C" void moto_nav_ui_debug_set_hidden(uint32_t mask) {
+    g_debug_hidden = mask;
+    apply_debug_hidden();
+}
+
+extern "C" uint32_t moto_nav_ui_debug_hidden(void) {
+    return g_debug_hidden;
+}
+
+extern "C" void moto_nav_ui_debug_reset(void) {
+    g_debug_stats = {};
+}
+
+extern "C" void moto_nav_ui_debug_stats(moto_ui_debug_stats_t *out) {
+    if(out != nullptr) *out = g_debug_stats;
+}
+
+extern "C" struct _lv_obj_t *moto_nav_ui_page_root(moto_ui_page_t page) {
+    if(page < MOTO_UI_PAGE_NAVIGATION || page >= MOTO_UI_PAGE_COUNT) {
+        return nullptr;
+    }
+    return ui.pages[page];
+}
+
 extern "C" void moto_nav_ui_set_lean_flags(uint8_t cal_unverified,
-                                           uint8_t imu_poll, uint8_t log_full) {
+                                           uint8_t imu_poll, uint8_t log_full,
+                                           uint8_t log_dirty) {
     ui.lean_flag_cal = cal_unverified;
     ui.lean_flag_poll = imu_poll;
     ui.lean_flag_full = log_full;
+    ui.lean_flag_dirty = log_dirty;
 }
