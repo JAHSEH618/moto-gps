@@ -53,6 +53,17 @@ Vec3f rotate_about_x(const Vec3f& v, float angle_rad) {
   return {v.x, v.y * c + v.z * s, -v.y * s + v.z * c};
 }
 
+Vec3f rotate_about_axis(const Vec3f& v, const Vec3f& axis, float angle_rad) {
+  const float c = std::cos(angle_rad);
+  const float s = std::sin(angle_rad);
+  const Vec3f k = normalise(axis);
+  const Vec3f kxv = cross(k, v);
+  const float kdv = dot(k, v);
+  return {v.x * c + kxv.x * s + k.x * kdv * (1.0F - c),
+          v.y * c + kxv.y * s + k.y * kdv * (1.0F - c),
+          v.z * c + kxv.z * s + k.z * kdv * (1.0F - c)};
+}
+
 }  // namespace
 
 void MountCalibration::begin_static() {
@@ -67,8 +78,28 @@ bool MountCalibration::observe_static(const Vec3f& accel_mps2,
   if (!finite(accel_mps2) || !finite(gyro_dps) || dt <= 0.0F) return false;
   const float magnitude = length(accel_mps2);
   if (!std::isfinite(magnitude)) return false;
-  if (std::fabs(magnitude - kGravity) > 0.02F * kGravity) return false;
   if (length(gyro_dps) > 2.0F) return false;
+  if (acc_count_ == 0) {
+    // The first sample defines this unit's stationary specific force. A
+    // consumer IMU with 30-50 mg of zero-g offset would fail a fixed |a|=1 g
+    // gate forever (v2 review item 5).
+    static_magnitude_ = magnitude;
+    last_magnitude_ = magnitude;
+  } else {
+    // A parked bike is quiet; a moving one is not. One disturbed sample
+    // restarts the 2 s window rather than accumulating through motion.
+    if (std::fabs(magnitude - last_magnitude_) > 0.01F * kGravity) {
+      acc_sum_ = {};
+      acc_count_ = 0;
+      acc_time_s_ = 0.0F;
+      last_magnitude_ = magnitude;
+      return false;
+    }
+    last_magnitude_ = magnitude;
+    if (std::fabs(magnitude - static_magnitude_) > 0.02F * kGravity) {
+      return false;
+    }
+  }
   acc_sum_ = add(acc_sum_, accel_mps2);
   ++acc_count_;
   acc_time_s_ += dt;
@@ -95,16 +126,50 @@ bool MountCalibration::observe_forward(const Vec3f& accel_mps2,
   Vec3f horizontal = sub(accel_mps2, scale(up_, along_up));
   if (length(horizontal) < 0.2F * kGravity) return false;
   if (!accelerating) horizontal = scale(horizontal, -1.0F);
-  fwd_sum_ = add(fwd_sum_, scale(normalise(horizontal), dt));
+  const Vec3f unit = normalise(horizontal);
+  if (length(unit) < 0.5F) return false;
+  fwd_sum_ = add(fwd_sum_, scale(unit, dt));
   fwd_weight_ += dt;
   if (fwd_weight_ < 0.5F) return false;
-  // Orthogonalise against the already trusted up axis.
-  Vec3f forward = normalise(
-      sub(normalise(fwd_sum_), scale(up_, dot(normalise(fwd_sum_), up_))));
-  if (length(forward) < 0.5F) return false;
-  forward_ = forward;
+
+  const Vec3f candidate =
+      normalise(sub(normalise(fwd_sum_), scale(up_, dot(normalise(fwd_sum_), up_))));
+  fwd_sum_ = {};
+  fwd_weight_ = 0.0F;
+  if (length(candidate) < 0.5F) return false;
+
+  const Vec3f reference =
+      normalise(sub(forward_, scale(up_, dot(forward_, up_))));
+  const float yaw = std::atan2(dot(up_, cross(reference, candidate)),
+                               dot(reference, candidate));
+  // Step 2 may only trim residual yaw. Beyond 10° the bracket is wrong and
+  // the rider should redo step 1, not have the basis bent silently.
+  if (std::fabs(yaw) > 10.0F * kDegToRad) return false;
+
+  if (!has_pending_forward_) {
+    pending_forward_ = candidate;
+    has_pending_forward_ = true;
+    return false;
+  }
+  const float agreement =
+      std::atan2(dot(up_, cross(pending_forward_, candidate)),
+                 dot(pending_forward_, candidate));
+  if (std::fabs(agreement) > 3.0F * kDegToRad) {
+    // Two segments disagree: keep the newer one and wait for a third.
+    pending_forward_ = candidate;
+    return false;
+  }
+  forward_ = normalise(
+      rotate_about_axis(forward_, up_, std::clamp(yaw, -10.0F * kDegToRad,
+                                                  10.0F * kDegToRad)));
+  forward_ = normalise(sub(forward_, scale(up_, dot(forward_, up_))));
+  has_pending_forward_ = false;
   stage2 = true;
   return true;
+}
+
+void MountCalibration::set_trim_deg(float degrees) {
+  trim_deg = std::clamp(degrees, -5.0F, 5.0F);
 }
 
 void MountCalibration::set_basis(const Vec3f& sensor_forward,
@@ -130,7 +195,9 @@ void MountCalibration::set_basis(const Vec3f& sensor_forward,
 
 Vec3f MountCalibration::to_body(const Vec3f& sensor) const {
   const Vec3f left = normalise(cross(up_, forward_));
-  return {dot(sensor, forward_), dot(sensor, left), dot(sensor, up_)};
+  const Vec3f body = {dot(sensor, forward_), dot(sensor, left),
+                      dot(sensor, up_)};
+  return rotate_about_x(body, trim_deg * kDegToRad);
 }
 
 void LeanEstimator::reset() {
@@ -145,6 +212,10 @@ void LeanEstimator::reset() {
   straight_for_s_ = 0.0F;
   in_corner_ = false;
   az_ref_ = kGravity;
+  lean_rate_prev_dps_ = 0.0F;
+  roll_accel_ema_ = 0.0F;
+  accel_delta_ema_ = 0.0F;
+  last_accel_magnitude_ = kGravity;
   out_ = LeanOutput{};
 }
 
@@ -163,6 +234,7 @@ bool LeanEstimator::is_static(const Vec3f& accel, const Vec3f& gyro,
   if (!finite(accel) || !finite(gyro)) return false;
   if (length(gyro) > 3.0F) return false;
   if (std::fabs(length(accel) - kGravity) > 0.03F * kGravity) return false;
+  if (!speed.valid && accel_delta_ema_ > 0.004F * kGravity) return false;
   return !speed.valid || speed.mps < 1.0F;
 }
 
@@ -202,10 +274,41 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
   lean_prev_deg_ = lean_deg_;
   yaw_rate_dps_ = dot(omega, up_body_) * kRadToDeg;
 
+  // Lever arm: the IMU rides h above the roll axis, so its lateral specific
+  // force contains h*lean_accel and its vertical one h*lean_rate^2. Left in,
+  // those terms look like real lean while the bike is flicking in.
+  // Use the gyro's roll rate for the lever terms: it is the physical rate, and
+  // differencing the derived Lean angle instead amplifies the correction's own
+  // step changes. A 20 ms low-pass keeps the second derivative usable.
+  const float roll_rate_dps = omega.x * kRadToDeg;
+  const float roll_accel_raw = (roll_rate_dps - lean_rate_prev_dps_) / dt;
+  lean_rate_prev_dps_ = roll_rate_dps;
+  roll_accel_ema_ +=
+      (roll_accel_raw - roll_accel_ema_) * std::clamp(dt / 0.02F, 0.0F, 1.0F);
+  const float lean_accel_dps2 = roll_accel_ema_;
+  Vec3f accel_compensated = accel;
+  if (lever_arm_m_ > 0.0F) {
+    accel_compensated.y += lever_arm_m_ * lean_accel_dps2 * kDegToRad;
+    const float rate_rad = roll_rate_dps * kDegToRad;
+    accel_compensated.z += lever_arm_m_ * rate_rad * rate_rad;
+  }
+
+  // Road excitation keeps this above the standstill floor. With an expired
+  // GPS fix, |a| ~ 1 g alone would call a smooth straight "parked" (review §3).
+  const float accel_magnitude = length(accel);
+  if (std::isfinite(accel_magnitude)) {
+    const float jitter = std::fabs(accel_magnitude - last_accel_magnitude_);
+    accel_delta_ema_ +=
+        (jitter - accel_delta_ema_) * std::clamp(dt / 0.5F, 0.0F, 1.0F);
+    last_accel_magnitude_ = accel_magnitude;
+  }
+
   // Stationary window: only here may the bias follow the gyro.
   const bool stationary = is_static(accel, gyro_dps, speed);
   static_for_s_ = stationary ? static_for_s_ + dt : 0.0F;
-  if (static_for_s_ >= kStaticHoldS) {
+  const float bias_hold =
+      speed.valid ? kStaticHoldS : kStaticHoldNoSpeedS;
+  if (static_for_s_ >= bias_hold) {
     // tau = 10 s, applied to the raw body-frame rate.
     const float blend = dt / 10.0F;
     bias_rads_ = add(bias_rads_, scale(sub(scale(gyro_raw, kDegToRad),
@@ -226,12 +329,15 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
   if (speed.valid && speed.mps > kKinematicMinSpeedMps &&
       speed.age_s < 1.5F) {
     lean_eff = std::atan(-speed.mps * yaw_rad / kGravity) * kRadToDeg;
-    const float lean_align = std::atan2(accel.y, accel.z) * kRadToDeg;
+    const float lean_align =
+        std::atan2(accel_compensated.y, accel_compensated.z) * kRadToDeg;
     lean_meas = lean_eff + lean_align;
-    gain = adapt_gain(1.0F / kKinematicTauS, lean_rate_dps_, accel);
+    gain = adapt_gain(1.0F / kKinematicTauS, lean_rate_dps_,
+                      lean_accel_dps2, accel_compensated);
     source = LeanSource::Kinematic;
   } else if (stationary) {
-    lean_meas = std::atan2(accel.y, accel.z) * kRadToDeg;
+    lean_meas =
+        std::atan2(accel_compensated.y, accel_compensated.z) * kRadToDeg;
     gain = 1.0F / kStaticTauS;
     source = LeanSource::Static;
     static_observation = true;
@@ -246,7 +352,7 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
       // At rest the specific force is the full up vector, so this is also the
       // only path that can observe pitch. Blending the vector (rather than
       // rotating about x) keeps nose-up from being silently dropped.
-      const Vec3f measured = normalise(accel);
+      const Vec3f measured = normalise(accel_compensated);
       const float w = std::clamp(gain * dt, 0.0F, 1.0F);
       up_body_ = normalise(add(scale(up_body_, 1.0F - w), scale(measured, w)));
     } else {
@@ -315,7 +421,8 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
   } else {
     const float c = std::cos(lean_deg_ * kDegToRad);
     const float s = std::sin(lean_deg_ * kDegToRad);
-    lateral_g = (s * accel.z - c * accel.y) / kGravity;
+    lateral_g =
+        (s * accel_compensated.z - c * accel_compensated.y) / kGravity;
   }
   lateral_g = std::clamp(lateral_g, -4.0F, 4.0F);
 
@@ -334,9 +441,13 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
 }
 
 float LeanEstimator::adapt_gain(float base, float lean_rate_dps,
+                                float lean_accel_dps2,
                                 const Vec3f& accel) const {
   float gain = base;
   if (std::fabs(lean_rate_dps) > 30.0F) gain *= 0.3F;
+  // Lean acceleration peaks at the start and end of a flick, where the rate is
+  // still small; gating on rate alone never sees it (review item 1).
+  if (std::fabs(lean_accel_dps2) > 300.0F) gain *= 0.3F;
   if (std::fabs(accel.z - az_ref_) > 0.3F * kGravity) gain *= 0.2F;
   return gain;
 }

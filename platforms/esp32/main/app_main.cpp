@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 
 #include "ble_nav_transport_nimble.h"
@@ -16,6 +17,27 @@
 
 namespace {
 constexpr char kTag[] = "moto_gps";
+
+void save_lean_calibration(const moto::motion::MountCalibration& mount,
+                           bool ok, void*) {
+  if (!ok) {
+    ESP_LOGW(kTag, "lean calibration rejected; keeping the previous basis");
+    return;
+  }
+  moto::device::StoredMount stored;
+  stored.forward = mount.forward_axis();
+  stored.up = mount.up_axis();
+  stored.trim_cdeg = static_cast<std::int16_t>(
+      std::lround(mount.trim_deg * 100.0F));
+  stored.valid = true;
+  if (!moto::device::save_mount_basis(stored)) {
+    ESP_LOGW(kTag, "lean calibration captured but not persisted");
+  }
+}
+
+void request_lean_calibration(void* context) {
+  static_cast<MotionHeadingSensor*>(context)->request_static_calibration();
+}
 constexpr std::uint64_t kPowerHoldMs = 3'000;
 
 // DeviceThemeMode and moto_ui_theme_t are different enums with different
@@ -232,6 +254,16 @@ extern "C" void app_main(void) {
   }
 
   static MotionHeadingSensor motion_sensor;
+  // Restore the captured bracket before the sensor task starts: every sample
+  // is mapped through this basis, so applying it later would mix frames.
+  const moto::device::StoredMount stored_mount =
+      moto::device::load_mount_basis();
+  if (stored_mount.valid) {
+    motion_sensor.set_mount(stored_mount.calibration());
+  }
+  motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
+  moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,
+                                            &motion_sensor);
   const esp_err_t motion_result = motion_sensor.start(update_motion_heading,
                                                       &phone_bridge);
   if (motion_result != ESP_OK) {

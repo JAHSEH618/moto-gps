@@ -480,3 +480,47 @@ offset. Task log entries are in `docs/todo.md`.
 still green with the perf-page layout change). Firmware build is the remaining
 gate for the new translation unit; the 125 Hz polling path and the missing
 speed feed are recorded as open v2 tasks rather than guessed at.
+
+## 2026-10-23T12:56:00+09:00 — v2 step 1: static calibration is runnable; estimator guards from the review
+
+The review reordered the plan: calibration first, then the acquisition chain,
+then speed. That order is now reflected in the code — the estimator's biggest
+error source was not its corrections but a bracket basis that did not exist.
+
+**Calibration path, end to end.** A long press on the Lean page (anywhere; a
+silent full-canvas layer named `moto-lean-calibration`) calls the sensor's
+`request_static_calibration()`. The sensor task captures 2 s, requires a quiet
+window, and reports back; `app_main` persists the basis to NVS `att.rmount` via
+the new versioned 17-byte blob (1e-4 components, trim in cdeg, CRC16). The basis
+is loaded before the sensor task starts, so no sample is ever mapped twice
+through different frames. Step 2 is yaw-only and guarded: ±10°, two agreeing
+0.5 s segments, rejection otherwise.
+
+**The capture no longer assumes a perfect accelerometer.** The old gate wanted
+`|‖a‖−g| < 0.02 g`, which a 30–50 mg zero-g offset can fail forever. The
+capture learns its own stationary magnitude from the first sample and then only
+demands quietness. Trim is ±5° about the forward axis, applied inside
+`to_body()` so it moves Lean and nothing else.
+
+**Estimator corrections from the review.** The IMU rides h above the roll axis,
+so the measured lateral specific force contains `h·φ̈` and the vertical one
+`h·φ̇²`; both are now removed before any observation, using the gyro roll rate
+and a 20 ms derivative filter, and the kinematic gain additionally drops when
+`|φ̈| > 300 °/s²`. A 12° flick test shows 0.9° worst error with the term and
+2.3° without. With no speed, "stationary" now also requires low per-sample
+acceleration jitter, and bias learning waits 3 s instead of 2 s.
+
+**Geometry probe found two shipping defects.** A temporary inside-the-disc scan
+showed `ui.nav_home` at canvas x 432–491 — off the 466 canvas and outside the
+disc, so the home shortcut never rendered — and page dots in a straight row
+whose outer items sat at r=231, outside the glass. The shortcut moved to
+px(206,262) (worst corner r=191) and the dots now follow the casing arc at
+r=203. The probe also listed five remaining violations (nav status label box,
+maneuver icon box, nav limit child, 0-100 strip ends, one Lean element); the
+gate is logged as a task rather than committed red, and it still needs a rule
+for whether a centred label's box counts as furniture.
+
+**Verification:** native 13/13 (new `mount_basis_tests`, plus calibration and
+lever-arm cases in `lean_estimator_tests`), `idf.py build` green at 0x335650
+(60% of the app partition free). Still not verified: the H1 tilt table, the
+rider-facing countdown/CAL status, and step 2 on a real ride.

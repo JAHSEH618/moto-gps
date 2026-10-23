@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "attitude_estimator.hpp"
+#include "lean_estimator.hpp"
 #include "esp_err.h"
 
 class MotionHeadingSensor {
@@ -19,6 +20,18 @@ class MotionHeadingSensor {
 
   // Starts one low-priority 125 Hz sensor task. Failure is non-fatal: phone
   // course navigation continues to work without the local latency filler.
+  // Restores the persisted R_mount before the task starts. Without one the
+  // adapter falls back to its assumed bracket axes and reports CAL_OK = false.
+  void set_mount(const moto::motion::MountCalibration& mount);
+
+  // v2 static calibration. The capture runs in the sensor task (it needs the
+  // QMI8658 samples) and reports through the completion callback, which the
+  // caller uses to persist att.rmount.
+  using CalibrationCallback = void (*)(
+      const moto::motion::MountCalibration& mount, bool ok, void* context);
+  void request_static_calibration();
+  void set_calibration_callback(CalibrationCallback callback, void* context);
+
   esp_err_t start(SampleCallback callback, void* context);
 
  private:
@@ -28,4 +41,9 @@ class MotionHeadingSensor {
   SampleCallback callback_ = nullptr;
   void* callback_context_ = nullptr;
   bool started_ = false;
+  bool has_mount_ = false;
+  moto::motion::MountCalibration mount_{};
+  volatile bool calibration_requested_ = false;
+  CalibrationCallback calibration_callback_ = nullptr;
+  void* calibration_context_ = nullptr;
 };

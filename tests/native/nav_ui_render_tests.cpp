@@ -572,6 +572,36 @@ void test_performance_and_lean_pages_render_attitude() {
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
 
+
+int lean_calibration_requests = 0;
+
+void lean_calibration_requested(void *) { ++lean_calibration_requests; }
+
+void test_lean_long_press_requests_calibration() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_LEAN;
+  moto_nav_ui_set_state(&state);
+  capture();
+
+  lv_obj_t *layer =
+      lv_obj_find_by_name(lv_screen_active(), "moto-lean-calibration");
+  CHECK(layer != nullptr);
+  if (layer == nullptr) return;
+  lean_calibration_requests = 0;
+  moto_nav_ui_set_lean_calibration_callback(lean_calibration_requested,
+                                            nullptr);
+  lv_obj_send_event(layer, LV_EVENT_LONG_PRESSED, nullptr);
+  CHECK(lean_calibration_requests == 1);
+  moto_nav_ui_set_lean_calibration_callback(nullptr, nullptr);
+
+  // The same press must do nothing once the callback is cleared: a page that
+  // keeps a stale function pointer would crash after teardown.
+  lv_obj_send_event(layer, LV_EVENT_LONG_PRESSED, nullptr);
+  CHECK(lean_calibration_requests == 1);
+}
+
 void test_lean_page_without_attitude_keeps_the_poster() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
@@ -1223,6 +1253,7 @@ int main(int argc, char **argv) {
   test_auto_theme_follows_the_ambient_night_flag();
   test_performance_and_lean_pages_render_attitude();
   test_lean_page_without_attitude_keeps_the_poster();
+  test_lean_long_press_requests_calibration();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_home_glyph_is_gated_by_speed();

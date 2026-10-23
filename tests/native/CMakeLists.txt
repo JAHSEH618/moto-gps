@@ -194,4 +194,15 @@ add_test(NAME motion_heading_fusion_tests COMMAND motion_heading_fusion_tests)
 add_test(NAME device_settings_tests COMMAND device_settings_tests)
 add_test(NAME attitude_estimator_tests COMMAND attitude_estimator_tests)
 add_test(NAME lean_estimator_tests COMMAND lean_estimator_tests)
+
+add_executable(mount_basis_tests
+  mount_basis_tests.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/mount_basis.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/lean_estimator.cpp"
+)
+target_include_directories(mount_basis_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+)
+target_compile_features(mount_basis_tests PRIVATE cxx_std_17)
+add_test(NAME mount_basis_tests COMMAND mount_basis_tests)
 add_test(NAME phone_nav_bridge_tests COMMAND phone_nav_bridge_tests)

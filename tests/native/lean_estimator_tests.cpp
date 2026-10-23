@@ -184,35 +184,143 @@ void test_stale_speed_disables_kinematic() {
   CHECK((estimator.output().flags & moto::motion::kLeanSpdStale) != 0);
 }
 
-// Static calibration against a bracket that rotates and tilts the sensor.
-void test_rmount_static_stage() {
+// A consumer IMU has tens of mg of zero-g offset. The capture must learn the
+// unit's own stationary magnitude instead of demanding |a| == 1 g.
+void test_static_capture_tolerates_zero_g_offset() {
   MountCalibration mount;
-  // Board mounted with sensor +y up and sensor -z forward.
-  const Vec3f up{0.0F, 1.0F, 0.0F};
-  const Vec3f forward{0.0F, 0.0F, -1.0F};
   mount.begin_static();
+  const Vec3f up{0.0F, 1.0F, 0.0F};
+  const float offset_magnitude = 1.03F * kGravity;
+  bool ready = false;
   for (int i = 0; i < 300; ++i) {
-    mount.observe_static({up.x * kGravity, up.y * kGravity, up.z * kGravity},
-                         {0.0F, 0.0F, 0.0F}, 0.01F);
+    ready = mount.observe_static(
+        {up.x * offset_magnitude, up.y * offset_magnitude,
+         up.z * offset_magnitude},
+        {0.0F, 0.0F, 0.0F}, 0.01F);
   }
+  CHECK(ready);
   CHECK(mount.stage1);
-  check_near(mount.to_body({up.x * kGravity, up.y * kGravity, up.z * kGravity})
-                 .z,
-             kGravity, 0.01F, "R_mount up");
+  check_near(mount.to_body({0.0F, offset_magnitude, 0.0F}).z,
+             offset_magnitude, 0.1F, "learned static magnitude");
+}
 
-  mount.begin_forward();
-  for (int i = 0; i < 100; ++i) {
-    // 2 m/s^2 along sensor forward plus gravity up.
-    mount.observe_forward({forward.x * 2.0F + up.x * kGravity,
-                           forward.y * 2.0F + up.y * kGravity,
-                           forward.z * 2.0F + up.z * kGravity},
-                          true, 0.01F);
-  }
+// Step 2 only trims residual yaw: ±10°, and two agreeing segments.
+void test_forward_trim_is_yaw_only_and_guarded() {
+  const Vec3f up{0.0F, 1.0F, 0.0F};
+  const auto rotate_y = [](float degrees) {
+    const float r = degrees * kDegToRad;
+    return Vec3f{std::cos(r), 0.0F, -std::sin(r)};
+  };
+  const auto feed_segment = [&](MountCalibration& mount, const Vec3f& forward) {
+    mount.begin_forward();
+    for (int i = 0; i < 100; ++i) {
+      mount.observe_forward({forward.x * 2.0F, up.y * kGravity,
+                             forward.z * 2.0F},
+                            true, 0.01F);
+    }
+  };
+
+  // 8 degrees of residual yaw: accepted on the second agreeing segment.
+  MountCalibration mount;
+  mount.set_basis({1.0F, 0.0F, 0.0F}, up);
+  mount.stage2 = false;  // step 1 only, as after a static capture
+  const Vec3f trimmed = rotate_y(8.0F);
+  feed_segment(mount, trimmed);
+  feed_segment(mount, trimmed);
   CHECK(mount.stage2);
-  const Vec3f mapped_forward = mount.to_body(forward);
-  check_near(mapped_forward.x, 1.0F, 0.02F, "R_mount forward x");
-  check_near(mapped_forward.y, 0.0F, 0.02F, "R_mount forward y");
-  check_near(mapped_forward.z, 0.0F, 0.02F, "R_mount forward z");
+  const Vec3f mapped = mount.to_body(trimmed);
+  check_near(mapped.x, 1.0F, 0.02F, "yaw trim forward x");
+  check_near(mapped.y, 0.0F, 0.02F, "yaw trim forward y");
+  check_near(mapped.z, 0.0F, 0.02F, "yaw trim forward z");
+
+  // 20 degrees: outside the guard, so step 2 refuses to bend the basis.
+  MountCalibration far;
+  far.set_basis({1.0F, 0.0F, 0.0F}, up);
+  far.stage2 = false;
+  const Vec3f wrong = rotate_y(20.0F);
+  feed_segment(far, wrong);
+  feed_segment(far, wrong);
+  CHECK(!far.stage2);
+}
+
+// The zero trim is a ±5° rotation about the forward axis, applied after the
+// mount basis so it moves Lean and nothing else.
+void test_trim_shifts_lean() {
+  MountCalibration mount;
+  mount.set_basis({1.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F});
+  mount.set_trim_deg(2.0F);
+  LeanEstimator estimator;
+  estimator.set_mount(mount);
+  run(estimator, {0.0F, 0.0F, kGravity}, {0.0F, 0.0F, 0.0F}, SpeedSample{},
+      4.0F);
+  check_near(estimator.output().lean_deg, 2.0F, 0.2F, "positive trim");
+
+  mount.set_trim_deg(-20.0F);
+  check_near(mount.trim_deg, -5.0F, 0.001F, "trim clamps to ±5");
+  estimator.set_mount(mount);
+  run(estimator, {0.0F, 0.0F, kGravity}, {0.0F, 0.0F, 0.0F}, SpeedSample{},
+      4.0F);
+  check_near(estimator.output().lean_deg, -5.0F, 0.2F, "negative trim");
+}
+
+// A flick with the IMU one metre above the roll axis. The measured lateral
+// specific force carries h*lean_accel and the vertical one h*lean_rate^2;
+// without the lever-arm term the estimate is pulled several degrees off.
+void test_lever_arm_is_compensated() {
+  const float speed_mps = 20.0F;
+  const auto smooth = [](float x) {
+    const float t = std::min(1.0F, std::max(0.0F, x));
+    return t * t * (3.0F - 2.0F * t);
+  };
+  const auto scenario = [&](float lever_arm_m, bool compensate) {
+    LeanEstimator estimator;
+    if (compensate) estimator.set_lever_arm_m(lever_arm_m);
+    float worst = 0.0F;
+    const float dt = 0.002F;
+    for (int i = 0; i < 8000; ++i) {
+      const float t = i * dt;
+      float lean = 20.0F;
+      float lean_rate = 0.0F;
+      if (t > 5.0F) {
+        const float ramp = smooth((t - 5.0F) / 0.6F);
+        lean = 20.0F + 12.0F * ramp;
+        // d/dt of smoothstep
+        const float u = (t - 5.0F) / 0.6F;
+        if (u > 0.0F && u < 1.0F) {
+          lean_rate = 12.0F * (6.0F * u * (1.0F - u)) / 0.6F;
+        }
+      }
+      const float lean_accel =
+          (t > 5.0F && t < 5.6F)
+              ? 12.0F * (6.0F - 12.0F * ((t - 5.0F) / 0.6F)) /
+                    (0.6F * 0.6F)
+              : 0.0F;
+      const Vec3f force = static_accel(lean);
+      const float rate_rad = lean_rate * kDegToRad;
+      Vec3f measured = force;
+      if (lever_arm_m > 0.0F) {
+        measured.y -= lever_arm_m * lean_accel * kDegToRad;
+        measured.z -= lever_arm_m * rate_rad * rate_rad;
+      }
+      estimator.step({lean_rate, 0.0F, 0.0F}, measured, dt,
+                     SpeedSample{true, speed_mps, 0.0F});
+      // Ignore the initial convergence from 0: this test is about the flick.
+      if (t > 5.0F) {
+        worst = std::max(worst, std::fabs(estimator.output().lean_deg - lean));
+      }
+
+    }
+    return worst;
+  };
+  const float compensated = scenario(1.0F, true);
+  const float uncompensated = scenario(1.0F, false);
+  CHECK(compensated < 1.5F);
+  // Without the term the flick is measurably wrong; the exact size depends on
+  // how long the corrupted observation is applied, so assert the ratio too.
+  CHECK(uncompensated > 2.0F);
+  CHECK(uncompensated > 2.0F * compensated);
+  std::cout << "lever arm: compensated worst " << compensated
+            << "°, uncompensated worst " << uncompensated << "°\n";
 }
 
 // The estimator must read zero when the bike is level regardless of how the
@@ -271,7 +379,10 @@ int main() {
   test_bias_learns_only_when_static();
   test_saturation_flag();
   test_stale_speed_disables_kinematic();
-  test_rmount_static_stage();
+  test_static_capture_tolerates_zero_g_offset();
+  test_forward_trim_is_yaw_only_and_guarded();
+  test_trim_shifts_lean();
+  test_lever_arm_is_compensated();
   test_rmount_removes_bracket_lean();
   test_quality_is_halved_without_calibration();
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device_settings.hpp"
+#include "mount_basis.hpp"
 
 namespace moto::device {
 
@@ -20,5 +21,11 @@ DeviceSettings load_settings();
 // logs rather than hides: a setting that silently does not survive a reboot is
 // worse than a visible error.
 bool save_settings(const DeviceSettings& settings);
+
+// v2 `att.rmount`. Stored separately from the settings blob so a phone that
+// rewrites SettingsState never rotates the calibration, and so the blob format
+// does not need another version for a value only the device can produce.
+StoredMount load_mount_basis();
+bool save_mount_basis(const StoredMount& mount);
 
 }  // namespace moto::device
