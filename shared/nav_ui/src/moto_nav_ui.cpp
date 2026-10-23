@@ -155,6 +155,24 @@ constexpr MapPalette kGtaNightPalette = {
 constexpr lv_color_t kViceMagenta = LV_COLOR_MAKE(0xF3, 0x4D, 0xAA);
 constexpr lv_color_t kOutlineBlack = LV_COLOR_MAKE(0x17, 0x15, 0x1B);
 
+// One resolver for a theme name and the phone's day/night flag. AUTO has no
+// palette of its own; the flag is the only thing that can resolve it.
+const MapPalette &palette_for_theme(moto_ui_theme_t theme, bool ambient_night) {
+    switch(theme) {
+        case MOTO_UI_THEME_GTA_DAY: return kGtaDayPalette;
+        case MOTO_UI_THEME_GTA_NIGHT: return kGtaNightPalette;
+        case MOTO_UI_THEME_AUTO:
+            return ambient_night ? kGtaNightPalette : kGtaDayPalette;
+        case MOTO_UI_THEME_OFFICIAL:
+        default: return kOfficialPalette;
+    }
+}
+
+// The boot screen is painted before the tree and before the phone can supply
+// an ambient flag, so its theme is chosen by the caller from persisted
+// settings and kept outside Ui (teardown_ui() would otherwise reset it).
+moto_ui_theme_t g_boot_theme = MOTO_UI_THEME_GTA_NIGHT;
+
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kDesignWidth = 360;
 constexpr std::uint32_t kPageDotsVisibleMs = 5'000;
@@ -578,12 +596,16 @@ lv_obj_t *make_text(lv_obj_t *parent, const lv_font_t *font, TextRole role,
 // casing under one magenta band. A page may not invent its own frame, so the
 // six screens read as six readouts of one instrument rather than six screens.
 // ---------------------------------------------------------------------------
-constexpr int kDialRadius = 207;      // paper edge, under the casing
+constexpr int kDialRadius = 207;       // paper edge, under the casing
 // LVGL arcs stroke inward from the given radius, so these are outer edges.
-constexpr int kDialBandOuter = 217;   // magenta band outer edge
-constexpr int kDialCasingOuter = 207; // black casing outer edge
-constexpr int kDialBezelOuter = 233;  // glass edge
-constexpr int kDialBandWidth = 10;
+// DESIGN.md: casing 197-212, band 212-222, glass edge outside 222. The band
+// used to start at 207, which left a 5 px black moat inside the glass and made
+// every page read as a smaller circle than the poster.
+constexpr int kDialBandOuter = 222;    // magenta band outer edge
+constexpr int kDialCasingOuter = 212;  // black casing outer edge
+constexpr int kDialCasingWidth = 15;   // 197..212
+constexpr int kDialBezelOuter = 233;   // glass edge
+constexpr int kDialBandWidth = 10;     // 212..222
 
 // Points are integer in this LVGL configuration; every drawing routine in the
 // instrument chrome computes in double and lands here.
@@ -615,10 +637,12 @@ void draw_instrument_frame(lv_event_t *event) {
     lv_layer_t *layer = lv_event_get_layer(event);
     // The bezel is painted over the map, so no sliver of map can show between
     // the rim and the glass edge.
-    stroke_ring(layer, kDialBezelOuter, 16, ui.palette.frame);
+    // Bezel 222..233, band 212..222, casing 197..212. The three rings share
+    // edges, so no sliver of ground can leak between them.
+    stroke_ring(layer, kDialBezelOuter, kDialBezelOuter - kDialBandOuter,
+                ui.palette.frame);
     stroke_ring(layer, kDialBandOuter, kDialBandWidth, ui.palette.accent);
-    // The casing sits inside the band and buries the map's raw edge.
-    stroke_ring(layer, kDialCasingOuter, 10, kOutlineBlack);
+    stroke_ring(layer, kDialCasingOuter, kDialCasingWidth, kOutlineBlack);
 }
 
 lv_obj_t *register_fill(lv_obj_t *object, Ui::FillRole role) {
@@ -878,6 +902,9 @@ void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
 void gesture_event(lv_event_t *) {
     // Screen event callbacks outlive lv_obj_clean(); see teardown_ui().
     if(!ui.live) return;
+#if LV_USE_GESTURE_RECOGNITION == 0
+#error "Page paging needs LV_USE_GESTURE_RECOGNITION in config/lv_conf.h"
+#endif
     lv_indev_t *indev = lv_indev_active();
     if(indev == nullptr) return;
     const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
@@ -1332,13 +1359,20 @@ void update_building_geometry(const moto_ui_state_t *state) {
         state->building_footprint_count,
         MOTO_UI_BUILDING_FOOTPRINT_CAPACITY);
     if(point_count < 3 || footprint_count == 0) {
+        // Motion snapshots arrive at 40 Hz. Invalidating the full-canvas fill
+        // on every one of them, even when the previous snapshot also had no
+        // buildings, pins the UI at ~3 fps and makes every swipe feel dead.
+        // Only repaint when something was actually on screen to clear.
+        const bool had_buildings =
+            ui.nav_building_point_count != 0 ||
+            ui.nav_building_footprint_count != 0;
         ui.nav_building_point_count = 0;
         ui.nav_building_footprint_count = 0;
         ui.nav_building_scene_revision = state->map_scene_revision;
         for(lv_obj_t *building : ui.nav_buildings) {
             lv_obj_add_flag(building, LV_OBJ_FLAG_HIDDEN);
         }
-        if(ui.nav_building_fill != nullptr) {
+        if(had_buildings && ui.nav_building_fill != nullptr) {
             lv_obj_invalidate(ui.nav_building_fill);
         }
         return;
@@ -2126,11 +2160,12 @@ void update_lean(const moto_ui_state_t *state) {
         lv_obj_remove_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_label_set_text(ui.lean_value, "--");
+        // A 176 px hyphen renders as two solid bricks, not a dash. The NO IMU
+        // plate carries the state; leave the poster's centre empty.
+        lv_label_set_text(ui.lean_value, "");
         lv_label_set_text(ui.lean_max_l, "L --");
         lv_label_set_text(ui.lean_max_r, "R --");
         lv_obj_remove_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -2667,9 +2702,9 @@ void draw_compass_marks(lv_event_t *event) {
         const double sy = -std::cos(rad);
         const bool major = i % 3 == 0;
         lv_point_precise_t pts[2] = {
-            pt(cx + sx * 208.0, cy + sy * 208.0),
-            pt(cx + sx * (major ? 217.0 : 213.0),
-               cy + sy * (major ? 217.0 : 213.0)),
+            pt(cx + sx * 212.0, cy + sy * 212.0),
+            pt(cx + sx * (major ? 223.0 : 218.0),
+               cy + sy * (major ? 223.0 : 218.0)),
         };
         draw_segment(layer, ui.palette.map_ink, major ? 3 : 2, LV_OPA_COVER,
                      pts, 2);
@@ -2679,14 +2714,14 @@ void draw_compass_marks(lv_event_t *event) {
     lv_draw_triangle_dsc_init(&tri);
     tri.opa = LV_OPA_COVER;
     tri.color = kOutlineBlack;
-    tri.p[0] = pt(cx - 9.0, cy - 220.0);
-    tri.p[1] = pt(cx + 9.0, cy - 220.0);
+    tri.p[0] = pt(cx - 9.0, cy - 223.0);
+    tri.p[1] = pt(cx + 9.0, cy - 223.0);
     tri.p[2] = pt(cx, cy - 198.0);
     lv_draw_triangle(layer, &tri);
     tri.color = ui.palette.ink;
-    tri.p[0] = pt(cx - 5.0, cy - 217.0);
-    tri.p[1] = pt(cx + 5.0, cy - 217.0);
-    tri.p[2] = pt(cx, cy - 204.0);
+    tri.p[0] = pt(cx - 5.0, cy - 220.0);
+    tri.p[1] = pt(cx + 5.0, cy - 220.0);
+    tri.p[2] = pt(cx, cy - 207.0);
     lv_draw_triangle(layer, &tri);
 }
 
@@ -2772,15 +2807,15 @@ void draw_lean_marks(lv_event_t *event) {
         const double sy = -std::cos(rad);
         const bool major = t % 45 == 0;
         lv_point_precise_t pts[2] = {
-            pt(cx + sx * 208.0, cy + sy * 208.0),
-            pt(cx + sx * (major ? 217.0 : 214.0),
-               cy + sy * (major ? 217.0 : 214.0)),
+            pt(cx + sx * 212.0, cy + sy * 212.0),
+            pt(cx + sx * (major ? 223.0 : 218.0),
+               cy + sy * (major ? 223.0 : 218.0)),
         };
         draw_segment(layer, ui.palette.map_ink, major ? 3 : 2, LV_OPA_COVER,
                      pts, 2);
     }
     // The zero reference: the only mark that is a bar rather than a tick.
-    lv_point_precise_t zero[2] = {pt(cx, cy - 218.0), pt(cx, cy - 196.0)};
+    lv_point_precise_t zero[2] = {pt(cx, cy - 223.0), pt(cx, cy - 198.0)};
     draw_segment(layer, ui.palette.map_ink, 5, LV_OPA_COVER, zero, 2);
 }
 
@@ -2789,9 +2824,12 @@ void draw_lean_marks(lv_event_t *event) {
 // rider sees over the bars. The sun gives the horizon a second reference so a
 // ten-degree lean is readable without reading the number.
 void draw_lean_scene(lv_event_t *event) {
-    if(!ui.lean_has) return;
     lv_layer_t *layer = lv_event_get_layer(event);
-    const double lean = static_cast<double>(ui.lean_deg);
+    // No attitude yet is still a valid composition: draw the horizon level and
+    // let the number read "--". Hiding the whole scene was what made the page
+    // look like a different product whenever the IMU had not produced a sample
+    // (or the board was on the bench).
+    const double lean = ui.lean_has ? static_cast<double>(ui.lean_deg) : 0.0;
     // Right lean tilts the world left: the horizon's right end rises.
     const double a = -lean * kPi / 180.0;
     const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
@@ -2853,7 +2891,6 @@ void create_lean_page() {
     lv_obj_set_size(ui.lean_scene, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
     lv_obj_add_event_cb(ui.lean_scene, draw_lean_scene, LV_EVENT_DRAW_MAIN,
                         nullptr);
-    lv_obj_add_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
 
     // The rider point. It rides the rim at the current angle, so the value has
     // a place on the dial as well as a number.
@@ -2869,7 +2906,7 @@ void create_lean_page() {
     lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
 
     ui.lean_value = make_text(page, &moto_font_hero_176, TextRole::Display,
-                              "--");
+                              "");
     lv_obj_align(ui.lean_value, LV_ALIGN_CENTER, 0, 0);
 
     ui.lean_max_l_plate =
@@ -2989,19 +3026,23 @@ void set_boot_content_opacity(void *object, int32_t opacity) {
 
 }  // namespace
 
+extern "C" void moto_nav_ui_set_boot_theme(moto_ui_theme_t theme) {
+    g_boot_theme = theme;
+}
+
 extern "C" void moto_nav_ui_show_boot_screen(void) {
     /* Also used while the full UI is live, so it must leave nothing behind
        that still points at the previous tree. */
     teardown_ui();
     if(ui.screen == nullptr) return;
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
-    // GTA-poster boot: cream stock, ink type, one magenta slash. The three
-    // colours are the day map's own, so the boot frame belongs to the same
-    // visual system as the radar that replaces it instead of being a separate
-    // black screen that only shares a wordmark with the product.
-    const lv_color_t poster = kGtaDayPalette.background;
-    const lv_color_t ink = kGtaDayPalette.ink;
-    const lv_color_t accent = kGtaDayPalette.accent;
+    // The boot frame belongs to the same paper system as the instrument. It
+    // used to take kGtaDayPalette.background, which is MAP GREEN; the boot was
+    // the one screen still showing the old map field instead of the poster.
+    const MapPalette &palette = palette_for_theme(g_boot_theme, false);
+    const lv_color_t poster = palette.ground;
+    const lv_color_t ink = palette.ink;
+    const lv_color_t accent = palette.accent;
     lv_obj_set_style_bg_color(ui.screen, poster, 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
 
@@ -3140,6 +3181,11 @@ extern "C" void moto_nav_ui_create(void) {
     initial.traffic = MOTO_TRAFFIC_UNKNOWN;
     moto_nav_ui_set_state(&initial);
     show_page(MOTO_UI_PAGE_NAVIGATION, true);
+    // The default phone state is offline, but the lifecycle cover starts
+    // Hidden. Without this the navigation page is a bare paper disc: no map
+    // (nothing has been sent yet) and no "CONNECT PHONE" cover either, which
+    // reads as a blank screen that has crashed.
+    refresh_lifecycle();
 }
 
 void apply_theme_colors() {
@@ -3205,20 +3251,9 @@ void apply_theme_colors() {
 extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
     if(!ui.live) return;
     ui.theme = theme;
-    // AUTO has no palette of its own: it defers to the phone's day/night flag.
-    // Resolve it in one place so no caller has to know the rule.
-    const moto_ui_theme_t effective =
-        theme == MOTO_UI_THEME_AUTO
-            ? (ui.ambient_night ? MOTO_UI_THEME_GTA_NIGHT
-                                : MOTO_UI_THEME_GTA_DAY)
-            : theme;
-    switch(effective) {
-        case MOTO_UI_THEME_GTA_DAY: ui.palette = kGtaDayPalette; break;
-        case MOTO_UI_THEME_GTA_NIGHT: ui.palette = kGtaNightPalette; break;
-        case MOTO_UI_THEME_OFFICIAL:
-        case MOTO_UI_THEME_AUTO:
-        default: ui.palette = kOfficialPalette; break;
-    }
+    // AUTO resolves through the phone's flag in one place; explicit themes
+    // ignore the flag.
+    ui.palette = palette_for_theme(theme, ui.ambient_night != 0);
     if(ui.nav_map_background != nullptr) apply_theme_colors();
 }
 

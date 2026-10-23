@@ -572,6 +572,23 @@ void test_performance_and_lean_pages_render_attitude() {
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
 
+void test_lean_page_without_attitude_keeps_the_poster() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_LEAN;
+  state.has_attitude = 0;
+  moto_nav_ui_set_state(&state);
+  capture();
+  // The sun is still on the world line: an absent attitude is "--", not an
+  // empty page with a NO IMU plate where the instrument should be.
+  CHECK(has_color_within(111, 295, rgb565(0xFF, 0x8F, 0x5E), 10));
+  CHECK(pixel_at(kWidth / 2, kHeight / 2) !=
+        rgb565(0x07, 0x05, 0x0D));
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+}
+
 void test_clearing_geometry_leaves_no_residue() {
   moto_ui_state_t with_route = base_state();
   fill_route(with_route, 18);
@@ -1008,6 +1025,21 @@ void dump_review_frames(const char *dir) {
       write_ppm_to(path);
     }
   }
+
+  // The no-IMU lean page is a distinct design state: the poster must still be
+  // there, with the NO IMU plate instead of a number.
+  state.page = MOTO_UI_PAGE_LEAN;
+  state.has_attitude = 0;
+  moto_nav_ui_set_page(MOTO_UI_PAGE_LEAN);
+  for (const ThemeCase &theme : themes) {
+    moto_nav_ui_set_theme(theme.theme);
+    moto_nav_ui_set_state(&state);
+    pump(80);
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/%s-lean-no-imu.ppm", dir,
+                  theme.name);
+    write_ppm_to(path);
+  }
   // Empty / link states are what the rider sees most of the time before a
   // destination exists; dump them with the same theme so they are reviewed
   // rather than assumed.
@@ -1158,19 +1190,27 @@ int main(int argc, char **argv) {
   init_display(buffer_rows, extra_pool_bytes);
 
   // Production cadence: the boot animation completes before the full UI is
-  // created, so settle it before moto_nav_ui_create().
+  // created, so settle it before moto_nav_ui_create(). The boot palette is the
+  // persisted theme's paper, not the navigation map's green field.
+  moto_nav_ui_set_boot_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame settled_boot = capture();
   // The boot frame is the day poster: paper everywhere the wordmark is not.
-  CHECK(pixel_at(4, 4) == rgb565(0x1E, 0x7A, 0x46));
+  CHECK(pixel_at(4, 4) == rgb565(0xF6, 0xF0, 0xD7));
   // The composition itself is animated, and the harness does not run the
   // animation clock, so what is pinned here is the poster stock the boot
   // frame paints before any content fades in. The wordmark is verified on the
   // device, where the animation actually runs.
-  CHECK(pixel_at(2, 2) == rgb565(0x1E, 0x7A, 0x46));
-  CHECK(pixel_at(kWidth - 3, 2) == rgb565(0x1E, 0x7A, 0x46));
-  CHECK(pixel_at(2, kHeight - 3) == rgb565(0x1E, 0x7A, 0x46));
+  CHECK(pixel_at(2, 2) == rgb565(0xF6, 0xF0, 0xD7));
+  CHECK(pixel_at(kWidth - 3, 2) == rgb565(0xF6, 0xF0, 0xD7));
+  CHECK(pixel_at(2, kHeight - 3) == rgb565(0xF6, 0xF0, 0xD7));
+  // The same API must be able to boot the night paper; a green frame here was
+  // the regression that put the old map field under the wordmark.
+  moto_nav_ui_set_boot_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_show_boot_screen();
+  pump(260);
+  CHECK(pixel_at(4, 4) == rgb565(0x14, 0x10, 0x24));
 
   test_frames_are_deterministic();
   test_rebuilding_the_ui_is_idempotent();
@@ -1182,6 +1222,7 @@ int main(int argc, char **argv) {
   test_day_and_night_themes_render_different_map_colors();
   test_auto_theme_follows_the_ambient_night_flag();
   test_performance_and_lean_pages_render_attitude();
+  test_lean_page_without_attitude_keeps_the_poster();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_home_glyph_is_gated_by_speed();
@@ -1209,6 +1250,8 @@ int main(int argc, char **argv) {
   // screen used to forget, and a visible hint is the worst case.
   moto_nav_ui_show_home_error();
   pump(10);
+  // The boot theme is sticky; restore the one the first capture used.
+  moto_nav_ui_set_boot_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame boot_again = capture();
