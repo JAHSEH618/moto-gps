@@ -106,6 +106,8 @@ void MotionHeadingSensor::run() {
   lean.set_mount(mount);
 
   qmi8658_data_t data{};
+  float temperature_c = 0.0F;
+  int temperature_countdown = 0;
   int consecutive_failures = 0;
   std::uint64_t last_sample_ms = monotonic_ms();
   TickType_t next_sample_tick = xTaskGetTickCount();
@@ -171,9 +173,33 @@ void MotionHeadingSensor::run() {
              std::sin(pitch_rad) * moto::motion::kStandardGravity) /
             moto::motion::kStandardGravity;
         attitude.lateral_g = out.lateral_g;
+        attitude.lean_eff_deg =
+            std::isfinite(out.lean_eff_deg) ? out.lean_eff_deg : 0.0F;
+        attitude.lean_rate_dps = out.lean_rate_dps;
+        attitude.has_lean_eff = std::isfinite(out.lean_eff_deg);
+        attitude.quality = out.quality;
+        attitude.flags = out.flags;
         attitude.valid = out.valid;
+
+        // Temperature changes slowly; one read per second keeps it off the
+        // sampling critical path.
+        if (--temperature_countdown <= 0) {
+          temperature_countdown = 125;
+          float measured = 0.0F;
+          if (qmi8658_read_temp(&device, &measured) == ESP_OK) {
+            temperature_c = measured;
+          }
+        }
+        RawImuSample raw;
+        raw.accel_mps2[0] = data.accelX;
+        raw.accel_mps2[1] = data.accelY;
+        raw.accel_mps2[2] = data.accelZ;
+        raw.gyro_dps[0] = data.gyroX;
+        raw.gyro_dps[1] = data.gyroY;
+        raw.gyro_dps[2] = data.gyroZ;
+        raw.temp_c = temperature_c;
         // The bridge's heading fusion is clockwise-positive.
-        callback_(-out.yaw_rate_dps, attitude, now, callback_context_);
+        callback_(-out.yaw_rate_dps, attitude, raw, now, callback_context_);
       }
     }
     if (result != ESP_OK && ++consecutive_failures == 25) {

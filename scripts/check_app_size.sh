@@ -1,17 +1,17 @@
 #!/bin/bash
 # App partition budget gate (v2 r1 §11.3, review condition).
 #
-# The v2 partition plan gives each OTA app slot 4 MiB. A firmware that fills
-# 90% of it leaves no room for an OTA image plus the assets/tlog regions that
-# must coexist, so the gate fails above that line instead of at link time.
+# The v2 partition plan gives each OTA app slot 6 MiB out of 32 MB. A firmware
+# that fills 90% of it leaves no room for an OTA image plus the assets/tlog
+# regions that must coexist, so the gate fails above that line instead of at
+# link time.
 #
-# The current partition table is still the single 8 MiB factory slot; this
-# checks against the planned 4 MiB slot on purpose, so the budget cannot be
-# spent by accident before the table is re-cut.
+# The table now has app0/app1 at 6 MiB each. Re-cutting it requires a USB
+# full flash (nvs offset is preserved, so calibration survives).
 set -euo pipefail
 
 binary="${1:-platforms/esp32/build/moto_gps_esp32.bin}"
-partition_bytes="${2:-4194304}"   # 4 MiB
+partition_bytes="${2:-6291456}"   # 6 MiB (r1 partition plan)
 percent="${3:-90}"
 
 if [[ ! -f "$binary" ]]; then

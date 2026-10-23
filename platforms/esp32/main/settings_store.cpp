@@ -13,6 +13,8 @@ constexpr char kTag[] = "settings_store";
 constexpr char kNamespace[] = "moto_device";
 constexpr char kKey[] = "settings";
 constexpr char kMountKey[] = "att.rmount";
+constexpr char kTlogPosKey[] = "tlog.pos";
+constexpr char kTlogOkKey[] = "tlog.ok";
 
 // app_main loads settings before the BLE transport starts, and the transport
 // is the other caller of nvs_flash_init(). ESP-IDF returns ESP_OK for a second
@@ -85,6 +87,43 @@ bool save_settings(const DeviceSettings& settings) {
     return false;
   }
   return true;
+}
+
+bool load_tlog_pos(std::uint32_t* position) {
+  if (position == nullptr || !ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+  const esp_err_t result = nvs_get_u32(handle, kTlogPosKey, position);
+  nvs_close(handle);
+  return result == ESP_OK;
+}
+
+bool save_tlog_pos(std::uint32_t position) {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
+  esp_err_t result = nvs_set_u32(handle, kTlogPosKey, position);
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  return result == ESP_OK;
+}
+
+bool tlog_selftest_done() {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+  std::uint8_t value = 0;
+  const esp_err_t result = nvs_get_u8(handle, kTlogOkKey, &value);
+  nvs_close(handle);
+  return result == ESP_OK && value != 0;
+}
+
+void mark_tlog_selftest_done() {
+  if (!ensure_nvs()) return;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
+  if (nvs_set_u8(handle, kTlogOkKey, 1) == ESP_OK) nvs_commit(handle);
+  nvs_close(handle);
 }
 
 }  // namespace moto::device

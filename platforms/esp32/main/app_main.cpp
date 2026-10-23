@@ -2,6 +2,7 @@
 #include <cstdint>
 
 #include "ble_nav_transport_nimble.h"
+#include "bsp/esp-bsp.h"
 #include "board_port.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -14,9 +15,60 @@
 #include "motion_heading_sensor.h"
 #include "phone_nav_bridge.h"
 #include "settings_store.h"
+#include "tlog_logger.hpp"
+
+#include "driver/i2c_master.h"
+#include "esp_flash.h"
 
 namespace {
 constexpr char kTag[] = "moto_gps";
+
+// Development recorder. Absent when the tlog partition is missing or its
+// above-16-MB self-test failed; every append is then a no-op.
+static moto::device::TlogLogger tlog;
+
+// One-shot boot report: the 1.75C SKU (33691) must be confirmed on the bench,
+// not inferred from a sibling board's BSP. Logs the real flash size and every
+// I2C device that answers, with the expected addresses named explicitly.
+void log_hardware_report() {
+  std::uint32_t flash_bytes = 0;
+  if (esp_flash_get_size(nullptr, &flash_bytes) == ESP_OK) {
+    ESP_LOGI(kTag, "flash: %u bytes (%u MB)", static_cast<unsigned>(flash_bytes),
+             static_cast<unsigned>(flash_bytes / (1024U * 1024U)));
+  } else {
+    ESP_LOGW(kTag, "flash size probe failed");
+  }
+  i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+  if (bus == nullptr) {
+    ESP_LOGW(kTag, "i2c bus unavailable; device scan skipped");
+    return;
+  }
+  for (std::uint8_t address = 0x08; address <= 0x77; ++address) {
+    if (i2c_master_probe(bus, address, 20) == ESP_OK) {
+      ESP_LOGI(kTag, "i2c device at 0x%02x", static_cast<unsigned>(address));
+    }
+  }
+  struct Expectation {
+    const char* name;
+    std::uint8_t address;
+  };
+  const Expectation expected[] = {
+      {"PCF85063 RTC (1.75C may omit)", 0x51},
+      {"QMI8658 IMU", 0x6B},
+      {"CST9217 touch", 0x5A},
+      {"AXP2101 PMIC", 0x34},
+      {"TCA9554 expander", 0x20},
+      {"ES8311 audio", 0x18},
+      {"ES7210 mic", 0x40},
+  };
+  for (const auto& device : expected) {
+    const bool present =
+        i2c_master_probe(bus, device.address, 20) == ESP_OK;
+    ESP_LOGI(kTag, "%s 0x%02x: %s", device.name,
+             static_cast<unsigned>(device.address),
+             present ? "present" : "absent");
+  }
+}
 
 void save_lean_calibration(const moto::motion::MountCalibration& mount,
                            bool ok, void*) {
@@ -69,9 +121,10 @@ void update_phone_link(bool active, void* context) {
 void update_motion_heading(
     float heading_rate_dps,
     const moto::motion::AttitudeEstimate& attitude,
-    std::uint64_t sample_ms, void* context) {
+    const RawImuSample& raw, std::uint64_t sample_ms, void* context) {
   static_cast<PhoneNavBridge*>(context)->on_imu_sample(
       heading_rate_dps, attitude, sample_ms);
+  tlog.append(sample_ms, raw, attitude);
 }
 
 void demo_tick_task(void* context) {
@@ -134,6 +187,9 @@ void power_button_task(void*) {
       while (board_port_power_button_pressed()) {
         vTaskDelay(pdMS_TO_TICKS(20));
       }
+      // Flush the partial 4 KB sector before the rail drops: up to 2 s of
+      // records live in RAM between flushes.
+      tlog.flush();
       ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
           1ULL << 3, ESP_EXT1_WAKEUP_ANY_HIGH));
       esp_deep_sleep_start();
@@ -166,6 +222,9 @@ extern "C" void app_main(void) {
     vTaskDelete(nullptr);
     return;
   }
+
+  log_hardware_report();
+  tlog.begin();
 
   lv_display_t *const display = board_port_get_display();
   if (display == nullptr) {
