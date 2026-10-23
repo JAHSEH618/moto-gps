@@ -117,6 +117,30 @@ void test_coordinated_turn() {
   CHECK((estimator.output().flags & moto::motion::kLeanSrcKin) != 0);
 }
 
+// The estimator must not assume a 112 Hz loop: the acquisition chain will move
+// to sample timestamps, and a hard-coded dt would silently rescale time.
+void test_estimator_is_dt_aware() {
+  const float lean = 40.0F;
+  const float speed_mps = 20.0F;
+  const float psi_dot = -kGravity * std::tan(lean * kDegToRad) / speed_mps;
+  const auto run_at = [&](float dt) {
+    LeanEstimator estimator;
+    const int steps = static_cast<int>(20.0F / dt);
+    for (int i = 0; i < steps; ++i) {
+      estimator.step({0.0F, turn_rates(lean, psi_dot).y,
+                      turn_rates(lean, psi_dot).z},
+                     coordinated_accel(lean, lean), dt,
+                     SpeedSample{true, speed_mps, 0.0F});
+    }
+    return estimator.output().lean_deg;
+  };
+  const float at_112 = run_at(1.0F / 112.0F);
+  const float at_125 = run_at(1.0F / 125.0F);
+  check_near(at_112, lean, 2.0F, "112 Hz lean");
+  check_near(at_125, lean, 2.0F, "125 Hz lean");
+  check_near(at_112, at_125, 1.0F, "dt-independent lean");
+}
+
 // Hang-off: the bike leans 35 while the rider/system needs 42. The page shows
 // the frame angle and the effective angle separately.
 void test_hang_off() {
@@ -398,6 +422,7 @@ int main() {
   test_pitch_is_nose_up_positive();
   test_coordinated_turn();
   test_hang_off();
+  test_estimator_is_dt_aware();
   test_no_speed_straight_holds_zero();
   test_bias_is_frozen_while_moving();
   test_bias_learns_only_when_static();

@@ -26,6 +26,7 @@ idf_component_register(
         "ble_nav_transport_nimble.cpp"
         "board_port_waveshare_1_75c.cpp"
         "device_settings.cpp"
+        "dyn_record.cpp"
         "lean_estimator.cpp"
         "mount_basis.cpp"
         "motion_heading_sensor.cpp"

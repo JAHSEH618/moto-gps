@@ -546,3 +546,39 @@ pending H2. It is deliberately **not committed** yet: the reviewer asked to
 check it item by item first.
 
 Verification: native 13/13, `idf.py build` green at 0x335760 (60% free).
+
+## 2026-10-23T13:40:00+09:00 — Step 2: telemetry format, deterministic replay, size gate
+
+Two of the four step-2 items are real; the other two are blocked on hardware
+facts the repository does not contain, and were not invented.
+
+**Record and replay.** `dyn_record.{hpp,cpp}` defines the development stream:
+a 24-byte header, then `type + fixed payload` records for 112 Hz raw IMU plus
+the estimator output, the phone GPS frame as received (with receive time), and
+the mount basis in force. Every field is packed by hand little-endian, so the
+same bytes are written on the ESP32 and replayed on the host. `dyn_replay`
+feeds them through the same `LeanEstimator` and prints fixed-precision CSV;
+`moto_replay <file>` is the CLI. The test replays a generated file twice and
+compares strings, and separately proves that changing one gyro byte changes the
+output — a replay that echoed the recorded estimator values would fail.
+
+**dt independence.** The 40° coordinated-turn case now runs at both 112 Hz and
+125 Hz: both must land within 2° of truth and within 1° of each other.
+
+**App budget.** `scripts/check_app_size.sh` enforces 90% of the planned 4 MiB
+slot and runs inside `verify.sh`. Current image is 3,364,704 B = 80%, about
+0.64 MiB free, which matches the review's estimate. The partition table itself
+is unchanged until fonts and resources move out of the app.
+
+**Not done, with reasons.** FIFO: the vendored QMI8658 component exposes only
+polling — no FIFO registers or CTRL9 command anywhere in its API or sources,
+and the repo has no datasheet register map. A guessed sequence is how hardware
+bugs are made, so the sensor task stays on 125 Hz polling and the file header
+records that rate. Telemetry sink: `BSP_CAPS_SDCARD` is 0, the BSP has no
+`bsp_sdcard_mount()`, no SDMMC init and no card-detect pin, so "write to SD"
+needs the board's pin assignment (schematic) or a 4 MB `tlog` flash partition
+instead. CAL feedback and the 2 s/3 s long-press split are specified in r1 and
+land in the next UI slice.
+
+Verification: native 14/14, verify.sh green including the new app-size gate,
+`idf.py build` green.
