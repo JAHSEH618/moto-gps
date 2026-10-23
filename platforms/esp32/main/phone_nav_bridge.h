@@ -145,8 +145,6 @@ class PhoneNavBridge {
   moto_ui_phone_connection_t ui_phone_connection_ = MOTO_UI_PHONE_OFFLINE;
   moto::ble::MediaState media_state_{};
   moto::ble::MediaState render_media_state_{};
-  bool music_page_enabled_ = false;
-  bool render_music_page_enabled_ = false;
   moto_ui_phone_connection_t render_phone_connection_ =
       MOTO_UI_PHONE_OFFLINE;
   bool render_demo_active_ = false;

@@ -48,7 +48,6 @@ uint8_t last_demo_active = 0;
 moto_maneuver_t last_maneuver = MOTO_MANEUVER_STRAIGHT;
 uint32_t last_distance_to_maneuver_m = 0;
 moto_ui_phone_connection_t last_phone_connection = MOTO_UI_PHONE_OFFLINE;
-bool music_page_enabled = false;
 bool media_connected = false;
 bool media_playing = false;
 bool media_like_available = false;
@@ -149,10 +148,6 @@ extern "C" void moto_nav_ui_set_music_state(const moto_music_state_t* state) {
   media_title = state->track_title == nullptr ? "" : state->track_title;
   media_artist = state->artist_name == nullptr ? "" : state->artist_name;
 }
-extern "C" void moto_nav_ui_set_music_page_enabled(uint8_t enabled) {
-  const std::lock_guard<std::mutex> lock(probe_mutex);
-  music_page_enabled = enabled != 0;
-}
 
 extern "C" void moto_nav_ui_set_music_command_callback(
     moto_music_command_callback_t callback,
@@ -239,7 +234,6 @@ void reset_phone_nav_bridge_probe() {
   last_maneuver = MOTO_MANEUVER_STRAIGHT;
   last_distance_to_maneuver_m = 0;
   last_phone_connection = MOTO_UI_PHONE_OFFLINE;
-  music_page_enabled = false;
   media_connected = false;
   media_playing = false;
   media_like_available = false;
@@ -399,10 +393,6 @@ moto_ui_phone_connection_t phone_nav_bridge_last_phone_connection() {
   return last_phone_connection;
 }
 
-bool phone_nav_bridge_music_page_enabled() {
-  const std::lock_guard<std::mutex> lock(probe_mutex);
-  return music_page_enabled;
-}
 
 bool phone_nav_bridge_media_connected() {
   const std::lock_guard<std::mutex> lock(probe_mutex);

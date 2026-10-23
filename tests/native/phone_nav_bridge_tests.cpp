@@ -459,12 +459,10 @@ void test_music_capability_state_and_touch_commands() {
   CHECK(bridge.on_message(make_message(ready, 20)) ==
         moto::ble::AckStatus::Ok);
   pump(bridge);
-  CHECK(!moto::test::phone_nav_bridge_music_page_enabled());
   ready.state = moto::ble::ConnectionState::Ready;
   CHECK(bridge.on_message(make_message(ready, 21)) ==
         moto::ble::AckStatus::Ok);
   pump(bridge);
-  CHECK(moto::test::phone_nav_bridge_music_page_enabled());
 
   moto::ble::MediaState media;
   media.flags = moto::ble::MediaConnected |

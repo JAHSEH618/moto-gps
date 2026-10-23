@@ -1,8 +1,15 @@
 set(MOTO_REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../..")
 set(MOTO_SHARED_UI_SOURCE
     "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/src/moto_nav_ui.cpp")
-set(MOTO_SHARED_UI_FONT
-    "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/assets/moto_font_nav_16.c")
+# Every generated font is a source in its own right, and listing them one by
+# one is how the xtensa link lost attitude_estimator.cpp, device_settings.cpp
+# and the 2026-10-23 display faces. Glob the directory instead: a new face
+# lands in the firmware the moment it is generated.
+file(GLOB MOTO_SHARED_UI_FONTS
+    "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/assets/*.c")
+# Adding a face needs one reconfigure (`idf.py reconfigure`) because the glob
+# is evaluated at configure time; it still cannot be forgotten the way an
+# explicit file list can.
 set(MOTO_SHARED_UI_INCLUDE
     "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/include")
 set(MOTO_SHARED_NAV_PRESENTER_SOURCE
@@ -24,7 +31,7 @@ idf_component_register(
         "settings_store.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"
         "${MOTO_SHARED_NAV_PRESENTER_SOURCE}"
-        "${MOTO_SHARED_UI_FONT}"
+        ${MOTO_SHARED_UI_FONTS}
         "${MOTO_SHARED_UI_SOURCE}"
     INCLUDE_DIRS
         "."

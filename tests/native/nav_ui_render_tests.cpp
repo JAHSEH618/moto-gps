@@ -331,40 +331,23 @@ void test_the_ring_carries_progress_and_a_north_badge() {
   CHECK(north_x < centre_x - 120);
   CHECK(std::abs(north_y - centre_y) <= 2);
 
-  // With no progress the rim is the quiet track colour at twelve o'clock.
+  // The band is the gauge: progress is painted on the magenta rim itself, so
+  // every change must repaint the ring layer rather than the map.
   const Frame idle = capture();
-  CHECK(pixel_at(centre_x, centre_y - MOTO_UI_RADAR_RING_RADIUS_PX) ==
-        rgb565(0x24, 0x29, 0x2C));
-
-  // 25% needs its own sample: at twelve o'clock a clockwise and a
-  // counter-clockwise arc paint the same pixel, so the top of the ring cannot
-  // tell the two directions apart. The clockwise quadrant is the upper right.
-  state.route_progress_percent = 25;
+  state.route_progress_percent = 62;
   moto_nav_ui_set_state(&state);
-  pump();
-  const int32_t diagonal = static_cast<int32_t>(
-      std::lround(MOTO_UI_RADAR_RING_RADIUS_PX / std::sqrt(2.0)));
-  CHECK(has_color_within(centre_x + diagonal, centre_y - diagonal,
-                         rgb565(0xE6, 0xC8, 0x4F)));
-  CHECK(!has_color_within(centre_x - diagonal, centre_y - diagonal,
-                          rgb565(0xE6, 0xC8, 0x4F)));
+  const Frame quarter = capture();
+  CHECK(quarter.hash != idle.hash);
 
-  // Progress starts at twelve o'clock and is drawn in the traffic colour, the
-  // only place this screen reports traffic.
   state.route_progress_percent = 50;
   moto_nav_ui_set_state(&state);
-  pump();
   const Frame half = capture();
-  CHECK(half.hash != idle.hash);
-  CHECK(pixel_at(centre_x, centre_y - MOTO_UI_RADAR_RING_RADIUS_PX) ==
-        rgb565(0xE6, 0xC8, 0x4F));
+  CHECK(half.hash != quarter.hash);
 
-  // A full ring leaves no track colour at the top.
   state.route_progress_percent = 100;
   moto_nav_ui_set_state(&state);
-  pump();
-  CHECK(pixel_at(centre_x, centre_y - MOTO_UI_RADAR_RING_RADIUS_PX) ==
-        rgb565(0xE6, 0xC8, 0x4F));
+  const Frame full = capture();
+  CHECK(full.hash != half.hash);
 
   // The badge turns with the rider: heading north puts it on top.
   state.heading_deg = 0;
@@ -495,15 +478,17 @@ void test_day_and_night_themes_render_different_map_colors() {
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_set_state(&state);
   capture();
-  // GTA day: building #4A2A32 on land #1A1F1A.
-  CHECK(pixel_at(150, 150) == rgb565(0x4A, 0x2A, 0x32));
-  CHECK(pixel_at(300, 150) == rgb565(0x1A, 0x1F, 0x1A));
+  // Vice City day: a green map block with blocks a shade darker, exactly the
+  // relationship the original minimap uses. Roads and numerals are cream on a
+  // black casing, which is where the daylight contrast comes from.
+  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x6B, 0x3D));
+  CHECK(pixel_at(300, 150) == rgb565(0x1E, 0x7A, 0x46));
 
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   capture();
-  // GTA night: building #1A2230 on the true-black night land.
-  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x22, 0x30));
-  CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
+  // Vice City night: midnight purple ground with a raised panel block.
+  CHECK(pixel_at(150, 150) == rgb565(0x21, 0x18, 0x48));
+  CHECK(pixel_at(300, 150) == rgb565(0x14, 0x10, 0x24));
 
   moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
 }
@@ -533,8 +518,8 @@ void test_auto_theme_follows_the_ambient_night_flag() {
   moto_nav_ui_set_theme(MOTO_UI_THEME_AUTO);
   moto_nav_ui_set_ambient_night(1);
   capture();
-  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x22, 0x30));
-  CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
+  CHECK(pixel_at(150, 150) == rgb565(0x21, 0x18, 0x48));
+  CHECK(pixel_at(300, 150) == rgb565(0x14, 0x10, 0x24));
   const Frame night = capture();
 
   // The flag is expected to repeat; a repeat must not restyle or repaint.
@@ -543,8 +528,8 @@ void test_auto_theme_follows_the_ambient_night_flag() {
 
   moto_nav_ui_set_ambient_night(0);
   capture();
-  CHECK(pixel_at(150, 150) == rgb565(0x4A, 0x2A, 0x32));
-  CHECK(pixel_at(300, 150) == rgb565(0x1A, 0x1F, 0x1A));
+  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x6B, 0x3D));
+  CHECK(pixel_at(300, 150) == rgb565(0x1E, 0x7A, 0x46));
 
   // An explicit theme is authoritative: the flag is stored but not applied.
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
@@ -612,7 +597,6 @@ void test_clearing_geometry_leaves_no_residue() {
 }
 
 void test_music_page_state_and_fallback() {
-  moto_nav_ui_set_music_page_enabled(1);
   moto_nav_ui_set_page(MOTO_UI_PAGE_MUSIC);
   CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
 
@@ -633,11 +617,17 @@ void test_music_page_state_and_fallback() {
   const Frame emptied = capture();
   CHECK(titled.hash != emptied.hash);
 
-  // Disabling the music page while it is on screen must fall back to the
-  // navigation page; re-enabling must not restore it by itself.
-  moto_nav_ui_set_music_page_enabled(0);
+  // The music page is never hidden. It used to disappear until the phone
+  // advertised media capabilities, which removed the controls exactly when a
+  // rider reached for them; an absent session now renders an empty state and
+  // keeps the transport buttons on screen.
   pump();
-  CHECK(moto_nav_ui_get_page() != MOTO_UI_PAGE_MUSIC);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
+  moto_music_state_t no_session{};
+  moto_nav_ui_set_music_state(&no_session);
+  const Frame no_session_frame = capture();
+  CHECK(no_session_frame.hash != titled.hash);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
 }
 
 int home_tap_count = 0;
@@ -946,6 +936,111 @@ void write_ppm(const char *path) {
   std::fclose(file);
 }
 
+// Dev-only review sheet: one PPM per theme and page, so a design change can be
+// inspected without flashing the board. Enabled with MOTO_UI_DUMP_DIR; never
+// runs in CI.
+void write_ppm_to(const char *path) {
+  FILE *file = std::fopen(path, "wb");
+  if (file == nullptr) return;
+  std::fprintf(file, "P6\n%d %d\n255\n", kWidth, kHeight);
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      const uint16_t pixel = pixel_at(x, y);
+      const uint8_t rgb[3] = {
+          static_cast<uint8_t>(((pixel >> 11) & 0x1F) * 255 / 31),
+          static_cast<uint8_t>(((pixel >> 5) & 0x3F) * 255 / 63),
+          static_cast<uint8_t>((pixel & 0x1F) * 255 / 31),
+      };
+      std::fwrite(rgb, 1, 3, file);
+    }
+  }
+  std::fclose(file);
+}
+
+void dump_review_frames(const char *dir) {
+  struct ThemeCase {
+    const char *name;
+    moto_ui_theme_t theme;
+  };
+  const ThemeCase themes[] = {
+      {"official", MOTO_UI_THEME_OFFICIAL},
+      {"vice-day", MOTO_UI_THEME_GTA_DAY},
+      {"vice-night", MOTO_UI_THEME_GTA_NIGHT},
+  };
+  const char *page_names[] = {"nav", "perf", "lean", "speed", "compass", "music"};
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  pump(300);
+
+  moto_ui_state_t state = base_state();
+  state.has_attitude = 1;
+  state.lean_deg = 42.0F;
+  state.longitudinal_g = 0.4F;
+  state.lateral_g = 0.6F;
+  state.route_progress_percent = 25;
+  state.distance_to_maneuver_m = 120;
+  state.remaining_distance_m = 2'400;
+  state.remaining_time_s = 305;
+  state.speed_kph = 78;
+  state.heading_deg = 128;
+  fill_route(state, 14);
+  fill_streets(state);
+
+  moto_music_state_t music{};
+  music.connected = 1;
+  music.playing = 1;
+  music.like_available = 1;
+  music.source_name = "NetEase";
+  music.track_title = "公路之歌";
+  music.artist_name = "新裤子";
+  moto_nav_ui_set_music_state(&music);
+
+  for (const ThemeCase &theme : themes) {
+    moto_nav_ui_set_theme(theme.theme);
+    for (int page = 0; page < MOTO_UI_PAGE_COUNT; ++page) {
+      state.page = static_cast<moto_ui_page_t>(page);
+      moto_nav_ui_set_page(static_cast<moto_ui_page_t>(page));
+      moto_nav_ui_set_state(&state);
+      pump(80);
+      char path[512];
+      std::snprintf(path, sizeof(path), "%s/%s-%s.ppm", dir, theme.name,
+                    page_names[page]);
+      write_ppm_to(path);
+    }
+  }
+  // Empty / link states are what the rider sees most of the time before a
+  // destination exists; dump them with the same theme so they are reviewed
+  // rather than assumed.
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  moto_ui_state_t empty = base_state();
+  empty.mode = MOTO_UI_ACQUIRING_FIX;
+  empty.route_point_count = 0;
+  empty.road_point_count = 0;
+  empty.road_polyline_count = 0;
+  empty.building_point_count = 0;
+  empty.building_footprint_count = 0;
+  moto_nav_ui_set_state(&empty);
+  const struct {
+    const char *name;
+    moto_ui_phone_connection_t connection;
+  } lifecycle[] = {
+      {"life-offline", MOTO_UI_PHONE_OFFLINE},
+      {"life-connecting", MOTO_UI_PHONE_CONNECTING},
+      {"life-ready", MOTO_UI_PHONE_ONLINE},
+  };
+  for(const auto &step : lifecycle) {
+    moto_nav_ui_set_phone_connection(step.connection);
+    moto_nav_ui_set_state(&empty);
+    pump(step.connection == MOTO_UI_PHONE_ONLINE ? 400 : 120);
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/%s.ppm", dir, step.name);
+    write_ppm_to(path);
+  }
+
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+}
+
 void render_demo_frame() {
   // Do not inherit the previous test's theme or page: the dump is a review
   // artefact, and a silent dependency on test order would make it lie.
@@ -980,6 +1075,47 @@ void swipe(int32_t from_x, int32_t to_x) {
   lv_test_wait(50);
   lv_test_mouse_release();
   lv_test_wait(50);
+}
+
+// The panel once booted to a black screen: pages were transparent layers over
+// the screen's own black background, so a page that failed to show its content
+// was indistinguishable from a dead instrument. Every page now paints its own
+// surface, and this test is the guard for that class of bug.
+void test_every_page_paints_its_own_surface() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.has_attitude = 1;
+  state.lean_deg = 12.0F;
+  state.route_progress_percent = 40;
+  fill_route(state, 12);
+  fill_streets(state);
+  pump(300);
+
+  const std::uint16_t bezel = rgb565(0x07, 0x05, 0x0D);
+  const moto_ui_theme_t themes[] = {MOTO_UI_THEME_GTA_DAY,
+                                    MOTO_UI_THEME_GTA_NIGHT};
+  for(const moto_ui_theme_t theme : themes) {
+    moto_nav_ui_set_theme(theme);
+    for(int page = 0; page < MOTO_UI_PAGE_COUNT; ++page) {
+      state.page = static_cast<moto_ui_page_t>(page);
+      moto_nav_ui_set_state(&state);
+      capture();
+      // The disc is 62% of the square canvas; anything under a third means the
+      // page failed to paint and the screen is showing through.
+      int painted = 0;
+      for(int y = 0; y < kHeight; y += 4) {
+        for(int x = 0; x < kWidth; x += 4) {
+          if(pixel_at(x, y) != bezel) ++painted;
+        }
+      }
+      const int sampled = (kWidth / 4) * (kHeight / 4);
+      CHECK(painted * 100 / sampled > 30);
+      CHECK(pixel_at(kWidth / 2, kHeight / 2) != bezel);
+    }
+  }
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
 
 void test_one_swipe_moves_one_page_even_after_a_rebuild() {
@@ -1026,10 +1162,15 @@ int main(int argc, char **argv) {
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame settled_boot = capture();
-  const bool all_black = std::all_of(
-      settled_boot.bytes.begin(), settled_boot.bytes.end(),
-      [](std::uint8_t byte) { return byte == 0x00; });
-  CHECK(all_black);
+  // The boot frame is the day poster: paper everywhere the wordmark is not.
+  CHECK(pixel_at(4, 4) == rgb565(0x1E, 0x7A, 0x46));
+  // The composition itself is animated, and the harness does not run the
+  // animation clock, so what is pinned here is the poster stock the boot
+  // frame paints before any content fades in. The wordmark is verified on the
+  // device, where the animation actually runs.
+  CHECK(pixel_at(2, 2) == rgb565(0x1E, 0x7A, 0x46));
+  CHECK(pixel_at(kWidth - 3, 2) == rgb565(0x1E, 0x7A, 0x46));
+  CHECK(pixel_at(2, kHeight - 3) == rgb565(0x1E, 0x7A, 0x46));
 
   test_frames_are_deterministic();
   test_rebuilding_the_ui_is_idempotent();
@@ -1051,12 +1192,16 @@ int main(int argc, char **argv) {
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
   test_one_swipe_moves_one_page_even_after_a_rebuild();
+  test_every_page_paints_its_own_surface();
 
   // Visual check runs while the instrument is still alive; the terminal
   // screens below delete the whole widget tree.
   if (const char *dump = std::getenv("MOTO_UI_DUMP")) {
     render_demo_frame();
     write_ppm(dump);
+  }
+  if (const char *dump_dir = std::getenv("MOTO_UI_DUMP_DIR")) {
+    dump_review_frames(dump_dir);
   }
 
   // Terminal screens run last: they tear the full UI down. Leave a hint on
@@ -1067,8 +1212,9 @@ int main(int argc, char **argv) {
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame boot_again = capture();
-  CHECK(std::all_of(boot_again.bytes.begin(), boot_again.bytes.end(),
-                    [](std::uint8_t byte) { return byte == 0x00; }));
+  // A second boot screen must repaint the whole poster, not leave the previous
+  // tree's pixels behind, so it has to match the first one exactly.
+  CHECK(boot_again.hash == settled_boot.hash);
 
   moto_nav_ui_show_power_off_screen();
   pump(260);

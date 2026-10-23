@@ -183,7 +183,6 @@ extern "C" void app_main(void) {
   static const moto::nav::NavSnapshot initial_snapshot{};
   presenter.update(initial_snapshot);
   presenter.apply_to_lvgl();
-  moto_nav_ui_set_music_page_enabled(0);
   // Replay after create(): the tree reset clears the theme and the building
   // visibility, so applying before it would leave defaults on screen.
   phone_bridge.apply_settings(boot_settings, false);
