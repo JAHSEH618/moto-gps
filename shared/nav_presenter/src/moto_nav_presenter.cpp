@@ -373,8 +373,12 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
       std::isfinite(snapshot.longitudinal_g) &&
       std::isfinite(snapshot.lateral_g);
   ui_state_.has_attitude = attitude_valid ? 1 : 0;
+  // v2 valid range: |Lean| > 70° is not a riding attitude. Clamp it and flag
+  // it instead of letting a bench/tip-over sample become a 180° horizon.
+  ui_state_.lean_saturated =
+      (attitude_valid && std::fabs(snapshot.lean_deg) > 70.0F) ? 1 : 0;
   ui_state_.lean_deg = attitude_valid
-                           ? std::clamp(snapshot.lean_deg, -180.0F, 180.0F)
+                           ? std::clamp(snapshot.lean_deg, -70.0F, 70.0F)
                            : 0.0F;
   ui_state_.pitch_deg = attitude_valid
                             ? std::clamp(snapshot.pitch_deg, -90.0F, 90.0F)

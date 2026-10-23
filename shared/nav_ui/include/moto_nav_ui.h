@@ -161,6 +161,8 @@ typedef struct {
     float pitch_deg;
     float longitudinal_g;
     float lateral_g;
+    /* 1 when the raw Lean exceeded the ±70° valid range and was clamped. */
+    uint8_t lean_saturated;
     /* Saved home position already projected into this canvas. A blip beyond
        the minimap ring keeps its bearing and is clamped to the ring. */
     uint8_t has_home;

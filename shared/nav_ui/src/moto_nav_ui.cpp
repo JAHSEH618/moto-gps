@@ -54,11 +54,9 @@ constexpr lv_color_t kRoadMajor = LV_COLOR_MAKE(0x62, 0x69, 0x6D);
 constexpr lv_color_t kRoadMinor = LV_COLOR_MAKE(0x2B, 0x30, 0x33);
 constexpr lv_color_t kBuildingGray = LV_COLOR_MAKE(0x24, 0x29, 0x2C);
 constexpr lv_color_t kBuildingLandmark = LV_COLOR_MAKE(0x38, 0x40, 0x44);
-constexpr lv_color_t kQuiet = LV_COLOR_MAKE(0x78, 0x7E, 0x7F);
 constexpr lv_color_t kSoft = LV_COLOR_MAKE(0xAE, 0xB2, 0xB0);
 constexpr lv_color_t kAmber = LV_COLOR_MAKE(0xE6, 0xC8, 0x4F);
 constexpr lv_color_t kRed = LV_COLOR_MAKE(0xFF, 0x4B, 0x43);
-constexpr lv_color_t kGreen = LV_COLOR_MAKE(0x69, 0xD4, 0x94);
 
 struct MapPalette {
     // Outside the disc: the device bezel. Never a data colour.
@@ -687,6 +685,30 @@ lv_obj_t *make_slab(lv_obj_t *parent, const char *text, int width, int height,
     lv_obj_center(label);
     if(label_out != nullptr) *label_out = label;
     return register_fill(slab, Ui::FillRole::Slab);
+}
+
+// Traffic-sign face. It is not a themed surface: the sign has to read the same
+// way in daylight and at night, so it keeps its cream face in both palettes.
+constexpr lv_color_t kLimitFace = LV_COLOR_MAKE(0xF6, 0xF0, 0xD7);
+
+// One speed-limit sign for both pages that show one. The caller owns position
+// and visibility; the face, ring and digit size cannot drift apart again.
+lv_obj_t *make_speed_limit_sign(lv_obj_t *parent, int design_size) {
+    lv_obj_t *sign = lv_obj_create(parent);
+    lv_obj_remove_style_all(sign);
+    lv_obj_clear_flag(sign, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(sign, px(design_size), px(design_size));
+    lv_obj_set_style_radius(sign, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(sign, kLimitFace, 0);
+    lv_obj_set_style_bg_opa(sign, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(sign, kRed, 0);
+    lv_obj_set_style_border_width(sign, px(6), 0);
+    lv_obj_set_style_pad_all(sign, 0, 0);
+    lv_obj_t *value =
+        make_label(sign, &moto_font_display_24, kOutlineBlack, "70");
+    lv_obj_center(value);
+    lv_obj_add_flag(sign, LV_OBJ_FLAG_HIDDEN);
+    return sign;
 }
 
 // Paper + bezel. Content is created after this call and therefore above it.
@@ -1870,10 +1892,12 @@ void set_navigation_guidance_visible(bool visible) {
 
 void update_nav_status(const moto_ui_state_t *state) {
     const char *text = "";
-    lv_color_t color = kQuiet;
+    // v2: status colours are palette tokens, so a theme switch actually
+    // changes them instead of leaving the old literals on the poster.
+    lv_color_t color = ui.palette.muted;
     if(ui.demo_active) {
         lv_label_set_text(ui.nav_status, "DEMO RIDE");
-        lv_obj_set_style_text_color(ui.nav_status, kWhite, 0);
+        lv_obj_set_style_text_color(ui.nav_status, ui.palette.accent, 0);
         return;
     }
     if(state->mode != MOTO_UI_ARRIVED && state->route_point_count < 2) {
@@ -1883,12 +1907,21 @@ void update_nav_status(const moto_ui_state_t *state) {
         return;
     }
     switch(state->mode) {
-        case MOTO_UI_ACQUIRING_FIX: text = "ACQUIRING GPS"; color = kAmber; break;
-        case MOTO_UI_REROUTING: text = "REROUTING"; color = kAmber; break;
-        case MOTO_UI_OFFLINE: text = "ROUTE CACHED"; color = kQuiet; break;
-        case MOTO_UI_ARRIVED: text = "ARRIVED"; color = kGreen; break;
+        case MOTO_UI_ACQUIRING_FIX:
+            text = "ACQUIRING GPS";
+            color = ui.palette.accent;
+            break;
+        case MOTO_UI_REROUTING:
+            text = "REROUTING";
+            color = ui.palette.accent;
+            break;
+        case MOTO_UI_OFFLINE: text = "ROUTE CACHED"; color = ui.palette.muted; break;
+        case MOTO_UI_ARRIVED: text = "ARRIVED"; color = ui.palette.turquoise; break;
         case MOTO_UI_NAVIGATING:
-            if(state->online == 0) text = "NO HOTSPOT";
+            if(state->online == 0) {
+                text = "NO HOTSPOT";
+                color = ui.palette.accent;
+            }
             break;
     }
     lv_label_set_text(ui.nav_status, text);
@@ -2477,21 +2510,12 @@ void create_navigation_page() {
     ui.nav_unit = make_text(page, &moto_font_display_24, TextRole::MapInk,
                             "m");
 
-    ui.nav_limit = lv_obj_create(page);
-    lv_obj_set_size(ui.nav_limit, px(61), px(61));
     // Keep the optional demo/SDK-provided value inside the circular safe area.
     // Real AMap Web-Service snapshots use zero and remain hidden because that
     // API does not return a road speed limit.
+    ui.nav_limit = make_speed_limit_sign(page, 61);
     lv_obj_set_pos(ui.nav_limit, px(240), px(96));
-    lv_obj_set_style_radius(ui.nav_limit, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.nav_limit, kWhite, 0);
-    lv_obj_set_style_bg_opa(ui.nav_limit, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(ui.nav_limit, kRed, 0);
-    lv_obj_set_style_border_width(ui.nav_limit, px(6), 0);
-    lv_obj_set_style_pad_all(ui.nav_limit, 0, 0);
-    lv_obj_clear_flag(ui.nav_limit, LV_OBJ_FLAG_CLICKABLE);
-    ui.nav_limit_value = make_label(ui.nav_limit, &moto_font_display_24, kBlack, "70");
-    lv_obj_center(ui.nav_limit_value);
+    ui.nav_limit_value = lv_obj_get_child(ui.nav_limit, 0);
 
     // The rim is the gauge. It is drawn on its own full-canvas layer above the
     // map so the route, the blip and the sweep can never paint over it.
@@ -2671,21 +2695,9 @@ void create_speed_page() {
     lv_obj_align(unit, LV_ALIGN_CENTER, 0, px(66));
 
     // Speed-limit sign, the one prop a rider already knows how to read.
-    ui.speed_limit = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.speed_limit);
-    lv_obj_clear_flag(ui.speed_limit, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.speed_limit, px(52), px(52));
-    lv_obj_set_style_radius(ui.speed_limit, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.speed_limit, LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
-                              0);
-    lv_obj_set_style_bg_opa(ui.speed_limit, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(ui.speed_limit, kOutlineBlack, 0);
-    lv_obj_set_style_border_width(ui.speed_limit, px(6), 0);
+    ui.speed_limit = make_speed_limit_sign(page, 52);
     lv_obj_align(ui.speed_limit, LV_ALIGN_CENTER, px(96), px(74));
-    ui.speed_limit_value = make_label(ui.speed_limit, &moto_font_display_24,
-                                      kOutlineBlack, "50");
-    lv_obj_center(ui.speed_limit_value);
-    lv_obj_add_flag(ui.speed_limit, LV_OBJ_FLAG_HIDDEN);
+    ui.speed_limit_value = lv_obj_get_child(ui.speed_limit, 0);
 }
 
 void draw_compass_marks(lv_event_t *event) {
@@ -2787,8 +2799,13 @@ void create_performance_page() {
         ui.perf_segments[i] = segment;
     }
 
-    lv_obj_t *best = make_slab(page, "BEST --.-", 170, 30, &ui.perf_best);
-    lv_obj_align(best, LV_ALIGN_CENTER, 0, px(106));
+    // BEST and the delta are one row of secondary values. The delta label was
+    // referenced by the state machine since the page was introduced but never
+    // created, so PB/delta feedback never rendered (v2 fixes the dead code).
+    lv_obj_t *best = make_slab(page, "BEST --.-", 132, 30, &ui.perf_best);
+    lv_obj_align(best, LV_ALIGN_CENTER, -52, 112);
+    ui.perf_delta = make_text(page, &moto_font_display_40, TextRole::Ink, "");
+    lv_obj_align(ui.perf_delta, LV_ALIGN_CENTER, 92, 112);
 
     // The stopwatch runs on its own timer: state snapshots arrive at the BLE
     // cadence, but the clock has to move between them.

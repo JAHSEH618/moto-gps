@@ -130,7 +130,8 @@ void test_attitude_is_mapped_and_sanitized() {
   snapshot.lateral_g = -99.0F;
   presenter.update(snapshot);
   CHECK(presenter.ui_state().has_attitude == 1);
-  CHECK(presenter.ui_state().lean_deg == 180.0F);
+  CHECK(presenter.ui_state().lean_deg == 70.0F);
+  CHECK(presenter.ui_state().lean_saturated == 1);
   CHECK(presenter.ui_state().pitch_deg == 90.0F);
   CHECK(presenter.ui_state().longitudinal_g == 4.0F);
   CHECK(presenter.ui_state().lateral_g == -4.0F);

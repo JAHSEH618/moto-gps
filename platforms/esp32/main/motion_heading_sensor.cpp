@@ -1,6 +1,5 @@
 #include "motion_heading_sensor.h"
-#include "attitude_estimator.hpp"
-#include "motion_heading_axis.hpp"
+#include "lean_estimator.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,60 +20,16 @@
 namespace {
 constexpr char kTag[] = "motion_heading";
 constexpr TickType_t kSampleDelay = pdMS_TO_TICKS(8);  // 125 Hz target.
-constexpr int kCalibrationSamples = 120;
-constexpr std::uint64_t kCalibrationDeadlineMs = 4'000;
-constexpr float kMinimumGravity = 6.8F;
-constexpr float kMaximumGravity = 12.8F;
 
-// Board axis regression is still pending. These are the screen-right and
-// screen-up axes expressed in QMI sensor coordinates; the mount calibration
-// will replace them once the handlebar bracket is fixed.
-constexpr moto::motion::Vec3f kMountRight{1.0F, 0.0F, 0.0F};
-constexpr moto::motion::Vec3f kMountUp{0.0F, 1.0F, 0.0F};
-
-struct GravityEstimate {
-  float x = 0.0F;
-  float y = 0.0F;
-  float z = 1.0F;
-  bool initialized = false;
-};
+// Board axis regression is still pending. These are the sensor-frame forward
+// and up axes the adapter has always assumed: sensor +y is up and sensor -z is
+// forward. This basis is usable but not calibrated, so the estimator reports
+// CAL_OK = false until the rider runs the v2 calibration (DESIGN_V2 §3.3).
+constexpr moto::motion::Vec3f kSensorForward{0.0F, 0.0F, -1.0F};
+constexpr moto::motion::Vec3f kSensorUp{0.0F, 1.0F, 0.0F};
 
 std::uint64_t monotonic_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
-}
-
-float magnitude(float x, float y, float z) {
-  return std::sqrt(x * x + y * y + z * z);
-}
-
-bool update_gravity(GravityEstimate& gravity, const qmi8658_data_t& sample,
-                    float blend) {
-  const float length = magnitude(sample.accelX, sample.accelY, sample.accelZ);
-  if (!std::isfinite(length) || length < kMinimumGravity ||
-      length > kMaximumGravity) {
-    return gravity.initialized;
-  }
-  if (!gravity.initialized) {
-    gravity.x = sample.accelX;
-    gravity.y = sample.accelY;
-    gravity.z = sample.accelZ;
-    gravity.initialized = true;
-  } else {
-    gravity.x += (sample.accelX - gravity.x) * blend;
-    gravity.y += (sample.accelY - gravity.y) * blend;
-    gravity.z += (sample.accelZ - gravity.z) * blend;
-  }
-  return true;
-}
-
-// Project angular velocity onto the board's gravity axis so a moderately
-// tilted or forward-facing mount still responds to a turn around vertical.
-float clockwise_heading_rate(const GravityEstimate& gravity,
-                             const qmi8658_data_t& sample) {
-  if (!gravity.initialized) return 0.0F;
-  return clockwise_gravity_heading_rate(
-      gravity.x, gravity.y, gravity.z,
-      sample.gyroX, sample.gyroY, sample.gyroZ);
 }
 }  // namespace
 
@@ -110,6 +65,9 @@ void MotionHeadingSensor::run() {
              esp_err_to_name(init));
     return;
   }
+  // The v2 sample-rate change (ODR + LPF + FIFO) is a separate hardware slice;
+  // this loop is still the 125 Hz polling path, so the integrator runs at the
+  // rate it actually receives samples.
   ESP_ERROR_CHECK_WITHOUT_ABORT(
       qmi8658_set_accel_range(&device, QMI8658_ACCEL_RANGE_4G));
   ESP_ERROR_CHECK_WITHOUT_ABORT(
@@ -121,38 +79,15 @@ void MotionHeadingSensor::run() {
   qmi8658_set_accel_unit_mps2(&device, true);
   qmi8658_set_gyro_unit_dps(&device, true);
 
-  GravityEstimate gravity;
-  float bias_sum = 0.0F;
-  int stable_samples = 0;
-  const std::uint64_t calibration_start = monotonic_ms();
+  moto::motion::MountCalibration mount;
+  mount.set_basis(kSensorForward, kSensorUp, false);
+  moto::motion::LeanEstimator lean;
+  lean.set_mount(mount);
+
   qmi8658_data_t data{};
-  TickType_t next_sample_tick = xTaskGetTickCount();
-  while (stable_samples < kCalibrationSamples &&
-         monotonic_ms() - calibration_start < kCalibrationDeadlineMs) {
-    bool ready = false;
-    if (qmi8658_is_data_ready(&device, &ready) == ESP_OK && ready &&
-        qmi8658_read_sensor_data(&device, &data) == ESP_OK) {
-      update_gravity(gravity, data, 0.08F);
-      const float projected = clockwise_heading_rate(gravity, data);
-      const float angular = magnitude(data.gyroX, data.gyroY, data.gyroZ);
-      if (std::isfinite(projected) && angular < 4.0F) {
-        bias_sum += projected;
-        ++stable_samples;
-      } else {
-        bias_sum = 0.0F;
-        stable_samples = 0;
-      }
-    }
-    xTaskDelayUntil(&next_sample_tick, kSampleDelay);
-  }
-
-  float bias_dps = stable_samples > 0 ? bias_sum / stable_samples : 0.0F;
-  ESP_LOGI(kTag,
-           "QMI8658 yaw assist ready (bias %.3f dps, %d stable samples)",
-           static_cast<double>(bias_dps), stable_samples);
-
   int consecutive_failures = 0;
-  next_sample_tick = xTaskGetTickCount();
+  std::uint64_t last_sample_ms = monotonic_ms();
+  TickType_t next_sample_tick = xTaskGetTickCount();
   while (true) {
     bool ready = false;
     esp_err_t result = qmi8658_is_data_ready(&device, &ready);
@@ -160,29 +95,35 @@ void MotionHeadingSensor::run() {
       result = qmi8658_read_sensor_data(&device, &data);
       if (result == ESP_OK) {
         consecutive_failures = 0;
-        update_gravity(gravity, data, 0.025F);
-        const float raw_rate = clockwise_heading_rate(gravity, data);
-        const float corrected_rate = raw_rate - bias_dps;
-        const float angular = magnitude(data.gyroX, data.gyroY, data.gyroZ);
-        const float accel = magnitude(data.accelX, data.accelY, data.accelZ);
-        // Learn residual bias only during convincingly quiet intervals.
-        if (std::abs(corrected_rate) < 1.1F && angular < 2.0F &&
-            accel > 8.2F && accel < 11.4F) {
-          bias_dps += (raw_rate - bias_dps) * 0.0008F;
-        }
-        const moto::motion::Vec3f accel_sensor{
-            data.accelX, data.accelY, data.accelZ};
-        const moto::motion::Vec3f gravity_sensor{
-            gravity.x, gravity.y, gravity.z};
-        const moto::motion::AttitudeEstimate attitude =
-            moto::motion::estimate_attitude(
-                moto::motion::sensor_to_bike(accel_sensor, kMountRight,
-                                             kMountUp),
-                moto::motion::sensor_to_bike(gravity_sensor, kMountRight,
-                                             kMountUp),
-                moto::motion::AttitudeCalibration{});
-        callback_(corrected_rate, attitude, monotonic_ms(),
-                  callback_context_);
+        const std::uint64_t now = monotonic_ms();
+        const float dt = std::clamp(
+            static_cast<float>(now - last_sample_ms) / 1'000.0F, 0.002F,
+            0.05F);
+        last_sample_ms = now;
+
+        // Speed is not plumbed into this sensor task yet: v2 SpeedFusion is a
+        // separate slice, so the estimator runs on gyro plus static/zero
+        // observations. It no longer derives Lean from the accelerometer angle
+        // alone, which is the v1 error (DESIGN_V2 §3.5.1).
+        lean.step({data.gyroX, data.gyroY, data.gyroZ},
+                  {data.accelX, data.accelY, data.accelZ}, dt,
+                  moto::motion::SpeedSample{});
+        const moto::motion::LeanOutput& out = lean.output();
+
+        moto::motion::AttitudeEstimate attitude;
+        attitude.lean_deg = out.lean_deg;
+        attitude.pitch_deg = out.pitch_deg;
+        const moto::motion::Vec3f accel_body = mount.to_body(
+            {data.accelX, data.accelY, data.accelZ});
+        const float pitch_rad = out.pitch_deg * 0.017453292519943295F;
+        attitude.longitudinal_g =
+            (accel_body.x +
+             std::sin(pitch_rad) * moto::motion::kStandardGravity) /
+            moto::motion::kStandardGravity;
+        attitude.lateral_g = out.lateral_g;
+        attitude.valid = out.valid;
+        // The bridge's heading fusion is clockwise-positive.
+        callback_(-out.yaw_rate_dps, attitude, now, callback_context_);
       }
     }
     if (result != ESP_OK && ++consecutive_failures == 25) {
