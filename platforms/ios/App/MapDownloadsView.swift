@@ -4,13 +4,35 @@ import MapKit
 import MotoNavigationCore
 import SwiftUI
 
+/// Poster row, not `LabeledContent`: the ride screen puts it among rows that
+/// are already square with hairlines, and a system content row reads as a
+/// different product dropped in.
 struct SurroundingMapStatusRow: View {
     @ObservedObject var store: SurroundingMapStore
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: MotoPalette {
+        (colorScheme == .dark ? MotoThemeName.vice : .heat).palette
+    }
 
     var body: some View {
-        LabeledContent {
-            Text(store.statusText).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
-        } label: { Label("周边地图", systemImage: "map") }
+        HStack(spacing: MotoMetrics.s3) {
+            Image(systemName: "map")
+                .font(.system(.footnote, weight: .semibold))
+                .foregroundStyle(MotoPalette.band)
+                .accessibilityHidden(true)
+            Text("周边地图")
+                .font(.system(.subheadline))
+                .foregroundStyle(palette.ink)
+            Spacer(minLength: MotoMetrics.s2)
+            Text(store.statusText)
+                .font(.system(.footnote))
+                .foregroundStyle(palette.inkMuted)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+        .padding(.vertical, MotoMetrics.s3)
+        .frame(maxWidth: .infinity)
     }
 }
 
