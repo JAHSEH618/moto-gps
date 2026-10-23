@@ -574,10 +574,12 @@ void test_performance_and_lean_pages_render_attitude() {
 
 
 int lean_calibration_requests = 0;
+int lean_peak_clears = 0;
 
 void lean_calibration_requested(void *) { ++lean_calibration_requests; }
+void lean_peaks_cleared(void *) { ++lean_peak_clears; }
 
-void test_lean_long_press_requests_calibration() {
+void test_lean_press_durations_dispatch_actions() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
   moto_ui_state_t state = base_state();
@@ -590,16 +592,59 @@ void test_lean_long_press_requests_calibration() {
   CHECK(layer != nullptr);
   if (layer == nullptr) return;
   lean_calibration_requests = 0;
+  lean_peak_clears = 0;
   moto_nav_ui_set_lean_calibration_callback(lean_calibration_requested,
                                             nullptr);
-  lv_obj_send_event(layer, LV_EVENT_LONG_PRESSED, nullptr);
-  CHECK(lean_calibration_requests == 1);
-  moto_nav_ui_set_lean_calibration_callback(nullptr, nullptr);
+  moto_nav_ui_set_clear_peaks_callback(lean_peaks_cleared, nullptr);
 
-  // The same press must do nothing once the callback is cleared: a page that
-  // keeps a stale function pointer would crash after teardown.
-  lv_obj_send_event(layer, LV_EVENT_LONG_PRESSED, nullptr);
+  // 2.5 s: release clears peaks, never starts calibration.
+  lv_obj_send_event(layer, LV_EVENT_PRESSED, nullptr);
+  pump(500);
+  lv_obj_send_event(layer, LV_EVENT_RELEASED, nullptr);
+  CHECK(lean_peak_clears == 1);
+  CHECK(lean_calibration_requests == 0);
+
+  // 3.2 s: release starts the 3 s countdown, then requests calibration.
+  lv_obj_send_event(layer, LV_EVENT_PRESSED, nullptr);
+  pump(640);
+  lv_obj_send_event(layer, LV_EVENT_RELEASED, nullptr);
+  CHECK(lean_calibration_requests == 0);
+  pump(640);
   CHECK(lean_calibration_requests == 1);
+  CHECK(lean_peak_clears == 1);
+
+  moto_nav_ui_set_lean_calibration_callback(nullptr, nullptr);
+  moto_nav_ui_set_clear_peaks_callback(nullptr, nullptr);
+}
+
+void test_lean_status_slot_reports_cal_and_fallback() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_LEAN;
+  moto_nav_ui_set_state(&state);
+  capture();
+  lv_obj_t *plate =
+      lv_obj_find_by_name(lv_screen_active(), "moto-lean-status");
+  CHECK(plate != nullptr);
+  if (plate == nullptr) return;
+
+  moto_nav_ui_set_lean_flags(0, 1, 0);  // IMU POLL
+  pump(30);
+  CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
+  moto_nav_ui_set_lean_flags(0, 0, 1);  // LOG FULL outranks POLL
+  pump(30);
+  CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
+  moto_nav_ui_set_lean_cal_state(MOTO_UI_LEAN_CAL_FAIL_MOVING, 0);
+  pump(30);
+  CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
+  // A result is transient: it clears itself after about a second, while
+  // LOG FULL still holds the slot.
+  pump(300);
+  CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
+  moto_nav_ui_set_lean_cal_state(MOTO_UI_LEAN_CAL_NONE, 0);
+  moto_nav_ui_set_lean_flags(0, 0, 0);
+  pump(30);
+  CHECK(lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
 }
 
 void test_lean_page_without_attitude_keeps_the_poster() {
@@ -1253,7 +1298,8 @@ int main(int argc, char **argv) {
   test_auto_theme_follows_the_ambient_night_flag();
   test_performance_and_lean_pages_render_attitude();
   test_lean_page_without_attitude_keeps_the_poster();
-  test_lean_long_press_requests_calibration();
+  test_lean_press_durations_dispatch_actions();
+  test_lean_status_slot_reports_cal_and_fallback();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
   test_home_glyph_is_gated_by_speed();

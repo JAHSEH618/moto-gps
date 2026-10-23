@@ -15,6 +15,10 @@
 #include "motion_heading_sensor.h"
 #include "phone_nav_bridge.h"
 #include "settings_store.h"
+#include "esp_app_desc.h"
+
+#include <cstdio>
+#include <cstring>
 #include "tlog_logger.hpp"
 
 #include "driver/i2c_master.h"
@@ -26,6 +30,93 @@ constexpr char kTag[] = "moto_gps";
 // Development recorder. Absent when the tlog partition is missing or its
 // above-16-MB self-test failed; every append is then a no-op.
 static moto::device::TlogLogger tlog;
+static bool g_calibration_unverified = true;
+static MotionHeadingSensor* g_sensor = nullptr;
+
+moto::device::MountRecord mount_record_from(
+    const moto::motion::MountCalibration& mount) {
+  moto::device::MountRecord record;
+  const moto::motion::Vec3f forward = mount.forward_axis();
+  const moto::motion::Vec3f up = mount.up_axis();
+  record.forward[0] = static_cast<std::int16_t>(std::lround(forward.x * 10000.0F));
+  record.forward[1] = static_cast<std::int16_t>(std::lround(forward.y * 10000.0F));
+  record.forward[2] = static_cast<std::int16_t>(std::lround(forward.z * 10000.0F));
+  record.up[0] = static_cast<std::int16_t>(std::lround(up.x * 10000.0F));
+  record.up[1] = static_cast<std::int16_t>(std::lround(up.y * 10000.0F));
+  record.up[2] = static_cast<std::int16_t>(std::lround(up.z * 10000.0F));
+  record.trim_cdeg = static_cast<std::int16_t>(std::lround(mount.trim_deg * 100.0F));
+  return record;
+}
+
+void lean_mode_changed(bool fifo_active, void*) {
+  // The session record is the only honest place for a mid-session fallback:
+  // the first block was written before this happened.
+  tlog.note_mode(fifo_active ? 1 : 0, fifo_active ? 448 : 125,
+                 fifo_active ? 112 : 125);
+}
+
+void ui_flags_task(void*) {
+  while (true) {
+    moto_nav_ui_set_lean_flags(
+        g_calibration_unverified ? 1 : 0,
+        (g_sensor != nullptr && !g_sensor->fifo_active()) ? 1 : 0,
+        tlog.full() ? 1 : 0);
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
+void serial_command_task(void* context) {
+  auto* sensor = static_cast<MotionHeadingSensor*>(context);
+  char line[64];
+  std::size_t used = 0;
+  while (true) {
+    const int c = std::fgetc(stdin);
+    if (c == EOF) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+    if (c == '\r') continue;
+    if (c != '\n') {
+      if (used + 1 < sizeof(line)) line[used++] = static_cast<char>(c);
+      continue;
+    }
+    line[used] = '\0';
+    used = 0;
+    const moto::motion::FifoStats& stats = sensor->fifo_stats();
+    if (std::strcmp(line, "imu stats") == 0) {
+      ESP_LOGI(kTag,
+               "imu mode=%s reason=%s batches=%u received=%u produced=%u "
+               "lost=%u overflow=%u window_max_us=%u window_avg_us=%u",
+               sensor->fifo_active() ? "fifo" : "poll",
+               sensor->fifo_fallback_reason() != nullptr
+                   ? sensor->fifo_fallback_reason()
+                   : "-",
+               static_cast<unsigned>(stats.batches),
+               static_cast<unsigned>(stats.received),
+               static_cast<unsigned>(stats.produced),
+               static_cast<unsigned>(stats.lost),
+               static_cast<unsigned>(stats.overflow),
+               static_cast<unsigned>(stats.window_us_max),
+               static_cast<unsigned>(stats.window_samples == 0
+                                         ? 0
+                                         : stats.window_us_sum /
+                                               stats.window_samples));
+    } else if (std::strcmp(line, "imu lean") == 0) {
+      ESP_LOGI(kTag, "lean=%.2f pitch=%.2f quality=%u flags=0x%04x mode=%s",
+               static_cast<double>(sensor->last_lean_deg()),
+               static_cast<double>(sensor->last_pitch_deg()),
+               static_cast<unsigned>(sensor->last_quality()),
+               static_cast<unsigned>(sensor->last_flags()),
+               sensor->fifo_active() ? "fifo" : "poll");
+    } else if (std::strcmp(line, "imu fifo off") == 0) {
+      sensor->request_fifo_mode(false);
+      ESP_LOGI(kTag, "FIFO disabled; restarting acquisition");
+    } else if (std::strcmp(line, "imu fifo on") == 0) {
+      sensor->request_fifo_mode(true);
+      ESP_LOGI(kTag, "FIFO enabled; restarting acquisition");
+    }
+  }
+}
 
 // One-shot boot report: the 1.75C SKU (33691) must be confirmed on the bench,
 // not inferred from a sibling board's BSP. Logs the real flash size and every
@@ -71,11 +162,18 @@ void log_hardware_report() {
 }
 
 void save_lean_calibration(const moto::motion::MountCalibration& mount,
-                           bool ok, void*) {
+                           bool ok, std::uint8_t reason, void*) {
   if (!ok) {
-    ESP_LOGW(kTag, "lean calibration rejected; keeping the previous basis");
+    ESP_LOGW(kTag, "lean calibration rejected (reason %u); keeping basis",
+             static_cast<unsigned>(reason));
+    moto_nav_ui_set_lean_cal_state(
+        reason == 1 ? MOTO_UI_LEAN_CAL_FAIL_MOVING
+                    : MOTO_UI_LEAN_CAL_FAIL_RANGE,
+        0);
     return;
   }
+  g_calibration_unverified = false;
+  moto_nav_ui_set_lean_cal_state(MOTO_UI_LEAN_CAL_OK, 0);
   moto::device::StoredMount stored;
   stored.forward = mount.forward_axis();
   stored.up = mount.up_axis();
@@ -224,7 +322,6 @@ extern "C" void app_main(void) {
   }
 
   log_hardware_report();
-  tlog.begin();
 
   lv_display_t *const display = board_port_get_display();
   if (display == nullptr) {
@@ -318,9 +415,12 @@ extern "C" void app_main(void) {
   // is mapped through this basis, so applying it later would mix frames.
   const moto::device::StoredMount stored_mount =
       moto::device::load_mount_basis();
+  g_sensor = &motion_sensor;
   if (stored_mount.valid) {
     motion_sensor.set_mount(stored_mount.calibration());
+    g_calibration_unverified = false;
   }
+  moto_nav_ui_set_lean_flags(g_calibration_unverified ? 1 : 0, 0, 0);
   motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
   moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,
                                             &motion_sensor);

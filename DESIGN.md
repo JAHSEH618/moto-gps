@@ -1,3 +1,6 @@
+> **Superseded:** the handlebar screen design is now specified by `docs/DESIGN_V2.md` (v2.0-r1).
+> The device chapters below are kept for history; where they disagree, v2 wins.
+
 # Design
 
 Visual system for the MOTO GPS phone app (`platforms/ios`) and the web shell (`platforms/web/shell`). One structure, two themes. Themes are triggered by ambient light, not by taste.

@@ -45,7 +45,7 @@ moto::motion::MountCalibration StoredMount::calibration() const {
   moto::motion::MountCalibration mount;
   mount.set_basis(forward, up, true);
   mount.set_trim_deg(static_cast<float>(trim_cdeg) / 100.0F);
-  if (static_magnitude_mps2 > 5.0F && static_magnitude_mps2 < 15.0F) {
+  if (static_magnitude_mps2 >= 8.3F && static_magnitude_mps2 <= 11.3F) {
     mount.static_magnitude_mps2 = static_magnitude_mps2;
   }
   return mount;
@@ -94,7 +94,7 @@ StoredMount decode_mount(const std::uint8_t* data, std::size_t size) {
   if (forward_length < 0.5F || up_length < 0.5F) return mount;
   if (std::fabs(decoded.trim_cdeg) > 500) return mount;
   const float magnitude = static_cast<float>(get_u16(data + 15)) / 100.0F;
-  if (magnitude < 5.0F || magnitude > 15.0F) return mount;
+  if (magnitude < 8.3F || magnitude > 11.3F) return mount;
   decoded.static_magnitude_mps2 = magnitude;
 
   decoded.valid = true;

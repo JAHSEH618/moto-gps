@@ -70,6 +70,10 @@ void MountCalibration::begin_static() {
   acc_sum_ = {};
   acc_count_ = 0;
   acc_time_s_ = 0.0F;
+  gyro_sum_ = {};
+  gyro_sumsq_ = {};
+  gyro_count_ = 0;
+  reject_reason = 0;
 }
 
 bool MountCalibration::observe_static(const Vec3f& accel_mps2,
@@ -78,7 +82,13 @@ bool MountCalibration::observe_static(const Vec3f& accel_mps2,
   if (!finite(accel_mps2) || !finite(gyro_dps) || dt <= 0.0F) return false;
   const float magnitude = length(accel_mps2);
   if (!std::isfinite(magnitude)) return false;
-  if (length(gyro_dps) > 2.0F) return false;
+  // A raw gyro can carry up to ~10 dps of initial offset on this part, so the
+  // per-sample gate only rejects gross motion; the windowed standard deviation
+  // below is the real stillness test (v2 r1 §3.3.1).
+  if (length(gyro_dps) > 60.0F) {
+    reject_reason = 1;
+    return false;
+  }
   if (acc_count_ == 0) {
     // The first sample defines this unit's stationary specific force. A
     // consumer IMU with 30-50 mg of zero-g offset would fail a fixed |a|=1 g
@@ -93,23 +103,65 @@ bool MountCalibration::observe_static(const Vec3f& accel_mps2,
       acc_count_ = 0;
       acc_time_s_ = 0.0F;
       last_magnitude_ = magnitude;
+      reject_reason = 1;
       return false;
     }
     last_magnitude_ = magnitude;
     if (std::fabs(magnitude - static_magnitude_) > 0.02F * kGravity) {
+      reject_reason = 2;
       return false;
     }
   }
   acc_sum_ = add(acc_sum_, accel_mps2);
+  gyro_sum_ = add(gyro_sum_, gyro_dps);
+  gyro_sumsq_ = add(gyro_sumsq_,
+                    {gyro_dps.x * gyro_dps.x, gyro_dps.y * gyro_dps.y,
+                     gyro_dps.z * gyro_dps.z});
+  ++gyro_count_;
   ++acc_count_;
   acc_time_s_ += dt;
   if (acc_time_s_ < 2.0F || acc_count_ < 8) return false;
+  const float magnitude_mean =
+      length(acc_sum_) / static_cast<float>(acc_count_);
+  // Datasheet bounds: +-100 mg accel offset gives 0.85-1.15 g for a stationary
+  // unit; 8.3-11.3 m/s^2 is the same window in SI.
+  if (magnitude_mean < 8.3F || magnitude_mean > 11.3F) {
+    reject_reason = 2;
+    acc_sum_ = {};
+    acc_count_ = 0;
+    acc_time_s_ = 0.0F;
+    gyro_sum_ = {};
+    gyro_sumsq_ = {};
+    gyro_count_ = 0;
+    return false;
+  }
+  const float n = static_cast<float>(std::max(1, gyro_count_));
+  const float mean_x = gyro_sum_.x / n;
+  const float mean_y = gyro_sum_.y / n;
+  const float mean_z = gyro_sum_.z / n;
+  const float var_x = std::max(0.0F, gyro_sumsq_.x / n - mean_x * mean_x);
+  const float var_y = std::max(0.0F, gyro_sumsq_.y / n - mean_y * mean_y);
+  const float var_z = std::max(0.0F, gyro_sumsq_.z / n - mean_z * mean_z);
+  const float sigma =
+      std::sqrt(std::max(var_x, std::max(var_y, var_z)));
+  if (sigma > 0.5F ||
+      std::max(std::fabs(mean_x), std::max(std::fabs(mean_y),
+                                           std::fabs(mean_z))) > 15.0F) {
+    reject_reason = 1;
+    acc_sum_ = {};
+    acc_count_ = 0;
+    acc_time_s_ = 0.0F;
+    gyro_sum_ = {};
+    gyro_sumsq_ = {};
+    gyro_count_ = 0;
+    return false;
+  }
+
   const Vec3f up = normalise(acc_sum_);
   if (length(up) < 0.5F) return false;
   up_ = up;
-  // The 2 s mean is the honest stationary magnitude for this unit, not the
-  // first sample (which may itself have been a disturbance).
-  static_magnitude_mps2 = length(acc_sum_) / static_cast<float>(acc_count_);
+  static_magnitude_mps2 = magnitude_mean;
+  reject_reason = 0;
   stage1 = true;
   stage2 = false;
   return true;
@@ -439,8 +491,11 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
   out_.lean_deg = lean_deg_;
   out_.lean_eff_deg = lean_eff;
   out_.lean_rate_dps = lean_rate_dps_;
+  // Nose-up tilts the body x axis up, so the world-up vector's body-x
+  // component is +sin(pitch) (v2 r1 §4.1). The previous negation reported
+  // nose-down as positive.
   out_.pitch_deg =
-      std::asin(std::clamp(-up_body_.x, -1.0F, 1.0F)) * kRadToDeg;
+      std::asin(std::clamp(up_body_.x, -1.0F, 1.0F)) * kRadToDeg;
   out_.yaw_rate_dps = yaw_rate_dps_;
   out_.lateral_g = lateral_g;
   out_.source = source;

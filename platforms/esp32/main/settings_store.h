@@ -28,13 +28,14 @@ bool save_settings(const DeviceSettings& settings);
 StoredMount load_mount_basis();
 bool save_mount_basis(const StoredMount& mount);
 
-// tlog append position and one-time above-16-MB self-test marker. The position
-// is written on every 2 s flush; up to 2 s of records may repeat after a hard
-// power cut, which the replay tolerates because records carry sequence and
-// time.
-bool load_tlog_pos(std::uint32_t* position);
-bool save_tlog_pos(std::uint32_t position);
+// One-time above-16-MB self-test marker. The tlog append point is found from
+// the partition itself (self-describing blocks), not from NVS.
 bool tlog_selftest_done();
 void mark_tlog_selftest_done();
+
+// Runtime FIFO toggle (NVS `imu.fifo`), default on. The bench A/B needs to
+// switch acquisition without reflashing.
+bool load_imu_fifo_enabled();
+bool save_imu_fifo_enabled(bool enabled);
 
 }  // namespace moto::device

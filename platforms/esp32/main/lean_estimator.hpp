@@ -27,6 +27,8 @@ struct MountCalibration {
   // Consumer IMUs have tens of mg of zero-g offset, so the static gate and
   // ZUPT compare against this, not against 9.80665 (v2 review item 5).
   float static_magnitude_mps2 = 9.80665F;
+  // Why the last static capture was refused: 0 none, 1 motion/gyro, 2 range.
+  std::uint8_t reject_reason = 0;
 
   // Step 1 (DESIGN_V2 §3.3): the mean specific force of a stationary, upright
   // bike is the sensor-frame up axis. Samples are rejected while the bike is
@@ -58,6 +60,9 @@ struct MountCalibration {
   Vec3f forward_{1.0F, 0.0F, 0.0F};  // sensor frame, orthogonal to up_
   Vec3f up_{0.0F, 0.0F, 1.0F};       // sensor frame, world up at rest
   Vec3f acc_sum_{};
+  Vec3f gyro_sum_{};
+  Vec3f gyro_sumsq_{};
+  int gyro_count_ = 0;
   Vec3f fwd_sum_{};
   Vec3f pending_forward_{};
   bool has_pending_forward_ = false;
@@ -101,6 +106,8 @@ enum LeanFlag : std::uint16_t {
   kLeanSaturated = 1U << 7,
   kLeanHdgHold = 1U << 8,
   kLeanGnssOnboard = 1U << 9,
+  // Set by the adapter, not the estimator: the FIFO chain fell back to polling.
+  kLeanImuFallback = 1U << 10,
 };
 
 struct LeanOutput {
