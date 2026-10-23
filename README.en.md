@@ -1,9 +1,3 @@
-<p>
-  <a href="https://xuebao.us/">
-    <img src="assets/brand/xuebao-banner-en.png" width="1280" alt="Developed with Xuebao AI: full-capability models and reliable service. GPT at 0.2x, Claude at 0.35x, Chinese models and DeepSeek up to 70% off. Earn $0.5 per referral with no cap.">
-  </a>
-</p>
-
 > **Language:** English · [中文](README.md)
 
 > English edition of the Chinese document. The Chinese file is authoritative if the two differ.
