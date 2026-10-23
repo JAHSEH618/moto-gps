@@ -399,3 +399,21 @@ The assert-handler change earned its keep immediately: `-DMOTO_NATIVE_LVGL_HEAP_
 **Verification.** Native 11/11 (`ctest`, 1.5 s), `node scripts/todo_status.mjs --check` clean, `idf.py build` twice with the second a no-op, the bootstrap script re-run green in 8 s with every step skipped, and `git describe` back to a clean `v5.5.5` after the blocked-mirror `.gitmodules` patch was reverted (the proxy URL stays in `.git/config`, and `submodule_ready` is unaffected because `update = none` means nothing fetches it again).
 
 **State.** Committed on `feat/gta-attitude`: `f72ea6a` the missing source, `38a4749` the lock, `346f4ca` the bootstrap script. The next step is no longer "can it build" — it is flashing it and watching the attitude path, the settings replay and the hidden-by-default building layer on the board.
+
+## 2026-10-23T11:05:00+09:00 — The phone becomes the same poster as the handlebar
+
+Started from a review of the round-screen work: the instrument was a poster, the phone was a well-behaved iOS form in roughly the same colours, and the two read as different products when a rider looks from one to the other.
+
+**Round-instrument slice closed and committed.** The generated Barlow Condensed and Noto Sans SC faces are in the repository (9 faces, 13 MB of C plus the 8.1 MB OTF and its OFL licence); only `moto_font_nav_16.c` had ever been tracked, so a clean clone could not link once the CMake globs landed. The black-panel pixel probe came out of `app_main.cpp`, and `idf.py build` is green after the removal. The `DEF flush` half of that task turned out not to be a task: `managed_components/` and `sdkconfig` are both gitignored.
+
+**Batch 2 phone half.** `DeviceSettingsBroadcast` plus `MotoBLESettingsStateInput` send `SettingsState` (`0x17`): fixed tables, local clamps, a navigation-must-stay-visible mask, capability bit 10, and a revision floored by wall-clock seconds so a reinstall cannot rewind below a device that still holds an older watermark. The golden check pins `settings.payload` — the one payload that grew without a wire revision bump. `AmbientNight` computes the sun's elevation from UTC and east-positive longitude (the zone offset cancels) and switches at civil twilight; dark mode at noon is not night.
+
+**The palette became the instrument's.** `#141024` midnight purple, `#F6F0D7` road cream, `#F34DAA` band — the same values as `MapPalette` in `shared/nav_ui`. Orange is gone. `onAccent` is ink in both themes because cream on magenta is 2.8:1; the band is brand, not state, and does not change between themes.
+
+**Every screen was rebuilt as a poster sheet.** Band header with a mono kicker and a heavy title, one hero word at 76 pt, numbered sections with the index in the display face, square panels and hairlines. Seven screens: 我的圆屏, 隐私与数据, 网关设置, 地图 (root + city search + city download), 路线, 骑行. The ride screen dropped from three equally weighted stat cells to one 76 pt distance plus a two-cell band beside the radar; the home wordmark went 88 → 132 pt and onto its own line with the radar at 300.
+
+**Two defects only screenshots could find.** A view that applies `.motoTheme` itself and reads `motoPalette` from the environment gets the default palette — cream ink on cream paper, which looked like a disabled row. And `.navigationDestination` attached to the `NavigationStack` rather than its content makes the push silently do nothing; city search is a push now, because a sheet behind a sheet left the parent band peeking above the child's.
+
+**Verification.** 46 app unit tests, 47 Swift package tests, native 11/11, `verify.sh` green on every push. Screenshots reviewed on iPhone 17 Pro (27.0) light and dark, iPhone SE (27.0) light, `sim_font_gate.sh` reporting 47,102 glyphs. Route preview is the one screen with no screenshot: it needs a configured gateway, and it carries its own open item in `docs/todo.md`.
+
+**Not done.** The map downloads sheet ended up fully converted, so no stock `Form` or `List` remains in the app's own screens. `MotoMeter` is still dead code and its colour task was superseded rather than performed.
