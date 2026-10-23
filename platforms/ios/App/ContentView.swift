@@ -1,3 +1,4 @@
+import MotoNavigationCore
 import SwiftUI
 
 enum MotoScreen: Hashable {
@@ -637,6 +638,20 @@ struct ContentView: View {
 
     // MARK: - Device sheet
 
+    private var displayThemeBinding: Binding<DeviceSettingsTheme> {
+        Binding(
+            get: { model.displayTheme },
+            set: { model.setDisplayTheme($0) }
+        )
+    }
+
+    private var showBuildingsBinding: Binding<Bool> {
+        Binding(
+            get: { model.showBuildings },
+            set: { model.setShowBuildings($0) }
+        )
+    }
+
     private var deviceToolbarButton: some View {
         Button {
             searchFocused = false
@@ -708,6 +723,21 @@ struct ContentView: View {
                     }
                 } footer: {
                     Text("圆屏保持开机并靠近 iPhone。连接成功后，当前导航会自动同步。")
+                }
+                Section {
+                    Picker("主题", selection: displayThemeBinding) {
+                        Text("自动").tag(DeviceSettingsTheme.auto)
+                        Text("白天").tag(DeviceSettingsTheme.day)
+                        Text("夜间").tag(DeviceSettingsTheme.night)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("device-theme-picker")
+                    Toggle("显示建筑轮廓", isOn: showBuildingsBinding)
+                        .accessibilityIdentifier("device-buildings-toggle")
+                } header: {
+                    Text("圆屏显示")
+                } footer: {
+                    Text("自动跟随手机所在地的日出与日落。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。")
                 }
                 Section("定位") {
                     statusRow("搜索位置", symbol: "location", value: searchLocationStatus, color: .secondary)
