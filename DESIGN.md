@@ -19,59 +19,74 @@ Both themes share geometry, spacing, type scale, and the circle motif. Only pape
 
 ## Color
 
-All values are exact; no gradients on data surfaces.
+All values are exact; no gradients on data surfaces. The phone palette is the
+handlebar instrument's palette, token for token: cream paper and outline black
+by day, midnight purple and sunset cream by night, hot pink for the band and for
+whatever is happening now. A rider looking from the bar to the phone is looking
+at one product.
 
-### Vice (night instrument console)
+### Vice (night paper)
 
 | Token | Value | Use |
 |---|---|---|
-| `bg` | `#060808` | app background |
-| `surface` | `#0E1211` | panels, sheets |
-| `surface-2` | `#141918` | raised row, selected row background |
-| `line` | `#232B2A` | 1px rules |
-| `line-soft` | `rgba(255,255,255,0.10)` | grid, dividers inside panels |
-| `ink` | `#F2F4EE` | primary text, numerals |
-| `ink-muted` | `#93A09C` | secondary text, labels |
-| `accent` | `#FFB72E` | happening now: active route, primary button, run timer |
-| `link` | `#5CC7FF` | BLE link, GPS fix |
+| `bg` | `#141024` | app background — the instrument's midnight paper |
+| `surface` | `#191430` | panels, sheets |
+| `surface-2` | `#211A3C` | raised row, selected row background |
+| `line` | `#2A2145` | 1px rules |
+| `line-soft` | `rgba(255,255,255,0.08)` | grid, dividers inside panels |
+| `ink` | `#F6F0D7` | primary text, numerals — sunset cream |
+| `ink-muted` | `#B9B1C9` | secondary text, labels |
+| `accent` | `#F34DAA` | the band: active route, primary button, run timer |
+| `route` | `#FF5ACD` | route stroke (the night variant of the band) |
+| `link` | `#42F5D7` | BLE link, GPS fix |
 | `ok` | `#73E6A4` | completed, saved |
 | `abort` | `#FF655F` | aborted run, off-route |
 
-### Heat (daylight poster)
+### Heat (day paper)
 
 | Token | Value | Use |
 |---|---|---|
-| `bg` | `#F2E6CE` | sunlit paper |
-| `surface` | `#EBDBBC` | panels |
-| `surface-2` | `#E3D0AB` | raised row, pressed state |
+| `bg` | `#F6F0D7` | road-cream paper |
+| `surface` | `#EFE7C9` | panels |
+| `surface-2` | `#E6DCB8` | raised row, pressed state |
 | `line` | `ink @ 24%` | 1px rules — heavier than Vice so they survive glare |
 | `line-soft` | `ink @ 12%` | dividers, halftone grid |
-| `ink` | `#17110D` | primary text, numerals |
+| `ink` | `#17151B` | outline black: primary text, numerals |
 | `ink-muted` | `#5C4A38` | secondary text only, never below 15pt |
-| `accent` | `#E8500F` | fills and large numerals; **never body-size text** |
-| `link` | `#0A5C78` | BLE link, GPS fix |
+| `accent` | `#F34DAA` | the band: fills and large numerals only |
+| `route` | `#F34DAA` | route stroke — same magenta as the band by day |
+| `link` | `#0E6F68` | BLE link, GPS fix |
 | `ok` | `#1D6B3C` | completed |
 | `abort` | `#B3241C` | aborted |
 
-**Heat accent rule.** `#E8500F` on paper is 3.9:1 — enough for 34pt+ numerals and for fills carrying `ink` text (5.0:1), not enough for prose or 11pt labels. Small accent-coloured text is a defect in this theme.
+**The band is brand, not state.** `#F34DAA` is identical in both themes, it never
+signals a warning, and it is used for exactly one filled surface per screen.
+`onAccent` is ink in both themes — cream on magenta measures 2.8:1 and fails.
+
+**Heat accent rule.** `#F34DAA` on paper is 2.8:1 — enough for a fill carrying
+`ink` text (5.6:1), not enough for prose, numerals below 34pt, or any 11pt label.
+Small accent-coloured text is a defect in this theme. On Vice the same magenta
+clears 5.7:1, so the rule is theme-specific even though the value is not.
 
 ### Contrast (measured, sRGB relative luminance)
 
 | Pair | Ratio | Level |
 |---|---|---|
-| Vice `ink` on `bg` | 17.4:1 | AAA |
-| Vice `ink-muted` on `bg` | 7.5:1 | AAA (large) / AA (body) |
-| Vice `accent` on `bg` | 11.6:1 | AAA |
-| Vice `link` on `bg` | 10.7:1 | AAA |
-| Vice `abort` on `bg` | 7.0:1 | AA |
-| Heat `ink` on `bg` | 15.1:1 | AAA |
-| Heat `ink-muted` on `bg` | 6.8:1 | AA |
-| Heat `accent` on `bg` | 3.9:1 | AA-large only |
-| Heat `ink` on `accent` | 5.0:1 | AA |
-| Heat `link` on `bg` | 6.0:1 | AA |
-| Heat `abort` on `bg` | 5.3:1 | AA |
+| Vice `ink` on `bg` | 16.3:1 | AAA |
+| Vice `ink-muted` on `bg` | 9.0:1 | AAA |
+| Vice `accent` on `bg` | 5.7:1 | AA |
+| Vice `link` on `bg` | 13.5:1 | AAA |
+| Vice `abort` on `bg` | 6.4:1 | AA |
+| Heat `ink` on `bg` | 15.8:1 | AAA |
+| Heat `ink-muted` on `bg` | 7.4:1 | AAA |
+| Heat `accent` on `bg` | 2.8:1 | fails text; fills only |
+| Heat `ink` on `accent` | 5.6:1 | AA |
+| Heat `link` on `bg` | 5.3:1 | AA |
+| Heat `abort` on `bg` | 5.8:1 | AA |
+| Both: `on-slab` on `slab` | 17.5:1 | AAA |
 
-`ink-muted` is never used for data in either theme; it is for labels and secondary prose.
+`ink-muted` is never used for data in either theme; it is for labels and secondary
+prose, and never on the slab — the slab has its own `on-slab` token for that.
 
 ## Typography
 
