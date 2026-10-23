@@ -20,7 +20,7 @@
 namespace {
 constexpr char kTag[] = "motion_heading";
 constexpr TickType_t kPollDelay = pdMS_TO_TICKS(8);
-constexpr TickType_t kFifoPollDelay = pdMS_TO_TICKS(8);
+constexpr TickType_t kFifoPollDelay = pdMS_TO_TICKS(4);
 constexpr std::uint32_t kWarmupMs = 200;
 constexpr float kGravity = 9.80665F;
 
@@ -124,6 +124,7 @@ void MotionHeadingSensor::run() {
       moto::device::save_imu_fifo_enabled(fifo_enabled);
     }
     bool restart = false;
+    bool fallback = false;
     if (fifo_enabled) {
       moto::motion::Qmi8658Fifo fifo;
       if (fifo.begin(&device_)) {
@@ -133,7 +134,8 @@ void MotionHeadingSensor::run() {
         fifo_loop(fifo, restart);
         fifo_active_ = false;
         fifo_stats_ = fifo.stats();
-        if (!restart && fifo.fallback_reason() != nullptr) {
+        fallback = fifo.fallback_reason() != nullptr;
+        if (fallback) {
           fifo_reason_ = fifo.fallback_reason();
           fifo_enabled = false;
           if (mode_callback_ != nullptr) mode_callback_(false, mode_context_);
@@ -142,11 +144,13 @@ void MotionHeadingSensor::run() {
       } else {
         fifo_reason_ = fifo.fallback_reason();
         fifo_enabled = false;
+        fallback = true;
         if (mode_callback_ != nullptr) mode_callback_(false, mode_context_);
         ESP_LOGW(kTag, "FIFO unavailable: %s",
                  fifo_reason_ != nullptr ? fifo_reason_ : "init failed");
       }
     }
+    if (fallback) restart = false;  // fallback must not retry the FIFO loop
     if (!fifo_enabled) poll_loop(restart);
     if (restart) continue;
   }
@@ -223,7 +227,12 @@ void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
                                     bool& restart) {
   constexpr std::uint32_t kOdrHz10 = 4484;  // 448.4 Hz in 0.1 Hz
   constexpr float kPeriodUs = 1.0e6F / 448.4F;
-  moto::motion::FifoFrame frames[16];
+  struct PendingFrame {
+    moto::motion::FifoFrame frame;
+    std::uint64_t time_ms;
+  };
+  PendingFrame pending[64];
+  std::size_t pending_count = 0;
   const std::uint64_t warmup_end = monotonic_ms() + kWarmupMs;
   TickType_t next = xTaskGetTickCount();
   while (true) {
@@ -232,20 +241,30 @@ void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
       return;
     }
     if (calibration_requested_) run_calibration();
+    moto::motion::FifoFrame frames[16];
     const std::size_t count = fifo.poll(frames, 16);
-    if (count >= 4) {
+    if (count > 0) {
       const std::uint64_t now = monotonic_ms();
-      const std::size_t groups = count / 4;
-      for (std::size_t group = 0; group < groups; ++group) {
+      for (std::size_t i = 0; i < count && pending_count < 64; ++i) {
+        const std::uint64_t age_us = static_cast<std::uint64_t>(
+            (count - 1 - i) * kPeriodUs);
+        pending[pending_count].frame = frames[i];
+        pending[pending_count].time_ms = now - age_us / 1000U;
+        ++pending_count;
+      }
+      // The watermark may be 2 samples (the 4-sample window was too slow on
+      // this unit), so averaging groups of four spans poll iterations.
+      while (pending_count >= 4) {
         RawImuSample raw;
-        for (int i = 0; i < 3; ++i) {
-          raw.accel_mps2[i] = 0.0F;
-          raw.gyro_dps[i] = 0.0F;
+        for (int axis = 0; axis < 3; ++axis) {
+          raw.accel_mps2[axis] = 0.0F;
+          raw.gyro_dps[axis] = 0.0F;
           for (int k = 0; k < 4; ++k) {
-            raw.accel_mps2[i] += frames[group * 4 + k].accel_mps2[i] * 0.25F;
-            raw.gyro_dps[i] += frames[group * 4 + k].gyro_dps[i] * 0.25F;
+            raw.accel_mps2[axis] += pending[k].frame.accel_mps2[axis] * 0.25F;
+            raw.gyro_dps[axis] += pending[k].frame.gyro_dps[axis] * 0.25F;
           }
         }
+        const std::uint64_t sample_ms = pending[3].time_ms;
         if (--temperature_countdown_ <= 0) {
           temperature_countdown_ = 112;
           float measured = 0.0F;
@@ -254,11 +273,11 @@ void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
           }
         }
         raw.temp_c = temperature_c_;
-        const std::size_t newest = group * 4 + 3;
-        const std::uint64_t age_us =
-            static_cast<std::uint64_t>((count - 1 - newest) * kPeriodUs);
-        const std::uint64_t sample_ms = now - age_us / 1000U;
         if (sample_ms > warmup_end) emit(raw, sample_ms);
+        for (std::size_t i = 4; i < pending_count; ++i) {
+          pending[i - 4] = pending[i];
+        }
+        pending_count -= 4;
       }
     }
     (void)kOdrHz10;
