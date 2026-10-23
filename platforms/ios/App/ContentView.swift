@@ -66,6 +66,16 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsDataUse) { DataUseView() }
         .sheet(isPresented: $showsGatewaySettings) { GatewaySettingsView(model: model) }
+        #if DEBUG
+        // Screenshot harness: the device sheet is two taps in, and holding a
+        // simulator while a UI test drives taps is a lot of machinery for a
+        // layout review.
+        .task {
+            if ProcessInfo.processInfo.arguments.contains("--moto-open-device-sheet") {
+                showsDeviceDetails = true
+            }
+        }
+        #endif
     }
 
     // Derive the stack from the session instead of synchronizing two mutable
@@ -566,7 +576,7 @@ struct ContentView: View {
                 .accessibilityLabel("我的圆屏")
                 .accessibilityValue(deviceStatus)
                 .accessibilityIdentifier("device-details-button")
-                MotoLabel(text: rideClockText, tone: .muted, token: .micro)
+                MotoLabel(text: rideClockText, tone: .onSlab, token: .micro)
                     .fixedSize()
                     .layoutPriority(-1)
             }
@@ -695,67 +705,104 @@ struct ContentView: View {
     }
 
     private var deviceDetails: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(spacing: 12) {
-                        Image(systemName: "location.north.circle")
-                            .font(.system(size: 64, weight: .ultraLight))
-                            .foregroundStyle(.blue)
-                            .accessibilityHidden(true)
-                        Text(deviceName).font(.title2.weight(.semibold))
-                        Text(deviceDetail)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.secondary)
-                            .multilineTextAlignment(.center)
+        MotoPosterSheet(
+            title: "我的圆屏",
+            dismissTitle: "完成",
+            sheetIdentifier: "device-details-sheet",
+            dismissIdentifier: "device-details-done",
+            onDismiss: { showsDeviceDetails = false }
+        ) {
+            VStack(spacing: MotoMetrics.s3) {
+                Image(systemName: "location.north.circle")
+                    .font(.system(size: 52, weight: .light))
+                    .foregroundStyle(palette.ink)
+                    .accessibilityHidden(true)
+                Text(deviceName)
+                    .font(.system(.title2, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                MotoLabel(text: deviceDetail, tone: .muted, token: .micro, uppercased: false)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, MotoMetrics.s3)
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(text: "连接")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "状态") {
+                            MotoLabel(
+                                text: deviceStatus,
+                                tone: model.deviceReady ? .ok : .muted,
+                                uppercased: false
+                            )
+                        }
+                        MotoRule()
+                        Button(connectionActionTitle, action: model.toggleDeviceConnection)
+                            .buttonStyle(MotoPrimaryButtonStyle())
+                            .accessibilityIdentifier("device-connection-action")
+                        if case .bluetoothUnavailable = model.device.connection {
+                            MotoRule()
+                            Button("打开系统设置", action: openSystemSettings)
+                                .buttonStyle(MotoSecondaryButtonStyle())
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
                 }
-                .listRowBackground(Color.clear)
-                Section {
-                    statusRow("连接状态", symbol: "antenna.radiowaves.left.and.right", value: deviceStatus,
-                              color: model.deviceReady ? .green : .secondary)
-                    Button(connectionActionTitle, action: model.toggleDeviceConnection)
-                        .accessibilityIdentifier("device-connection-action")
-                    if case .bluetoothUnavailable = model.device.connection {
-                        Button("打开系统设置", action: openSystemSettings)
+                Text("圆屏保持开机并靠近 iPhone。连接成功后，当前导航会自动同步。")
+                    .font(.system(.footnote))
+                    .foregroundStyle(palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(text: "圆屏显示")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoSegment(
+                            options: [
+                                (DeviceSettingsTheme.auto, "自动"),
+                                (DeviceSettingsTheme.day, "白天"),
+                                (DeviceSettingsTheme.night, "夜间"),
+                            ],
+                            selection: displayThemeBinding,
+                            identifierPrefix: "device-theme"
+                        )
+                        .padding(MotoMetrics.s3)
+                        MotoRule()
+                        MotoToggleRow(
+                            title: "显示建筑轮廓",
+                            isOn: showBuildingsBinding,
+                            identifier: "device-buildings-toggle"
+                        )
                     }
-                } footer: {
-                    Text("圆屏保持开机并靠近 iPhone。连接成功后，当前导航会自动同步。")
                 }
-                Section {
-                    Picker("主题", selection: displayThemeBinding) {
-                        Text("自动").tag(DeviceSettingsTheme.auto)
-                        Text("白天").tag(DeviceSettingsTheme.day)
-                        Text("夜间").tag(DeviceSettingsTheme.night)
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("device-theme-picker")
-                    Toggle("显示建筑轮廓", isOn: showBuildingsBinding)
-                        .accessibilityIdentifier("device-buildings-toggle")
-                } header: {
-                    Text("圆屏显示")
-                } footer: {
-                    Text("自动跟随手机所在地的日出与日落。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。")
-                }
-                Section("定位") {
-                    statusRow("搜索位置", symbol: "location", value: searchLocationStatus, color: .secondary)
-                    if model.searchLocationStatus == .permissionDenied {
-                        Button("前往设置开启定位", action: openSystemSettings)
+                Text("自动跟随手机所在地的日出与日落。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。")
+                    .font(.system(.footnote))
+                    .foregroundStyle(palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(text: "定位")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "搜索位置") {
+                            MotoLabel(text: searchLocationStatus, tone: .muted, uppercased: false)
+                        }
+                        if model.searchLocationStatus == .permissionDenied {
+                            MotoRule()
+                            Button("前往设置开启定位", action: openSystemSettings)
+                                .buttonStyle(MotoSecondaryButtonStyle())
+                        }
                     }
                 }
             }
-            .navigationTitle("我的圆屏")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { showsDeviceDetails = false }
-                        .accessibilityIdentifier("device-details-done")
-                }
-            }
-            .accessibilityIdentifier("device-details-sheet")
         }
+        .motoTheme(theme)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }

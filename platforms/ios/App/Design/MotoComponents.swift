@@ -178,12 +178,16 @@ struct MotoStatusBand<Right: View>: View {
                     .fill(dotColor)
                     .frame(width: 6, height: 6)
                 MotoLabel(text: linkText, tone: .onSlab, token: .micro)
+                    .fixedSize()
             }
             .accessibilityElement(children: .combine)
 
             MotoRule(axis: .vertical).frame(height: 12)
 
+            // Never ellipsised: at 402 pt the two cells plus the controls fit,
+            // and a truncated `FIX` reads as a bug rather than as a state.
             MotoLabel(text: fixText, tone: .onSlab, token: .micro)
+                .fixedSize()
 
             Spacer(minLength: MotoMetrics.s2)
 

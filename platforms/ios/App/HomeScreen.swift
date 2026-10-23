@@ -66,10 +66,10 @@ struct HomeScreen: View {
                 bandButton("circle.circle", label: "我的圆屏", identifier: "device-details-button") {
                     showsDeviceDetails = true
                 }
-                MotoLabel(text: clockText, tone: .muted, token: .micro)
+                MotoLabel(text: clockText, tone: .onSlab, token: .micro)
                     .fixedSize()
                     // The clock is the only flexible cell; dropping its width
-                    // must never squeeze the two controls a thumb has to hit.
+                    // must never squeeze the controls a thumb has to hit.
                     .layoutPriority(-1)
             }
         }
@@ -94,6 +94,12 @@ struct HomeScreen: View {
         .accessibilityIdentifier(identifier)
     }
 
+    private var clockText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date())
+    }
+
     private var fixText: String {
         switch model.searchLocationStatus {
         case .available: return "fix"
@@ -101,12 +107,6 @@ struct HomeScreen: View {
         case .permissionDenied: return "no fix"
         case .unavailable: return "no fix"
         }
-    }
-
-    private var clockText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date())
     }
 
     // MARK: - Hero
