@@ -246,6 +246,87 @@ Known conflicts and rulings:
 
 Baseline static audit (`audit_swiftui_ui.py platforms/ios`): 30 MEDIUM, 0 HIGH/CRITICAL. The six that touch UI — hardcoded font sizes in the old `ContentView`, fixed frames, index-derived `ForEach` identity — are removed by the screen rewrite rather than patched.
 
+## Round instrument (the handlebar screen)
+
+The device is not a smaller phone. It is one physical object seen from a
+metre away, in sun or at night, with gloves on. The system is five rules; every
+page is a different readout of the same instrument.
+
+### 1. One disc, one bezel, one band
+
+- Paper disc radius 207 px inside a 466 px canvas, black casing 197–207,
+  magenta band 212–222, near-black bezel outside.
+- The **magenta band is the gauge**. Progress is painted on it in `ink`:
+  speed, route progress, and the lean blip all use the same rim. There is no
+  second track ring and no arc inside the disc.
+- The band colour is brand, not state. It does not change between day and
+  night and is never used for warnings.
+
+### 2. Numbers are posters
+
+The hero face is Barlow Condensed ExtraBold at **176 px** (hero subset:
+digits, `° . : + - /`, N/S/E/W). One number per screen at that size; the next
+largest thing is 40 px. Secondary values live on plates (24 px), never at a
+size that competes.
+
+| Role | Size | Colour |
+|---|---|---|
+| Hero numeral | 176 | `ink`, halo = `outline` |
+| Unit / title | 40 | `ink` or `on_accent` |
+| Plate + label | 24 | `on_accent` / `on_slab` |
+| Micro (nav status, kicker) | 18 | `map_ink` / `on_slab` |
+
+No page has a title label. The unit, the cardinal or the stopwatch is the
+identity; "SPEED" over a speedometer is a word doing no work.
+
+### 3. Two surfaces
+
+| Surface | Day | Night |
+|---|---|---|
+| Paper (lean, speed, compass, launch, music) | cream `#F6F0D7` | midnight `#141024` |
+| Map (navigation only) | green `#1E7A46` | midnight `#141024` |
+| Ink (hero, horizon) | `#17151B` | `#F6F0D7` |
+| Halo behind display type | paper (inverse of ink) | bezel |
+| Band / plates | `#F34DAA` | `#F34DAA` |
+| Counter slab | `#17151B` on paper | `#07050D` |
+
+Day is a poster (ink on paper, magenta plates); night is the same poster
+inverted. The green map is the only surface that is not the theme paper, and it
+appears only where the map is the content. The bezel never changes.
+
+### 4. Composition per page
+
+| Page | One idea |
+|---|---|
+| Navigation | The map is the screen. Distance is the only large number; the maneuver glyph and the limit sign are the only props. |
+| Lean | **An artificial horizon.** The disc is the bike; the world tilts and the sun rides the horizon. The rim blip marks the angle; `+42°` is printed on the world. |
+| Speed | The band is the speedometer: cream fills clockwise from twelve, magenta is what is left. |
+| Compass | A rose on the band, a giant cardinal in the middle, the bearing in magenta beneath. |
+| Launch (0–100) | A stopwatch, a shift strip, and the best time. Nothing else. |
+| Music | A car-radio faceplate: source plate, track as station ident, three physical keys on one ink deck. |
+
+State plates (`ARMED`, `LIVE`, maxima) are magenta; numeric counters (`BEST`,
+`KM/H`, bearing) are ink slabs. Both are square: radius 0.
+
+### 5. Type for phone data
+
+Track titles and artist names are phone data, not UI strings. The instrument
+faces are Latin-only, so the music page uses RAM copies of the descriptors
+with **Noto Sans SC Bold** fallbacks generated from GB2312 level 1
+(3,755 characters) at 40 px and 24 px. Chinese renders as CJK, Latin renders as
+Barlow. The fallback descriptors are copied out of flash because the generated
+tables are `const` and cannot be patched in place.
+
+Cost: ~2.5 MB of flash for both CJK faces; the app partition has 8 MB and
+the firmware still fits with more than half free.
+
+### Review artefacts
+
+`MOTO_UI_DUMP_DIR=/tmp/frames` on the native render suite writes one PPM per
+theme and page plus the three link states. That is the visual review loop:
+render, convert, look, fix. Nothing ships on a screenshot that was not also
+run through the pixel tests.
+
 ## Do / Don't
 
 - Do keep the frame loud and the data quiet. Don't texture a numeral.

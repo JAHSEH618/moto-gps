@@ -33,7 +33,6 @@ uint8_t phone_nav_bridge_last_building_point_count();
 uint8_t phone_nav_bridge_last_building_footprint_count();
 uint8_t phone_nav_bridge_last_building_class();
 moto_ui_phone_connection_t phone_nav_bridge_last_phone_connection();
-bool phone_nav_bridge_music_page_enabled();
 bool phone_nav_bridge_media_connected();
 bool phone_nav_bridge_media_playing();
 bool phone_nav_bridge_media_like_available();

@@ -10,6 +10,35 @@
 #include "lvgl.h"
 
 LV_FONT_DECLARE(moto_font_nav_16);
+// GB2312 level 1 (3,755 characters) plus Latin at two sizes. Track titles and
+// artist names are phone data, not UI strings: they need a face that can print
+// them, and a 32 px CJK glyph is the smallest that still reads at arm's length.
+LV_FONT_DECLARE(moto_font_text_40);
+LV_FONT_DECLARE(moto_font_text_24);
+// Barlow Condensed ExtraBold at four sizes. The device previously used LVGL's
+// Montserrat regular, which is too light for a round panel read in daylight;
+// DESIGN.md already specifies Barlow Condensed for the phone's display role,
+// so the radar now uses the same face at 800 weight.
+LV_FONT_DECLARE(moto_font_display_18);
+LV_FONT_DECLARE(moto_font_display_24);
+LV_FONT_DECLARE(moto_font_display_40);
+LV_FONT_DECLARE(moto_font_display_72);
+// The hero face: 200 px of the same condensed extra bold. The rider reads one
+// number at speed, so that number is printed at poster scale and the rest of
+// the page gets out of its way.
+LV_FONT_DECLARE(moto_font_hero_176);
+// Six glyphs at 132px for the boot wordmark: large enough to be a poster
+// headline without scaling a smaller bitmap up.
+LV_FONT_DECLARE(moto_font_wordmark_132);
+// Digits and the state words only: the run timer is the largest thing the
+// firmware draws, so it gets its own face instead of a scaled bitmap.
+LV_FONT_DECLARE(moto_font_timer_96);
+LV_FONT_DECLARE(lv_font_montserrat_20);
+// RAM copies of the display faces with a CJK fallback attached. The generated
+// descriptors are const in flash, so they cannot be patched at runtime; a copy
+// of the descriptor is ~100 bytes and leaves the glyph data in flash.
+lv_font_t moto_font_display_40_cjk;
+lv_font_t moto_font_display_24_cjk;
 
 namespace {
 
@@ -32,6 +61,10 @@ constexpr lv_color_t kRed = LV_COLOR_MAKE(0xFF, 0x4B, 0x43);
 constexpr lv_color_t kGreen = LV_COLOR_MAKE(0x69, 0xD4, 0x94);
 
 struct MapPalette {
+    // Outside the disc: the device bezel. Never a data colour.
+    lv_color_t frame;
+    // The disc paper on the tool pages. Nav keeps its own map ground.
+    lv_color_t ground;
     lv_color_t background;
     lv_color_t road;
     lv_color_t road_major;
@@ -40,35 +73,89 @@ struct MapPalette {
     lv_color_t building_landmark;
     lv_color_t route;
     lv_color_t route_shadow;
+    // Type and marks on the paper.
+    lv_color_t ink;
+    lv_color_t muted;
+    lv_color_t accent;
+    lv_color_t turquoise;
+    lv_color_t coral;
+    // Type that sits on the map instead of the paper.
+    lv_color_t map_ink;
+    // The halo behind a display numeral: the inverse of `ink`, so the figure
+    // separates from whatever it is printed over.
+    lv_color_t outline;
+    // Filled plates. The fill and the ink that goes on it travel together, so
+    // a theme cannot invert one without the other.
+    lv_color_t on_accent;
+    lv_color_t slab;
+    lv_color_t on_slab;
 };
 
 constexpr MapPalette kOfficialPalette = {
-    kBlack, kRoadGray, kRoadMajor, kRoadMinor,
+    kBlack, kBlack, kBlack, kRoadGray, kRoadMajor, kRoadMinor,
     kBuildingGray, kBuildingLandmark, kWhite, kGraphite,
+    kWhite, kSoft, LV_COLOR_MAKE(0xF3, 0x4D, 0xAA), kIce, kAmber,
+    kWhite, kBlack,
+    kBlack, kGraphite, kWhite,
 };
+
+// Vice City day: the game's map block as the paper. Green ground, cream roads
+// with a black casing, and a magenta rim. Every numeral is ink on cream, which
+// is where daylight contrast comes from.
 constexpr MapPalette kGtaDayPalette = {
-    LV_COLOR_MAKE(0x1A, 0x1F, 0x1A),
-    LV_COLOR_MAKE(0xF6, 0xE6, 0xC5),
-    LV_COLOR_MAKE(0xF6, 0xE6, 0xC5),
-    LV_COLOR_MAKE(0xD9, 0xC9, 0xA8),
-    LV_COLOR_MAKE(0x4A, 0x2A, 0x32),
-    LV_COLOR_MAKE(0x5C, 0x36, 0x3E),
-    LV_COLOR_MAKE(0xC8, 0x60, 0xB8),
-    LV_COLOR_MAKE(0x3A, 0x1F, 0x2E),
+    LV_COLOR_MAKE(0x07, 0x05, 0x0D),  // bezel
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // ROAD CREAM paper
+    LV_COLOR_MAKE(0x1E, 0x7A, 0x46),  // MAP GREEN
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // ROAD CREAM
+    LV_COLOR_MAKE(0xFF, 0xFD, 0xF2),
+    LV_COLOR_MAKE(0xCF, 0xE0, 0xBC),  // secondary roads
+    LV_COLOR_MAKE(0x1A, 0x6B, 0x3D),  // blocks under the roads
+    LV_COLOR_MAKE(0x2A, 0x8B, 0x55),
+    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // HOT PINK route
+    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // OUTLINE BLACK casing
+    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // ink
+    LV_COLOR_MAKE(0x5C, 0x4A, 0x38),  // muted brown
+    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // VICE MAGENTA
+    LV_COLOR_MAKE(0x0E, 0x6F, 0x68),  // deep turquoise: legible on cream
+    LV_COLOR_MAKE(0xD8, 0x45, 0x1A),  // sunset coral
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // type on the map is cream, always
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // halo = paper, the inverse of ink
+    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // ink on a magenta plate
+    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // counter slab
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
 };
+
+// Vice City night: midnight purple paper, cream type, the same roads and the
+// same magenta. One structure, inverted paper.
 constexpr MapPalette kGtaNightPalette = {
-    kBlack,
-    LV_COLOR_MAKE(0x46, 0x56, 0x6B),
-    LV_COLOR_MAKE(0x5A, 0x6E, 0x84),
-    LV_COLOR_MAKE(0x2E, 0x3A, 0x49),
-    LV_COLOR_MAKE(0x1A, 0x22, 0x30),
-    LV_COLOR_MAKE(0x26, 0x31, 0x42),
-    LV_COLOR_MAKE(0x39, 0xE6, 0xFF),
-    LV_COLOR_MAKE(0x0B, 0x2A, 0x33),
+    LV_COLOR_MAKE(0x07, 0x05, 0x0D),
+    LV_COLOR_MAKE(0x14, 0x10, 0x24),  // MIDNIGHT PURPLE paper
+    LV_COLOR_MAKE(0x14, 0x10, 0x24),  // MAP GROUND
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
+    LV_COLOR_MAKE(0xFF, 0xFD, 0xF4),
+    LV_COLOR_MAKE(0xC9, 0xC6, 0xA8),
+    LV_COLOR_MAKE(0x21, 0x18, 0x48),
+    LV_COLOR_MAKE(0x2C, 0x21, 0x60),
+    LV_COLOR_MAKE(0xFF, 0x5A, 0xCD),  // VICE PINK route
+    LV_COLOR_MAKE(0x0A, 0x06, 0x14),
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // SUNSET CREAM
+    LV_COLOR_MAKE(0xB9, 0xB1, 0xC9),
+    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // VICE MAGENTA
+    LV_COLOR_MAKE(0x42, 0xF5, 0xD7),  // MIAMI TURQUOISE
+    LV_COLOR_MAKE(0xFF, 0x8F, 0x5E),  // sunset coral
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // map type
+    LV_COLOR_MAKE(0x07, 0x05, 0x0D),  // halo = bezel, the inverse of ink
+    LV_COLOR_MAKE(0x12, 0x0D, 0x1C),  // ink on a magenta plate
+    LV_COLOR_MAKE(0x07, 0x05, 0x0D),  // counter slab
+    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
 };
+
+// Vice City frame colours, shared by both themes: the rim is the brand, not a
+// theme variable.
+constexpr lv_color_t kViceMagenta = LV_COLOR_MAKE(0xF3, 0x4D, 0xAA);
+constexpr lv_color_t kOutlineBlack = LV_COLOR_MAKE(0x17, 0x15, 0x1B);
+
 constexpr double kPi = 3.14159265358979323846;
-constexpr int kCompassTickCount = 24;
-constexpr int kSpeedTickCount = 18;
 constexpr int kDesignWidth = 360;
 constexpr std::uint32_t kPageDotsVisibleMs = 5'000;
 // Keep LVGL, the UI interpolation timer and IMU presentation on the same
@@ -78,6 +165,15 @@ constexpr std::uint32_t kRouteMotionFrameMs = 25;
 static_assert(LV_DEF_REFR_PERIOD == kRouteMotionFrameMs,
               "LVGL refresh and map motion must use the same cadence");
 constexpr std::uint32_t kConnectionSuccessHoldMs = 920;
+// 0-100 instrument. The page is a drag strip gauge, not a stats panel: one
+// hero numeral, a shift strip that fills as speed climbs to the target, and
+// the state spelled out so the rider never has to infer whether the clock is
+// running.
+constexpr std::uint16_t kPerfTargetKph = 100;
+constexpr int kPerfSegmentCount = 12;
+// A stop has to look deliberate: braking to 0 for a red light is not a new
+// run until the wheels have been still for a moment.
+constexpr std::uint32_t kPerfRearmStillMs = 1'500;
 // Home is only reachable while the bike is effectively stopped; see
 // home_shortcut_event().
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
@@ -89,6 +185,27 @@ constexpr std::uint32_t kHomeHintMs = 3'000;
 // North badge diameter. It rides the ring, so it is sized in design pixels
 // like the rest of the HUD.
 constexpr int kNorthBadgeSizeDesign = 20;
+
+// Which palette slot a string reads from. Labels register here once, at
+// creation, so a theme switch can repaint every string without walking the
+// whole object tree or knowing each label by name.
+enum class TextRole : std::uint8_t {
+    Ink = 0,
+    Muted,
+    Accent,
+    // Poster-scale numerals: same colour as Ink, heavier casing.
+    Display,
+    // Type printed on the map rather than on the paper.
+    MapInk,
+    OnAccent,
+    OnSlab,
+};
+
+constexpr std::size_t kThemedTextCapacity = 40;
+struct ThemedText {
+    lv_obj_t *object;
+    TextRole role;
+};
 
 enum class LifecycleVisual : std::uint8_t {
     Hidden = 0,
@@ -120,6 +237,10 @@ struct MapPolyline {
 struct Ui {
     lv_obj_t *screen = nullptr;
     lv_obj_t *pages[MOTO_UI_PAGE_COUNT]{};
+    // One paper disc and one bezel per page. They are stored so a theme switch
+    // repaints the paper without rebuilding the tree.
+    lv_obj_t *page_discs[MOTO_UI_PAGE_COUNT]{};
+    lv_obj_t *page_frames[MOTO_UI_PAGE_COUNT]{};
     lv_obj_t *page_dots[MOTO_UI_PAGE_COUNT]{};
     lv_timer_t *page_dots_timer = nullptr;
     moto_ui_page_t page = MOTO_UI_PAGE_NAVIGATION;
@@ -127,7 +248,9 @@ struct Ui {
 
     lv_obj_t *nav_map = nullptr;
     lv_obj_t *nav_map_background = nullptr;
-    moto_ui_theme_t theme = MOTO_UI_THEME_OFFICIAL;
+    // GTA is the product's own look, so it is the default rather than an
+    // opt-in. MOTO_UI_THEME_OFFICIAL stays available for the vendor palette.
+    moto_ui_theme_t theme = MOTO_UI_THEME_GTA_DAY;
     // Day/night signal supplied by the phone. Only MOTO_UI_THEME_AUTO reads
     // it; an explicit theme stays authoritative.
     bool ambient_night = false;
@@ -136,7 +259,7 @@ struct Ui {
     // competes with the roads that matter while moving, and the phone owns
     // the trade through SettingsState.show_buildings.
     bool show_buildings = false;
-    MapPalette palette = kOfficialPalette;
+    MapPalette palette = kGtaDayPalette;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_obj_t *nav_building_fill = nullptr;
     MapPolyline nav_building_lines[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
@@ -208,6 +331,20 @@ struct Ui {
     lv_obj_t *nav_lifecycle_subtitle = nullptr;
     lv_obj_t *nav_lifecycle_kicker = nullptr;
     lv_timer_t *nav_lifecycle_timer = nullptr;
+    lv_obj_t *lifecycle_rules[2]{};
+    lv_obj_t *lifecycle_slash = nullptr;
+    ThemedText themed_text[kThemedTextCapacity]{};
+    std::uint8_t themed_text_count = 0;
+
+    // Filled plates are themed the same way text is: the magenta brand block
+    // and the ink counter slab are different roles and must not be swapped.
+    enum class FillRole : std::uint8_t { Accent = 0, Slab };
+    struct ThemedFill {
+        lv_obj_t *object;
+        FillRole role;
+    };
+    ThemedFill themed_fills[32]{};
+    std::uint8_t themed_fill_count = 0;
     lv_timer_t *nav_success_timer = nullptr;
     moto_ui_phone_connection_t phone_connection = MOTO_UI_PHONE_OFFLINE;
     LifecycleVisual lifecycle_visual = LifecycleVisual::Hidden;
@@ -217,31 +354,56 @@ struct Ui {
     bool navigation_has_guidance = false;
     bool navigation_route_request_in_flight = false;
 
-    lv_obj_t *speed_arc = nullptr;
+    lv_obj_t *speed_gauge = nullptr;
     lv_obj_t *speed_value = nullptr;
-    lv_obj_t *speed_ticks[kSpeedTickCount]{};
-    lv_point_precise_t speed_tick_points[kSpeedTickCount][2]{};
+    lv_obj_t *speed_limit = nullptr;
+    lv_obj_t *speed_limit_value = nullptr;
+    std::uint16_t speed_drawn = 0;
 
     lv_obj_t *perf_target = nullptr;
     lv_obj_t *perf_timer = nullptr;
     lv_obj_t *perf_best = nullptr;
+    lv_obj_t *perf_chip = nullptr;
+    lv_obj_t *perf_chip_text = nullptr;
+    lv_obj_t *perf_gg_ring = nullptr;
+    lv_obj_t *perf_delta = nullptr;
+    lv_obj_t *perf_segments[kPerfSegmentCount]{};
+    lv_obj_t *perf_strip = nullptr;
+    lv_timer_t *perf_timer_task = nullptr;
+    enum class PerfState : std::uint8_t { Armed, Running, Launched };
+    PerfState perf_state = PerfState::Armed;
+    std::uint32_t perf_run_start_ms = 0;
+    std::uint32_t perf_still_since_ms = 0;
+    std::uint16_t perf_best_centis = 0;
+    std::uint32_t perf_last_centis = 0;
     lv_obj_t *perf_long_g = nullptr;
     lv_obj_t *perf_lat_g = nullptr;
     lv_obj_t *perf_gg_dot = nullptr;
     lv_obj_t *lean_value = nullptr;
-    lv_obj_t *lean_side = nullptr;
-    lv_obj_t *lean_peak = nullptr;
-    lv_obj_t *lean_bar_track = nullptr;
-    lv_obj_t *lean_bar_fill = nullptr;
-    float lean_peak_deg = 0.0F;
+    lv_obj_t *lean_scene = nullptr;
+    lv_obj_t *lean_marks = nullptr;
+    lv_obj_t *lean_blip = nullptr;
+    lv_obj_t *lean_max_l_plate = nullptr;
+    lv_obj_t *lean_max_r_plate = nullptr;
+    lv_obj_t *lean_max_l = nullptr;
+    lv_obj_t *lean_max_r = nullptr;
+    lv_obj_t *lean_state = nullptr;
+    lv_obj_t *lean_state_text = nullptr;
+    float lean_deg = 0.0F;
+    float lean_peak_left = 0.0F;
+    float lean_peak_right = 0.0F;
+    bool lean_has = false;
+    bool lean_scene_dirty = true;
 
     lv_obj_t *compass_heading = nullptr;
     lv_obj_t *compass_cardinal = nullptr;
     lv_obj_t *compass_speed = nullptr;
-    lv_obj_t *compass_ticks[kCompassTickCount]{};
-    lv_point_precise_t compass_tick_points[kCompassTickCount][2]{};
+    lv_obj_t *compass_marks = nullptr;
+    std::uint16_t compass_drawn_heading = 0;
+    bool compass_heading_drawn = false;
     lv_obj_t *compass_letters[4]{};
 
+    lv_obj_t *music_source_plate = nullptr;
     lv_obj_t *music_source = nullptr;
     lv_obj_t *music_title = nullptr;
     lv_obj_t *music_artist = nullptr;
@@ -261,7 +423,6 @@ struct Ui {
     void *demo_callback_context = nullptr;
     moto_home_shortcut_callback_t home_callback = nullptr;
     void *home_callback_context = nullptr;
-    bool music_page_enabled = true;
     bool demo_active = false;
     bool reduce_motion = false;
     // True only while the full widget tree from moto_nav_ui_create() exists.
@@ -287,11 +448,10 @@ void reset_ui_state() {
     ui.page_dots_visible = true;
     ui.nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
     ui.phone_connection = MOTO_UI_PHONE_OFFLINE;
-    ui.theme = MOTO_UI_THEME_OFFICIAL;
-    ui.palette = kOfficialPalette;
+    ui.theme = MOTO_UI_THEME_GTA_DAY;
+    ui.palette = kGtaDayPalette;
     ui.lifecycle_visual = LifecycleVisual::Hidden;
     ui.lifecycle_target = LifecycleVisual::Hidden;
-    ui.music_page_enabled = true;
     // Force the first geometry payload to bind every mutable LVGL line even
     // when its protocol revision happens to start at zero.
     ui.nav_route_generation = ~std::uint32_t{0};
@@ -317,6 +477,10 @@ void teardown_ui() {
     if(ui.nav_lifecycle_timer != nullptr) {
         lv_timer_delete(ui.nav_lifecycle_timer);
         ui.nav_lifecycle_timer = nullptr;
+    }
+    if(ui.perf_timer_task != nullptr) {
+        lv_timer_delete(ui.perf_timer_task);
+        ui.perf_timer_task = nullptr;
     }
     if(ui.nav_success_timer != nullptr) {
         lv_timer_delete(ui.nav_success_timer);
@@ -353,21 +517,202 @@ lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font,
     return label;
 }
 
+lv_color_t role_color(TextRole role) {
+    switch(role) {
+        case TextRole::Muted: return ui.palette.muted;
+        case TextRole::Accent: return ui.palette.accent;
+        case TextRole::MapInk: return ui.palette.map_ink;
+        case TextRole::OnAccent: return ui.palette.on_accent;
+        case TextRole::OnSlab: return ui.palette.on_slab;
+        case TextRole::Display:
+        case TextRole::Ink:
+        default: return ui.palette.ink;
+    }
+}
+
+// Use this instead of make_label() for any string that must survive a theme
+// switch. The colour is resolved now and again on every theme change.
+void apply_text_outline(lv_obj_t *label, TextRole role) {
+    // The casing is the inverse of the type colour: black behind cream type at
+    // night, paper behind ink type by day. Without that rule a display numeral
+    // disappears into the horizon or the map it is printed over.
+    int width = 0;
+    lv_color_t color = ui.palette.outline;
+    switch(role) {
+        case TextRole::Display: width = px(5); break;
+        case TextRole::Ink:
+        case TextRole::Accent:
+        case TextRole::MapInk: width = px(2); break;
+        case TextRole::OnAccent:
+        case TextRole::OnSlab:
+        case TextRole::Muted:
+        default: width = 0; break;
+    }
+    if(role == TextRole::MapInk) {
+        // Type on the map keeps the game HUD's black casing in both themes.
+        color = kOutlineBlack;
+        width = px(3);
+    }
+    lv_obj_set_style_text_outline_stroke_color(label, color, 0);
+    lv_obj_set_style_text_outline_stroke_width(label, width, 0);
+    lv_obj_set_style_text_outline_stroke_opa(
+        label, width > 0 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+}
+
+lv_obj_t *make_text(lv_obj_t *parent, const lv_font_t *font, TextRole role,
+                    const char *text) {
+    lv_obj_t *label = make_label(parent, font, role_color(role), text);
+    apply_text_outline(label, role);
+    if(ui.themed_text_count < kThemedTextCapacity) {
+        ui.themed_text[ui.themed_text_count].object = label;
+        ui.themed_text[ui.themed_text_count].role = role;
+        ++ui.themed_text_count;
+    }
+    return label;
+}
+
+// ---------------------------------------------------------------------------
+// Instrument chrome
+//
+// Every page is the same physical object: a disc of paper inside a black
+// casing under one magenta band. A page may not invent its own frame, so the
+// six screens read as six readouts of one instrument rather than six screens.
+// ---------------------------------------------------------------------------
+constexpr int kDialRadius = 207;      // paper edge, under the casing
+// LVGL arcs stroke inward from the given radius, so these are outer edges.
+constexpr int kDialBandOuter = 217;   // magenta band outer edge
+constexpr int kDialCasingOuter = 207; // black casing outer edge
+constexpr int kDialBezelOuter = 233;  // glass edge
+constexpr int kDialBandWidth = 10;
+
+// Points are integer in this LVGL configuration; every drawing routine in the
+// instrument chrome computes in double and lands here.
+lv_point_precise_t pt(double x, double y) {
+    return {static_cast<lv_value_precise_t>(std::lround(x)),
+            static_cast<lv_value_precise_t>(std::lround(y))};
+}
+
+void stroke_ring(lv_layer_t *layer, int radius, int width, lv_color_t color) {
+    lv_draw_arc_dsc_t dsc;
+    lv_draw_arc_dsc_init(&dsc);
+    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
+    dsc.radius = radius;
+    dsc.width = width;
+    dsc.color = color;
+    dsc.opa = LV_OPA_COVER;
+    dsc.rounded = 0;
+    // Two halves: a full 360 arc is the one thing every LVGL major version
+    // treats differently, and the rim is too visible to gamble.
+    dsc.start_angle = 0;
+    dsc.end_angle = 180;
+    lv_draw_arc(layer, &dsc);
+    dsc.start_angle = 180;
+    dsc.end_angle = 360;
+    lv_draw_arc(layer, &dsc);
+}
+
+void draw_instrument_frame(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    // The bezel is painted over the map, so no sliver of map can show between
+    // the rim and the glass edge.
+    stroke_ring(layer, kDialBezelOuter, 16, ui.palette.frame);
+    stroke_ring(layer, kDialBandOuter, kDialBandWidth, ui.palette.accent);
+    // The casing sits inside the band and buries the map's raw edge.
+    stroke_ring(layer, kDialCasingOuter, 10, kOutlineBlack);
+}
+
+lv_obj_t *register_fill(lv_obj_t *object, Ui::FillRole role) {
+    if(ui.themed_fill_count < 32) {
+        ui.themed_fills[ui.themed_fill_count].object = object;
+        ui.themed_fills[ui.themed_fill_count].role = role;
+        ++ui.themed_fill_count;
+    }
+    return object;
+}
+
+// The magenta plate: the brand block, the thing that carries a short label.
+lv_obj_t *make_plate(lv_obj_t *parent, const char *text, int width,
+                     int height, lv_obj_t **label_out = nullptr) {
+    lv_obj_t *plate = lv_obj_create(parent);
+    lv_obj_remove_style_all(plate);
+    lv_obj_clear_flag(plate, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(plate, px(width), px(height));
+    lv_obj_set_style_bg_color(plate, ui.palette.accent, 0);
+    lv_obj_set_style_bg_opa(plate, LV_OPA_COVER, 0);
+    lv_obj_t *label = make_text(plate, &moto_font_display_24,
+                                TextRole::OnAccent, text);
+    lv_obj_set_style_text_letter_space(label, px(2), 0);
+    lv_obj_center(label);
+    if(label_out != nullptr) *label_out = label;
+    return register_fill(plate, Ui::FillRole::Accent);
+}
+
+// The counter slab: the game parks cash and ammo on a black block with cream
+// numerals. Secondary values live here.
+lv_obj_t *make_slab(lv_obj_t *parent, const char *text, int width, int height,
+                    lv_obj_t **label_out = nullptr) {
+    lv_obj_t *slab = lv_obj_create(parent);
+    lv_obj_remove_style_all(slab);
+    lv_obj_clear_flag(slab, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(slab, px(width), px(height));
+    lv_obj_set_style_bg_color(slab, ui.palette.slab, 0);
+    lv_obj_set_style_bg_opa(slab, LV_OPA_COVER, 0);
+    lv_obj_t *label = make_text(slab, &moto_font_display_24,
+                                TextRole::OnSlab, text);
+    lv_obj_set_style_text_letter_space(label, px(1), 0);
+    lv_obj_center(label);
+    if(label_out != nullptr) *label_out = label;
+    return register_fill(slab, Ui::FillRole::Slab);
+}
+
+// Paper + bezel. Content is created after this call and therefore above it.
+void make_page_surface(lv_obj_t *page, moto_ui_page_t index) {
+    lv_obj_set_style_bg_color(page, ui.palette.frame, 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+    lv_obj_t *disc = lv_obj_create(page);
+    lv_obj_remove_style_all(disc);
+    lv_obj_clear_flag(disc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(disc, kDialRadius * 2, kDialRadius * 2);
+    lv_obj_center(disc);
+    lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(disc, ui.palette.ground, 0);
+    lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, 0);
+    ui.page_discs[index] = disc;
+
+    lv_obj_t *frame = lv_obj_create(page);
+    lv_obj_remove_style_all(frame);
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(frame, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_center(frame);
+    lv_obj_add_event_cb(frame, draw_instrument_frame, LV_EVENT_DRAW_MAIN,
+                        nullptr);
+    ui.page_frames[index] = frame;
+}
+
+void apply_text_colors() {
+    for(std::uint8_t i = 0; i < ui.themed_text_count; ++i) {
+        const ThemedText slot = ui.themed_text[i];
+        if(slot.object != nullptr) {
+            lv_obj_set_style_text_color(slot.object, role_color(slot.role), 0);
+            apply_text_outline(slot.object, slot.role);
+        }
+    }
+    for(std::uint8_t i = 0; i < ui.themed_fill_count; ++i) {
+        const Ui::ThemedFill slot = ui.themed_fills[i];
+        if(slot.object == nullptr) continue;
+        lv_obj_set_style_bg_color(
+            slot.object,
+            slot.role == Ui::FillRole::Accent ? ui.palette.accent
+                                              : ui.palette.slab,
+            0);
+    }
+}
+
 void copy_text(char *destination, std::size_t capacity, const char *source,
                const char *fallback) {
     if(capacity == 0) return;
     const char *value = source != nullptr && source[0] != '\0' ? source : fallback;
     std::snprintf(destination, capacity, "%s", value != nullptr ? value : "");
-}
-
-lv_color_t traffic_color(moto_traffic_t traffic) {
-    switch(traffic) {
-        case MOTO_TRAFFIC_CLEAR: return kIce;
-        case MOTO_TRAFFIC_SLOW: return kAmber;
-        case MOTO_TRAFFIC_CONGESTED:
-        case MOTO_TRAFFIC_SEVERE: return kRed;
-        default: return kQuiet;
-    }
 }
 
 const char *cardinal_name(std::uint16_t heading) {
@@ -460,10 +805,15 @@ void update_page_dots() {
         const bool active = i == static_cast<int>(ui.page);
         lv_obj_set_size(ui.page_dots[i], px(active ? 16 : 5), px(5));
         lv_obj_set_style_radius(ui.page_dots[i], px(3), 0);
-        lv_obj_set_style_bg_color(ui.page_dots[i], active ? kWhite : kGraphite, 0);
+        lv_obj_set_style_bg_color(
+            ui.page_dots[i], active ? ui.palette.accent : ui.palette.map_ink, 0);
+        lv_obj_set_style_bg_opa(ui.page_dots[i],
+                                active ? LV_OPA_COVER : LV_OPA_40, 0);
         lv_obj_set_x(ui.page_dots[i], px(145 + i * 22 - (active ? 5 : 0)));
-        const bool available = i != MOTO_UI_PAGE_MUSIC || ui.music_page_enabled;
-        if(ui.page_dots_visible && available) {
+        // Every page is reachable at all times. The music page used to
+        // disappear until the phone advertised media capabilities, which
+        // meant the controls vanished exactly when a rider wanted them.
+        if(ui.page_dots_visible) {
             lv_obj_remove_flag(ui.page_dots[i], LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(ui.page_dots[i], LV_OBJ_FLAG_HIDDEN);
@@ -510,9 +860,6 @@ void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
     // still deliver one before the PMIC cuts power) must not touch LVGL: the
     // object is gone and LVGL asserts on it.
     if(ui.pages[page] == nullptr) return;
-    if(page == MOTO_UI_PAGE_MUSIC && !ui.music_page_enabled) {
-        page = MOTO_UI_PAGE_NAVIGATION;
-    }
     const bool changed = page != ui.page;
     ui.page = page;
     for(int i = 0; i < MOTO_UI_PAGE_COUNT; ++i) {
@@ -541,10 +888,6 @@ void gesture_event(lv_event_t *) {
         next = (next + MOTO_UI_PAGE_COUNT - 1) % MOTO_UI_PAGE_COUNT;
     } else {
         return;
-    }
-    if(!ui.music_page_enabled && next == MOTO_UI_PAGE_MUSIC) {
-        next = direction == LV_DIR_LEFT ? MOTO_UI_PAGE_NAVIGATION
-                                        : MOTO_UI_PAGE_COMPASS;
     }
     const auto requested = static_cast<moto_ui_page_t>(next);
     if(ui.page_callback != nullptr) {
@@ -1308,206 +1651,39 @@ void draw_segment(lv_layer_t *layer, lv_color_t color, int width,
     lv_draw_line(layer, &line);
 }
 
-void draw_disc(lv_layer_t *layer, int x, int y, int diameter,
-               lv_color_t color, lv_opa_t opacity) {
-    lv_draw_rect_dsc_t disc;
-    lv_draw_rect_dsc_init(&disc);
-    disc.radius = LV_RADIUS_CIRCLE;
-    disc.bg_color = color;
-    disc.bg_opa = opacity;
-    disc.border_opa = LV_OPA_TRANSP;
-    const lv_area_t area = {
-        x - diameter / 2,
-        y - diameter / 2,
-        x + diameter / 2,
-        y + diameter / 2,
-    };
-    lv_draw_rect(layer, &disc, &area);
-}
-
-void draw_phone_body(lv_layer_t *layer, const lv_area_t& area,
-                     lv_color_t color, lv_opa_t opacity) {
-    const lv_area_t phone = {
-        area.x1 + px(49),
-        area.y1 + px(25),
-        area.x1 + px(101),
-        area.y1 + px(121),
-    };
-    lv_draw_rect_dsc_t frame;
-    lv_draw_rect_dsc_init(&frame);
-    frame.radius = px(13);
-    frame.bg_opa = LV_OPA_TRANSP;
-    frame.border_color = color;
-    frame.border_width = px(4);
-    frame.border_opa = opacity;
-    lv_draw_rect(layer, &frame, &phone);
-
-    const lv_point_precise_t receiver[] = {
-        {static_cast<lv_value_precise_t>(area.x1 + px(67)),
-         static_cast<lv_value_precise_t>(area.y1 + px(36))},
-        {static_cast<lv_value_precise_t>(area.x1 + px(83)),
-         static_cast<lv_value_precise_t>(area.y1 + px(36))},
-    };
-    const lv_point_precise_t home[] = {
-        {static_cast<lv_value_precise_t>(area.x1 + px(68)),
-         static_cast<lv_value_precise_t>(area.y1 + px(110))},
-        {static_cast<lv_value_precise_t>(area.x1 + px(82)),
-         static_cast<lv_value_precise_t>(area.y1 + px(110))},
-    };
-    draw_segment(layer, color, px(3), opacity, receiver, 2);
-    draw_segment(layer, color, px(3), opacity, home, 2);
-}
-
-void draw_connection_symbol(lv_event_t *event) {
-    lv_obj_t *object = lv_event_get_target_obj(event);
-    lv_area_t area;
-    lv_obj_get_coords(object, &area);
-    lv_layer_t *layer = lv_event_get_layer(event);
-    const int center_x = area.x1 + px(75);
-    const int center_y = area.y1 + px(73);
-    const double phase = ui.lifecycle_phase_deg * kPi / 180.0;
-
-    if(ui.lifecycle_visual == LifecycleVisual::Connected) {
-        const int pulse = static_cast<int>(px(67) +
-            std::lround((std::sin(phase) + 1.0) * px(3.0)));
-        lv_draw_arc_dsc_t halo;
-        lv_draw_arc_dsc_init(&halo);
-        halo.color = kGreen;
-        halo.width = px(3);
-        halo.opa = LV_OPA_50;
-        halo.rounded = 1;
-        halo.center = {center_x, center_y};
-        halo.radius = pulse;
-        halo.start_angle = 0;
-        halo.end_angle = 360;
-        lv_draw_arc(layer, &halo);
-        draw_disc(layer, center_x, center_y, px(92), kGreen, LV_OPA_COVER);
-        const lv_point_precise_t check[] = {
-            {static_cast<lv_value_precise_t>(area.x1 + px(53)),
-             static_cast<lv_value_precise_t>(area.y1 + px(74))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(69)),
-             static_cast<lv_value_precise_t>(area.y1 + px(89))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(99)),
-             static_cast<lv_value_precise_t>(area.y1 + px(55))},
-        };
-        draw_segment(layer, kBlack, px(9), LV_OPA_COVER, check, 3);
-        return;
-    }
-
-    if(ui.lifecycle_visual == LifecycleVisual::Ready ||
-       ui.lifecycle_visual == LifecycleVisual::Planning) {
-        const lv_point_precise_t route[] = {
-            {static_cast<lv_value_precise_t>(area.x1 + px(34)),
-             static_cast<lv_value_precise_t>(area.y1 + px(113))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(50)),
-             static_cast<lv_value_precise_t>(area.y1 + px(91))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(80)),
-             static_cast<lv_value_precise_t>(area.y1 + px(98))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(111)),
-             static_cast<lv_value_precise_t>(area.y1 + px(48))},
-        };
-        draw_segment(layer, kGraphite, px(12), LV_OPA_COVER, route, 4);
-        draw_segment(layer, kWhite, px(5), LV_OPA_COVER, route, 4);
-        draw_disc(layer, route[0].x, route[0].y, px(16), kWhite,
-                  LV_OPA_COVER);
-
-        lv_draw_arc_dsc_t pin;
-        lv_draw_arc_dsc_init(&pin);
-        pin.color = kWhite;
-        pin.width = px(5);
-        pin.opa = LV_OPA_COVER;
-        pin.rounded = 1;
-        pin.center = {route[3].x, route[3].y};
-        pin.radius = px(13);
-        pin.start_angle = 0;
-        pin.end_angle = 360;
-        lv_draw_arc(layer, &pin);
-        draw_disc(layer, route[3].x, route[3].y, px(7), kWhite,
-                  LV_OPA_COVER);
-
-        if(ui.lifecycle_visual == LifecycleVisual::Planning) {
-            // A single travelling bead communicates progress without a
-            // processor-heavy full-screen animation.
-            const double t =
-                static_cast<double>(ui.lifecycle_phase_deg % 120U) / 120.0;
-            const int segment = std::min(2, static_cast<int>(t * 3.0));
-            const double local = t * 3.0 - segment;
-            const int x = static_cast<int>(std::lround(
-                route[segment].x +
-                (route[segment + 1].x - route[segment].x) * local));
-            const int y = static_cast<int>(std::lround(
-                route[segment].y +
-                (route[segment + 1].y - route[segment].y) * local));
-            draw_disc(layer, x, y, px(12), kWhite, LV_OPA_COVER);
-        } else {
-            const lv_opa_t ready_opa = static_cast<lv_opa_t>(
-                150 + std::lround((std::sin(phase) + 1.0) * 40.0));
-            draw_disc(layer, route[0].x, route[0].y, px(25), kWhite,
-                      ready_opa);
-        }
-        return;
-    }
-
-    draw_phone_body(layer, area, kWhite, LV_OPA_COVER);
-    const bool connecting =
-        ui.lifecycle_visual == LifecycleVisual::PhoneConnecting;
-    const int speed = connecting ? 2 : 1;
-    for(int index = 0; index < 3; ++index) {
-        lv_draw_arc_dsc_t scan;
-        lv_draw_arc_dsc_init(&scan);
-        scan.color = index == 0 ? kWhite : kQuiet;
-        scan.width = px(index == 0 ? 4 : 3);
-        scan.opa = static_cast<lv_opa_t>(220 - index * 55);
-        scan.rounded = 1;
-        scan.center = {center_x, center_y};
-        scan.radius = px(66 - index * 7);
-        const int start =
-            (static_cast<int>(ui.lifecycle_phase_deg) * speed + index * 112) %
-            360;
-        scan.start_angle = start;
-        scan.end_angle = start + (connecting ? 54 : 34);
-        lv_draw_arc(layer, &scan);
-    }
-    const int orbit_x = static_cast<int>(
-        std::lround(center_x + std::sin(phase * speed) * px(66.0)));
-    const int orbit_y = static_cast<int>(
-        std::lround(center_y - std::cos(phase * speed) * px(66.0)));
-    draw_disc(layer, orbit_x, orbit_y, px(connecting ? 11 : 9), kWhite,
-              LV_OPA_COVER);
-}
-
 void set_layer_opacity(void *object, int32_t opacity) {
     lv_obj_set_style_opa(static_cast<lv_obj_t *>(object), opacity, 0);
 }
 
 void apply_lifecycle_content(LifecycleVisual visual) {
     ui.lifecycle_visual = visual;
-    const char *kicker = "MOTO GPS / PHONE LINK";
+    const char *kicker = "PHONE LINK";
     const char *title = "";
     const char *subtitle = "";
-    lv_color_t title_color = kWhite;
+    // Every state is two lines: the headline is the poster, and a layout that
+    // jumps between one and two lines would move the composition on each
+    // transition.
     switch(visual) {
         case LifecycleVisual::PhoneOffline:
-            title = "CONNECT PHONE";
+            title = "CONNECT\nPHONE";
             subtitle = "请打开手机应用";
             break;
         case LifecycleVisual::PhoneConnecting:
-            title = "CONNECTING";
+            title = "LINKING\nPHONE";
             subtitle = "正在建立连接";
             break;
         case LifecycleVisual::Connected:
-            title = "CONNECTED";
+            title = "PHONE\nLINKED";
             subtitle = "连接成功";
-            title_color = kGreen;
             break;
         case LifecycleVisual::Ready:
-            kicker = "MOTO GPS / READY";
-            title = "READY TO RIDE";
+            kicker = "READY";
+            title = "READY TO\nRIDE";
             subtitle = "请在手机选择目的地";
             break;
         case LifecycleVisual::Planning:
-            kicker = "MOTO GPS / ROUTE";
-            title = "BUILDING ROUTE";
+            kicker = "ROUTE";
+            title = "BUILDING\nROUTE";
             subtitle = "正在规划路线";
             break;
         case LifecycleVisual::Hidden:
@@ -1516,12 +1692,12 @@ void apply_lifecycle_content(LifecycleVisual visual) {
     lv_label_set_text(ui.nav_lifecycle_kicker, kicker);
     lv_label_set_text(ui.nav_lifecycle_title, title);
     lv_label_set_text(ui.nav_lifecycle_subtitle, subtitle);
-    lv_obj_set_style_text_color(ui.nav_lifecycle_title, title_color, 0);
-    lv_obj_set_style_text_color(ui.nav_lifecycle_subtitle,
-                                visual == LifecycleVisual::Connected
-                                    ? kGreen : kSoft,
-                                0);
-    lv_obj_invalidate(ui.nav_lifecycle_symbol);
+    lv_obj_set_style_text_color(ui.nav_lifecycle_title, ui.palette.ink, 0);
+    lv_obj_set_style_text_color(
+        ui.nav_lifecycle_subtitle,
+        visual == LifecycleVisual::Connected ? ui.palette.accent
+                                             : ui.palette.muted,
+        0);
 }
 
 void lifecycle_fade_in();
@@ -1745,140 +1921,256 @@ void update_navigation(const moto_ui_state_t *state) {
 }
 
 void update_speedometer(const moto_ui_state_t *state) {
+    if(ui.speed_value == nullptr) return;
+    const bool moving = state->speed_kph > 0;
     char value[8];
-    std::snprintf(value, sizeof(value), "%u",
-                  static_cast<unsigned>(state->speed_kph));
+    if(moving) {
+        std::snprintf(value, sizeof(value), "%u",
+                      static_cast<unsigned>(state->speed_kph));
+    } else {
+        std::snprintf(value, sizeof(value), "0");
+    }
     lv_label_set_text(ui.speed_value, value);
-    lv_obj_align(ui.speed_value, LV_ALIGN_CENTER, 0, px(-10));
-    lv_arc_set_value(ui.speed_arc, std::min<int>(160, state->speed_kph));
-    for(int i = 0; i < kSpeedTickCount; ++i) {
-        const bool active = state->speed_kph >= static_cast<unsigned>(i * 10);
-        lv_obj_set_style_line_color(ui.speed_ticks[i], active ? kWhite : kGraphite, 0);
+    if(ui.speed_drawn != state->speed_kph) {
+        ui.speed_drawn = state->speed_kph;
+        lv_obj_invalidate(ui.speed_gauge);
+    }
+    if(state->speed_limit_kph > 0) {
+        std::snprintf(value, sizeof(value), "%u",
+                      static_cast<unsigned>(state->speed_limit_kph));
+        lv_label_set_text(ui.speed_limit_value, value);
+        lv_obj_remove_flag(ui.speed_limit, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(ui.speed_limit, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
 void update_compass(const moto_ui_state_t *state) {
+    if(ui.compass_cardinal == nullptr) return;
     char heading[12];
     std::snprintf(heading, sizeof(heading), "%03u°",
                   static_cast<unsigned>(state->heading_deg));
     lv_label_set_text(ui.compass_heading, heading);
     lv_label_set_text(ui.compass_cardinal, cardinal_name(state->heading_deg));
     char speed[20];
-    std::snprintf(speed, sizeof(speed), "%u km/h",
+    std::snprintf(speed, sizeof(speed), "%u KM/H",
                   static_cast<unsigned>(state->speed_kph));
     lv_label_set_text(ui.compass_speed, speed);
 
-    const double heading_rad = state->heading_deg * kPi / 180.0;
-    for(int i = 0; i < kCompassTickCount; ++i) {
-        const double angle = i * 15.0 * kPi / 180.0 - heading_rad;
-        const double inner = px(i % 3 == 0 ? 138.0 : 145.0);
-        ui.compass_tick_points[i][0] = {
-            static_cast<lv_value_precise_t>(px(180.0) + std::sin(angle) * px(154.0)),
-            static_cast<lv_value_precise_t>(px(180.0) - std::cos(angle) * px(154.0)),
-        };
-        ui.compass_tick_points[i][1] = {
-            static_cast<lv_value_precise_t>(px(180.0) + std::sin(angle) * inner),
-            static_cast<lv_value_precise_t>(px(180.0) - std::cos(angle) * inner),
-        };
-        lv_line_set_points_mutable(ui.compass_ticks[i],
-                                   ui.compass_tick_points[i], 2);
-        lv_obj_set_style_line_color(ui.compass_ticks[i], i == 0 ? kAmber : kQuiet, 0);
+    if(ui.compass_drawn_heading != state->heading_deg) {
+        ui.compass_drawn_heading = state->heading_deg;
+        lv_obj_invalidate(ui.compass_marks);
     }
 
-    static const double bearings[4] = {0.0, 90.0, 180.0, 270.0};
-    static const char *letters[4] = {"N", "E", "S", "W"};
-    for(int i = 0; i < 4; ++i) {
-        const double angle = bearings[i] * kPi / 180.0 - heading_rad;
-        const int x = static_cast<int>(px(180.0) + std::sin(angle) * px(112.0));
-        const int y = static_cast<int>(px(180.0) - std::cos(angle) * px(112.0));
-        lv_label_set_text(ui.compass_letters[i], letters[i]);
-        lv_obj_set_pos(ui.compass_letters[i], x - px(14), y - px(10));
-        lv_obj_set_style_text_color(ui.compass_letters[i], i == 0 ? kAmber : kQuiet, 0);
+}
+
+const char *perf_state_word() {
+    switch(ui.perf_state) {
+        case Ui::PerfState::Running: return "LAUNCH";
+        case Ui::PerfState::Launched: return "DONE";
+        case Ui::PerfState::Armed:
+        default: return "ARMED";
     }
+}
+
+void perf_set_elapsed(std::uint32_t centis) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "%u.%02u",
+                  static_cast<unsigned>(centis / 100U),
+                  static_cast<unsigned>(centis % 100U));
+    lv_label_set_text(ui.perf_timer, text);
+}
+
+void perf_apply_chip() {
+    if(ui.perf_chip_text == nullptr) return;
+    lv_label_set_text(ui.perf_chip_text, perf_state_word());
+}
+
+void perf_fill_strip(std::uint16_t speed_kph) {
+    const int filled = static_cast<int>(
+        std::min<int>(kPerfSegmentCount,
+                      static_cast<int>(speed_kph) * kPerfSegmentCount /
+                          kPerfTargetKph));
+    for(int i = 0; i < kPerfSegmentCount; ++i) {
+        // Filled segments use the accent once the run is done and ink while
+        // it is live; unfilled segments stay a faint plate.
+        const bool on = i < filled;
+        lv_obj_set_style_bg_opa(ui.perf_segments[i],
+                                on ? LV_OPA_COVER : LV_OPA_20, 0);
+        lv_obj_set_style_bg_color(
+            ui.perf_segments[i],
+            (on && ui.perf_state == Ui::PerfState::Launched) ? ui.palette.accent
+                                                             : ui.palette.ink,
+            0);
+    }
+}
+
+void perf_publish_best() {
+    if(ui.perf_best == nullptr) return;
+    char text[24];
+    if(ui.perf_best_centis == 0) {
+        std::snprintf(text, sizeof(text), "BEST --.-");
+    } else {
+        std::snprintf(text, sizeof(text), "BEST %u.%02u",
+                      ui.perf_best_centis / 100U, ui.perf_best_centis % 100U);
+    }
+    lv_label_set_text(ui.perf_best, text);
+}
+
+// Runs on the LVGL thread, so it can read the retained state without a lock.
+void perf_tick(lv_timer_t *) {
+    if(ui.perf_timer == nullptr || !ui.live) return;
+    if(ui.perf_state != Ui::PerfState::Running) return;
+    const std::uint32_t elapsed = lv_tick_elaps(ui.perf_run_start_ms);
+    perf_set_elapsed(elapsed / 10U);
 }
 
 void update_performance(const moto_ui_state_t *state) {
     if(ui.perf_timer == nullptr) return;
-    if(state->has_attitude) {
-        char text[24];
-        std::snprintf(text, sizeof(text), "LONG %+0.2f g",
-                      static_cast<double>(state->longitudinal_g));
-        lv_label_set_text(ui.perf_long_g, text);
-        std::snprintf(text, sizeof(text), "LAT %+0.2f g",
-                      static_cast<double>(state->lateral_g));
-        lv_label_set_text(ui.perf_lat_g, text);
 
-        const int32_t centre_x = px(120) + px(60);
-        const int32_t centre_y = px(205) + px(60);
-        const int32_t radius = px(50);
-        const float lateral = std::clamp(
-            static_cast<float>(state->lateral_g) / 1.5F, -1.0F, 1.0F);
-        const float longitudinal = std::clamp(
-            static_cast<float>(state->longitudinal_g) / 1.5F, -1.0F, 1.0F);
-        lv_obj_set_pos(ui.perf_gg_dot,
-                       centre_x - px(5) + static_cast<int32_t>(lateral * radius),
-                       centre_y - px(5) - static_cast<int32_t>(longitudinal * radius));
-        lv_obj_remove_flag(ui.perf_gg_dot, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_label_set_text(ui.perf_long_g, "LONG --");
-        lv_label_set_text(ui.perf_lat_g, "LAT --");
-        lv_obj_add_flag(ui.perf_gg_dot, LV_OBJ_FLAG_HIDDEN);
+    const std::uint16_t speed = state->speed_kph;
+    const std::uint32_t now = lv_tick_get();
+    switch(ui.perf_state) {
+        case Ui::PerfState::Armed:
+            // Rolling away from a standstill starts the clock; the strip is
+            // the only thing that moves until then.
+            if(speed >= 1) {
+                ui.perf_state = Ui::PerfState::Running;
+                ui.perf_run_start_ms = now;
+                perf_set_elapsed(0);
+            }
+            break;
+        case Ui::PerfState::Running:
+            if(speed >= kPerfTargetKph) {
+                const std::uint32_t centis =
+                    lv_tick_elaps(ui.perf_run_start_ms) / 10U;
+                ui.perf_last_centis = centis;
+                if(ui.perf_best_centis == 0 || centis < ui.perf_best_centis) {
+                    ui.perf_best_centis =
+                        static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                            centis, 0xFFFFU));
+                    perf_publish_best();
+                    if(ui.perf_delta != nullptr) {
+                        lv_label_set_text(ui.perf_delta, "PB");
+                    }
+                } else {
+                    char text[16];
+                    const std::int32_t diff =
+                        static_cast<std::int32_t>(centis) -
+                        static_cast<std::int32_t>(ui.perf_best_centis);
+                    std::snprintf(
+                        text, sizeof(text), "%+d.%02u",
+                        static_cast<int>(diff / 100),
+                        static_cast<unsigned>(std::abs(diff) % 100));
+                    if(ui.perf_delta != nullptr) {
+                        lv_label_set_text(ui.perf_delta, text);
+                    }
+                }
+                ui.perf_state = Ui::PerfState::Launched;
+            } else {
+                perf_set_elapsed(lv_tick_elaps(ui.perf_run_start_ms) / 10U);
+            }
+            break;
+        case Ui::PerfState::Launched:
+            // Rearm only after the bike has actually stopped and stayed
+            // stopped, so coasting through a junction does not wipe the run.
+            if(speed == 0) {
+                if(ui.perf_still_since_ms == 0) {
+                    ui.perf_still_since_ms = now;
+                } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
+                          kPerfRearmStillMs) {
+                    ui.perf_state = Ui::PerfState::Armed;
+                    ui.perf_still_since_ms = 0;
+                    if(ui.perf_delta != nullptr) {
+                        lv_label_set_text(ui.perf_delta, "");
+                    }
+                    lv_label_set_text(ui.perf_timer, "-.-");
+                }
+            } else {
+                ui.perf_still_since_ms = 0;
+            }
+            break;
     }
+    perf_apply_chip();
+    perf_fill_strip(speed);
+
 }
 
 void update_lean(const moto_ui_state_t *state) {
     if(ui.lean_value == nullptr) return;
-    if(state->has_attitude) {
-        char text[16];
+    const bool has = state->has_attitude != 0;
+    const float lean = has ? static_cast<float>(state->lean_deg) : 0.0F;
+
+    char text[24];
+    if(has) {
         std::snprintf(text, sizeof(text), "%+0.0f°",
-                      static_cast<double>(state->lean_deg));
+                      static_cast<double>(lean));
         lv_label_set_text(ui.lean_value, text);
-        lv_label_set_text(ui.lean_side,
-                          state->lean_deg >= 0.0F ? "RIGHT" : "LEFT");
-
-        ui.lean_peak_deg = std::max(
-            ui.lean_peak_deg, std::fabs(static_cast<float>(state->lean_deg)));
-        std::snprintf(text, sizeof(text), "MAX %.0f°",
-                      static_cast<double>(ui.lean_peak_deg));
-        lv_label_set_text(ui.lean_peak, text);
-
-        constexpr float kFullScaleDeg = 45.0F;
-        const float magnitude = std::min(
-            std::fabs(static_cast<float>(state->lean_deg)) / kFullScaleDeg,
-            1.0F);
-        const int32_t width = static_cast<int32_t>(px(150) * magnitude);
-        const int32_t centre_x = px(30) + px(150);
-        const int32_t bar_y = px(275);
-        if(state->lean_deg >= 0.0F) {
-            lv_obj_set_pos(ui.lean_bar_fill, centre_x, bar_y);
+        ui.lean_peak_left = std::max(ui.lean_peak_left, -lean);
+        ui.lean_peak_right = std::max(ui.lean_peak_right, lean);
+        if(ui.lean_peak_left > 0.5F) {
+            std::snprintf(text, sizeof(text), "L %0.0f°",
+                          static_cast<double>(ui.lean_peak_left));
+            lv_label_set_text(ui.lean_max_l, text);
         } else {
-            lv_obj_set_pos(ui.lean_bar_fill, centre_x - width, bar_y);
+            lv_label_set_text(ui.lean_max_l, "L --");
         }
-        lv_obj_set_width(ui.lean_bar_fill, width);
-        lv_obj_set_style_bg_color(ui.lean_bar_fill,
-                                  state->lean_deg >= 0.0F ? kIce : kAmber, 0);
-        lv_obj_remove_flag(ui.lean_bar_fill, LV_OBJ_FLAG_HIDDEN);
+        if(ui.lean_peak_right > 0.5F) {
+            std::snprintf(text, sizeof(text), "R %0.0f°",
+                          static_cast<double>(ui.lean_peak_right));
+            lv_label_set_text(ui.lean_max_r, text);
+        } else {
+            lv_label_set_text(ui.lean_max_r, "R --");
+        }
+        lv_obj_add_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_label_set_text(ui.lean_value, "--");
-        lv_label_set_text(ui.lean_side, "NO IMU");
-        lv_obj_set_width(ui.lean_bar_fill, 0);
-        lv_obj_add_flag(ui.lean_bar_fill, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(ui.lean_max_l, "L --");
+        lv_label_set_text(ui.lean_max_r, "R --");
+        lv_obj_remove_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if(ui.lean_has != has || ui.lean_scene_dirty ||
+       std::fabs(ui.lean_deg - lean) > 0.05F) {
+        ui.lean_has = has;
+        ui.lean_deg = lean;
+        ui.lean_scene_dirty = false;
+        lv_obj_invalidate(ui.lean_scene);
+    }
+
+    if(has) {
+        // Rim position: 0 at twelve o'clock, positive clockwise. Radius 196
+        // sits on the casing, so the blip reads as part of the instrument
+        // rather than as another label.
+        const double rad = static_cast<double>(lean) * kPi / 180.0;
+        const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+        const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+        const int x = static_cast<int>(std::lround(cx + std::sin(rad) * 196.0));
+        const int y = static_cast<int>(std::lround(cy - std::cos(rad) * 196.0));
+        lv_obj_set_pos(ui.lean_blip, x - 7, y - 7);
     }
 }
 
 void update_music_view() {
-    lv_label_set_text(ui.music_source, ui.music.connected ? ui.music_source_text : "PHONE NOT CONNECTED");
+    if(ui.music_source == nullptr) return;
+    lv_label_set_text(ui.music_source,
+                      ui.music.connected ? ui.music_source_text
+                                         : "NO SIGNAL");
     lv_label_set_text(ui.music_title, ui.music_title_text);
     lv_label_set_text(ui.music_artist, ui.music_artist_text);
-    lv_label_set_text(ui.music_button_labels[1], ui.music.playing ? "II" : ">");
-    lv_label_set_text(ui.music_button_labels[3], ui.music.liked ? "SENT" : "LIKE");
+    lv_label_set_text(ui.music_button_labels[1],
+                      ui.music.playing ? "II" : ">");
+    lv_label_set_text(ui.music_button_labels[3],
+                      ui.music.liked ? "SENT" : "LIKE");
     if(ui.music.like_available) {
         lv_obj_remove_flag(ui.music_buttons[3], LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(ui.music_buttons[3], LV_OBJ_FLAG_HIDDEN);
     }
-    lv_obj_set_style_border_color(ui.music_disc,
-                                  ui.music.playing ? kIce : kGraphite, 0);
 }
 
 void music_button_event(lv_event_t *event) {
@@ -1982,37 +2274,30 @@ void update_radar_ring(const moto_ui_state_t *state) {
 }
 
 void draw_radar_ring(lv_event_t *event) {
+    draw_instrument_frame(event);
+    if(ui.nav_radar_progress == 0) return;
     lv_layer_t *layer = lv_event_get_layer(event);
     lv_draw_arc_dsc_t dsc;
     lv_draw_arc_dsc_init(&dsc);
     dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
-    dsc.radius = MOTO_UI_RADAR_RING_RADIUS_PX;
-    dsc.width = px(2);
+    dsc.radius = kDialBandOuter;
+    dsc.width = kDialBandWidth;
+    dsc.color = ui.palette.map_ink;
+    dsc.opa = LV_OPA_COVER;
     dsc.rounded = 0;
-    dsc.color = ui.palette.building;
-    // Two halves instead of 0..360: a wrapped arc is the one thing every LVGL
-    // major version treats differently, and the rim is too visible to gamble.
-    dsc.start_angle = 0;
-    dsc.end_angle = 180;
-    lv_draw_arc(layer, &dsc);
-    dsc.start_angle = 180;
-    dsc.end_angle = 360;
-    lv_draw_arc(layer, &dsc);
-
-    if(ui.nav_radar_progress == 0) return;
-    // The rim is the gauge: progress runs clockwise from twelve o'clock, in the
-    // traffic colour this screen does not show anywhere else.
-    dsc.color = traffic_color(ui.nav_radar_traffic);
-    dsc.width = px(4);
+    // The band is the progress bar: cream replaces magenta clockwise from
+    // twelve o'clock, the same grammar the speed page uses.
     double cursor = 270.0;
     double left = ui.nav_radar_progress * 3.6;
+
     while(left > 0.001) {
-        const double end = std::min(360.0, cursor + left);
-        dsc.start_angle = static_cast<std::uint16_t>(std::lround(cursor));
-        dsc.end_angle = static_cast<std::uint16_t>(std::lround(end));
+        const double step = std::min(90.0, left);
+        dsc.start_angle = static_cast<lv_value_precise_t>(cursor);
+        dsc.end_angle = static_cast<lv_value_precise_t>(cursor + step);
         lv_draw_arc(layer, &dsc);
-        left -= end - cursor;
-        cursor = end >= 360.0 ? 0.0 : end;
+        cursor += step;
+        if(cursor >= 360.0) cursor -= 360.0;
+        left -= step;
     }
 }
 
@@ -2034,6 +2319,12 @@ void create_navigation_page() {
     lv_obj_add_flag(ui.nav_map, LV_OBJ_FLAG_GESTURE_BUBBLE);
     // The Radar owns the whole round canvas; the HUD is overlaid on top.
     lv_obj_set_height(ui.nav_map, MOTO_UI_CANVAS_HEIGHT);
+    // The map is the paper disc, so it is clipped to the dial and the bezel is
+    // drawn over its edge. Nothing square ever shows inside the glass.
+    lv_obj_set_style_radius(ui.nav_map, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(ui.nav_map, true, 0);
+    lv_obj_set_style_bg_color(ui.nav_map, ui.palette.background, 0);
+    lv_obj_set_style_bg_opa(ui.nav_map, LV_OPA_COVER, 0);
 
     // The map owns a solid land colour so the GTA day theme can switch the
     // Radar background without changing the speed/compass/music pages.
@@ -2128,10 +2419,10 @@ void create_navigation_page() {
     lv_obj_add_event_cb(ui.nav_marker, draw_vehicle_marker,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
 
-    ui.nav_status = make_label(page, &lv_font_montserrat_16, kAmber, "");
-    lv_obj_set_width(ui.nav_status, px(220));
+    ui.nav_status = make_text(page, &moto_font_display_24, TextRole::MapInk, "");
+    lv_obj_set_width(ui.nav_status, px(240));
     lv_obj_set_style_text_align(ui.nav_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(ui.nav_status, LV_ALIGN_TOP_MID, 0, px(16));
+    lv_obj_align(ui.nav_status, LV_ALIGN_TOP_MID, 0, px(44));
 
     // The next action is the navigation page's single visual hero. The short
     // road window above is deliberately quieter and contains no fake side
@@ -2144,15 +2435,19 @@ void create_navigation_page() {
     lv_obj_add_event_cb(ui.nav_maneuver, draw_maneuver_icon,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
 
-    ui.nav_distance = make_label(page, &lv_font_montserrat_48, kWhite, "300");
-    ui.nav_unit = make_label(page, &lv_font_montserrat_20, kQuiet, "m");
+    // The single number a moving rider reads: the distance to the next
+    // action, printed at instrument scale, in the game HUD's cream-on-black.
+    ui.nav_distance = make_text(page, &moto_font_timer_96, TextRole::MapInk,
+                                "300");
+    ui.nav_unit = make_text(page, &moto_font_display_24, TextRole::MapInk,
+                            "m");
 
     ui.nav_limit = lv_obj_create(page);
     lv_obj_set_size(ui.nav_limit, px(61), px(61));
     // Keep the optional demo/SDK-provided value inside the circular safe area.
     // Real AMap Web-Service snapshots use zero and remain hidden because that
     // API does not return a road speed limit.
-    lv_obj_set_pos(ui.nav_limit, px(248), px(238));
+    lv_obj_set_pos(ui.nav_limit, px(240), px(96));
     lv_obj_set_style_radius(ui.nav_limit, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(ui.nav_limit, kWhite, 0);
     lv_obj_set_style_bg_opa(ui.nav_limit, LV_OPA_COVER, 0);
@@ -2160,7 +2455,7 @@ void create_navigation_page() {
     lv_obj_set_style_border_width(ui.nav_limit, px(6), 0);
     lv_obj_set_style_pad_all(ui.nav_limit, 0, 0);
     lv_obj_clear_flag(ui.nav_limit, LV_OBJ_FLAG_CLICKABLE);
-    ui.nav_limit_value = make_label(ui.nav_limit, &lv_font_montserrat_28, kBlack, "70");
+    ui.nav_limit_value = make_label(ui.nav_limit, &moto_font_display_24, kBlack, "70");
     lv_obj_center(ui.nav_limit_value);
 
     // The rim is the gauge. It is drawn on its own full-canvas layer above the
@@ -2181,13 +2476,13 @@ void create_navigation_page() {
     lv_obj_clear_flag(ui.nav_north, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_name_static(ui.nav_north, "moto-compass-north");
     lv_obj_t *north_glyph =
-        make_label(ui.nav_north, &lv_font_montserrat_16, kWhite, "N");
+        make_text(ui.nav_north, &moto_font_display_18, TextRole::Ink, "N");
     lv_obj_center(north_glyph);
 
     // One line, three seconds, and only when the phone refuses the tap. The
     // device cannot know whether a home exists; guessing would be worse than
     // saying nothing.
-    ui.nav_home_hint = make_label(page, &lv_font_montserrat_16, kAmber,
+    ui.nav_home_hint = make_text(page, &moto_font_display_18, TextRole::Accent,
                                   "SET HOME ON PHONE");
     lv_obj_set_name_static(ui.nav_home_hint, "moto-home-hint");
     lv_obj_set_style_bg_color(ui.nav_home_hint, kBlack, 0);
@@ -2218,7 +2513,8 @@ void create_navigation_page() {
     lv_obj_add_event_cb(ui.nav_home, home_shortcut_event, LV_EVENT_CLICKED,
                         nullptr);
     lv_obj_t *home_glyph =
-        make_label(ui.nav_home, &lv_font_montserrat_20, kWhite,
+        // The home glyph lives in LVGL's symbol font, not the display face.
+        make_label(ui.nav_home, &lv_font_montserrat_20, ui.palette.ink,
                    LV_SYMBOL_HOME);
     lv_obj_center(home_glyph);
 
@@ -2226,39 +2522,62 @@ void create_navigation_page() {
     // safe area as the navigation instrument and intentionally uses one hero
     // symbol instead of a dashboard of technical status labels.
     ui.nav_lifecycle = make_layer(page);
-    lv_obj_set_style_bg_color(ui.nav_lifecycle, kBlack, 0);
+    lv_obj_set_style_radius(ui.nav_lifecycle, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(ui.nav_lifecycle, true, 0);
+    lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.ground, 0);
     lv_obj_set_style_bg_opa(ui.nav_lifecycle, LV_OPA_COVER, 0);
     lv_obj_add_flag(ui.nav_lifecycle, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(ui.nav_lifecycle, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    ui.nav_lifecycle_kicker = make_label(
-        ui.nav_lifecycle, &lv_font_montserrat_16, kQuiet,
-        "MOTO GPS / PHONE LINK");
-    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_kicker, px(2), 0);
-    lv_obj_align(ui.nav_lifecycle_kicker, LV_ALIGN_TOP_MID, 0, px(39));
+    // The link screen is a cover, not a dialog, and the glass is round: every
+    // element has to live inside the inscribed circle. That rules out the
+    // full-bleed poster furniture (footer bar, corner credits) and pushes the
+    // composition the other way - one oversized headline in the widest band of
+    // the circle, an accent slash cut by the bezel, and a single status chip.
+    lv_obj_t *slash = lv_obj_create(ui.nav_lifecycle);
+    lv_obj_remove_style_all(slash);
+    lv_obj_clear_flag(slash, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(slash, px(360), px(30));
+    lv_obj_set_pos(slash, px(-10), px(246));
+    lv_obj_set_style_bg_color(slash, ui.palette.accent, 0);
+    lv_obj_set_style_bg_opa(slash, LV_OPA_COVER, 0);
+    lv_obj_set_style_transform_rotation(slash, -50, 0);
+    ui.lifecycle_slash = slash;
 
-    ui.nav_lifecycle_symbol = lv_obj_create(ui.nav_lifecycle);
-    lv_obj_remove_style_all(ui.nav_lifecycle_symbol);
-    lv_obj_set_size(ui.nav_lifecycle_symbol, px(150), px(150));
-    lv_obj_align(ui.nav_lifecycle_symbol, LV_ALIGN_TOP_MID, 0, px(61));
-    lv_obj_clear_flag(ui.nav_lifecycle_symbol, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(ui.nav_lifecycle_symbol, draw_connection_symbol,
-                        LV_EVENT_DRAW_MAIN_END, nullptr);
-
-    ui.nav_lifecycle_title = make_label(
-        ui.nav_lifecycle, &lv_font_montserrat_28, kWhite, "CONNECT PHONE");
-    lv_obj_set_width(ui.nav_lifecycle_title, px(310));
+    // Display type: 1.6x the largest firmware font, tight leading, tracking
+    // near zero. Two lines is the whole composition.
+    ui.nav_lifecycle_title = make_text(
+        ui.nav_lifecycle, &moto_font_display_72, TextRole::Ink,
+        "CONNECT\nPHONE");
+    lv_obj_set_width(ui.nav_lifecycle_title, px(300));
     lv_obj_set_style_text_align(ui.nav_lifecycle_title,
                                 LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_title, px(2), 0);
-    lv_obj_align(ui.nav_lifecycle_title, LV_ALIGN_TOP_MID, 0, px(231));
+    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_title, 0, 0);
+    lv_obj_set_style_text_line_space(ui.nav_lifecycle_title, px(-14), 0);
+    lv_obj_align(ui.nav_lifecycle_title, LV_ALIGN_TOP_MID, 0, px(104));
 
-    ui.nav_lifecycle_subtitle = make_label(
-        ui.nav_lifecycle, &moto_font_nav_16, kSoft, "请打开手机应用");
-    lv_obj_set_width(ui.nav_lifecycle_subtitle, px(280));
+    ui.nav_lifecycle_subtitle = make_text(
+        ui.nav_lifecycle, &moto_font_text_24, TextRole::Muted, "请打开手机应用");
+    lv_obj_set_width(ui.nav_lifecycle_subtitle, px(240));
     lv_obj_set_style_text_align(ui.nav_lifecycle_subtitle,
                                 LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(ui.nav_lifecycle_subtitle, LV_ALIGN_TOP_MID, 0, px(278));
+    lv_obj_align(ui.nav_lifecycle_subtitle, LV_ALIGN_TOP_MID, 0, px(268));
+
+    // Status chip: the one place the state is spelled out, inverse on ink.
+    lv_obj_t *chip = lv_obj_create(ui.nav_lifecycle);
+    lv_obj_remove_style_all(chip);
+    lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(chip, px(150), px(30));
+    lv_obj_align(chip, LV_ALIGN_TOP_MID, 0, px(292));
+    lv_obj_set_style_bg_color(chip, ui.palette.slab, 0);
+    lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
+    ui.lifecycle_rules[1] = chip;
+
+    ui.nav_lifecycle_kicker = make_text(
+        ui.nav_lifecycle, &moto_font_display_18, TextRole::OnSlab, "OFFLINE");
+    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_kicker, px(5), 0);
+    lv_obj_center(ui.nav_lifecycle_kicker);
+    lv_obj_set_parent(ui.nav_lifecycle_kicker, chip);
 
     ui.nav_lifecycle_timer = lv_timer_create(lifecycle_tick, 40, nullptr);
     ui.nav_success_timer = lv_timer_create(connection_success_timeout,
@@ -2269,230 +2588,366 @@ void create_navigation_page() {
     ui.lifecycle_target = LifecycleVisual::PhoneOffline;
 }
 
+void draw_speed_gauge(lv_event_t *event) {
+    const int speed = std::min<int>(160, ui.speed_drawn);
+    if(speed <= 0) return;
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const double sweep = 360.0 * speed / 160.0;
+    lv_draw_arc_dsc_t dsc;
+    lv_draw_arc_dsc_init(&dsc);
+    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
+    dsc.radius = kDialBandOuter;
+    dsc.width = kDialBandWidth;
+    dsc.rounded = 0;
+    dsc.color = ui.palette.map_ink;
+    dsc.opa = LV_OPA_COVER;
+    // The band itself is the speedometer: magenta is the unlit part, cream is
+    // the speed. One gauge, no second ring, no ticks to read.
+    double cursor = 270.0;
+    double left = sweep;
+    while(left > 0.001) {
+        const double step = std::min(90.0, left);
+        dsc.start_angle = static_cast<lv_value_precise_t>(cursor);
+        dsc.end_angle = static_cast<lv_value_precise_t>(cursor + step);
+        lv_draw_arc(layer, &dsc);
+        cursor += step;
+        if(cursor >= 360.0) cursor -= 360.0;
+        left -= step;
+    }
+}
+
 void create_speed_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_SPEED];
-    lv_obj_t *title = make_label(page, &lv_font_montserrat_16, kQuiet, "SPEED");
-    lv_obj_set_style_text_letter_space(title, px(4), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, px(48));
+    make_page_surface(page, MOTO_UI_PAGE_SPEED);
 
-    ui.speed_arc = lv_arc_create(page);
-    lv_obj_set_size(ui.speed_arc, px(312), px(312));
-    lv_obj_center(ui.speed_arc);
-    lv_arc_set_rotation(ui.speed_arc, 138);
-    lv_arc_set_bg_angles(ui.speed_arc, 0, 264);
-    lv_arc_set_range(ui.speed_arc, 0, 160);
-    lv_obj_remove_style(ui.speed_arc, nullptr, LV_PART_KNOB);
-    lv_obj_clear_flag(ui.speed_arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_arc_width(ui.speed_arc, px(5), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(ui.speed_arc, kGraphite, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(ui.speed_arc, px(7), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(ui.speed_arc, kIce, LV_PART_INDICATOR);
+    ui.speed_gauge = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.speed_gauge);
+    lv_obj_clear_flag(ui.speed_gauge, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.speed_gauge, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_add_event_cb(ui.speed_gauge, draw_speed_gauge, LV_EVENT_DRAW_MAIN,
+                        nullptr);
 
-    for(int i = 0; i < kSpeedTickCount; ++i) {
-        const double angle = (138.0 + i * (264.0 / (kSpeedTickCount - 1))) * kPi / 180.0;
-        const double inner = px(i % 2 == 0 ? 132.0 : 136.0);
-        ui.speed_tick_points[i][0] = {
-            static_cast<lv_value_precise_t>(px(180.0) + std::cos(angle) * px(142.0)),
-            static_cast<lv_value_precise_t>(px(180.0) + std::sin(angle) * px(142.0)),
+    ui.speed_value = make_text(page, &moto_font_hero_176, TextRole::Display,
+                               "0");
+    lv_obj_align(ui.speed_value, LV_ALIGN_CENTER, 0, -px(34));
+
+    lv_obj_t *unit = make_slab(page, "KM/H", 108, 32);
+    lv_obj_align(unit, LV_ALIGN_CENTER, 0, px(66));
+
+    // Speed-limit sign, the one prop a rider already knows how to read.
+    ui.speed_limit = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.speed_limit);
+    lv_obj_clear_flag(ui.speed_limit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.speed_limit, px(52), px(52));
+    lv_obj_set_style_radius(ui.speed_limit, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ui.speed_limit, LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
+                              0);
+    lv_obj_set_style_bg_opa(ui.speed_limit, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ui.speed_limit, kOutlineBlack, 0);
+    lv_obj_set_style_border_width(ui.speed_limit, px(6), 0);
+    lv_obj_align(ui.speed_limit, LV_ALIGN_CENTER, px(96), px(74));
+    ui.speed_limit_value = make_label(ui.speed_limit, &moto_font_display_24,
+                                      kOutlineBlack, "50");
+    lv_obj_center(ui.speed_limit_value);
+    lv_obj_add_flag(ui.speed_limit, LV_OBJ_FLAG_HIDDEN);
+}
+
+void draw_compass_marks(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    const double heading = static_cast<double>(ui.compass_drawn_heading) *
+                           kPi / 180.0;
+    // The rose turns under a fixed index. 24 marks read as a bearing scale on
+    // a 466 px disc; 360 would turn into a grey ring.
+    for(int i = 0; i < 24; ++i) {
+        const double rad = i * 15.0 * kPi / 180.0 - heading;
+        const double sx = std::sin(rad);
+        const double sy = -std::cos(rad);
+        const bool major = i % 3 == 0;
+        lv_point_precise_t pts[2] = {
+            pt(cx + sx * 208.0, cy + sy * 208.0),
+            pt(cx + sx * (major ? 217.0 : 213.0),
+               cy + sy * (major ? 217.0 : 213.0)),
         };
-        ui.speed_tick_points[i][1] = {
-            static_cast<lv_value_precise_t>(px(180.0) + std::cos(angle) * inner),
-            static_cast<lv_value_precise_t>(px(180.0) + std::sin(angle) * inner),
-        };
-        ui.speed_ticks[i] = lv_line_create(page);
-        lv_obj_set_size(ui.speed_ticks[i], MOTO_UI_CANVAS_WIDTH,
-                        MOTO_UI_CANVAS_HEIGHT);
-        lv_line_set_points_mutable(ui.speed_ticks[i], ui.speed_tick_points[i], 2);
-        lv_obj_set_style_line_width(ui.speed_ticks[i], px(i % 2 == 0 ? 3 : 2), 0);
-        lv_obj_set_style_line_color(ui.speed_ticks[i], kGraphite, 0);
+        draw_segment(layer, ui.palette.map_ink, major ? 3 : 2, LV_OPA_COVER,
+                     pts, 2);
     }
-    ui.speed_value = make_label(page, &lv_font_montserrat_48, kWhite, "72");
-    lv_obj_align(ui.speed_value, LV_ALIGN_CENTER, 0, px(-10));
-    lv_obj_t *unit = make_label(page, &lv_font_montserrat_20, kQuiet, "km/h");
-    lv_obj_set_style_text_letter_space(unit, px(2), 0);
-    lv_obj_align(unit, LV_ALIGN_CENTER, 0, px(45));
-    lv_obj_t *caption = make_label(page, &lv_font_montserrat_16, kQuiet, "LIVE SPEED");
-    lv_obj_set_style_text_letter_space(caption, px(2), 0);
-    lv_obj_align(caption, LV_ALIGN_BOTTOM_MID, 0, px(-49));
+    // Fixed index at twelve o'clock: a cream wedge with an ink casing.
+    lv_draw_triangle_dsc_t tri;
+    lv_draw_triangle_dsc_init(&tri);
+    tri.opa = LV_OPA_COVER;
+    tri.color = kOutlineBlack;
+    tri.p[0] = pt(cx - 9.0, cy - 220.0);
+    tri.p[1] = pt(cx + 9.0, cy - 220.0);
+    tri.p[2] = pt(cx, cy - 198.0);
+    lv_draw_triangle(layer, &tri);
+    tri.color = ui.palette.ink;
+    tri.p[0] = pt(cx - 5.0, cy - 217.0);
+    tri.p[1] = pt(cx + 5.0, cy - 217.0);
+    tri.p[2] = pt(cx, cy - 204.0);
+    lv_draw_triangle(layer, &tri);
 }
 
 void create_compass_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_COMPASS];
-    for(int i = 0; i < kCompassTickCount; ++i) {
-        ui.compass_ticks[i] = lv_line_create(page);
-        lv_obj_set_size(ui.compass_ticks[i], MOTO_UI_CANVAS_WIDTH,
-                        MOTO_UI_CANVAS_HEIGHT);
-        lv_obj_set_style_line_width(ui.compass_ticks[i], px(i % 3 == 0 ? 3 : 2), 0);
-        lv_obj_set_style_line_color(ui.compass_ticks[i], kQuiet, 0);
-    }
-    for(int i = 0; i < 4; ++i) {
-        ui.compass_letters[i] = make_label(page, &lv_font_montserrat_16, kQuiet, "N");
-        lv_obj_set_size(ui.compass_letters[i], px(28), px(22));
-        lv_obj_set_style_text_align(ui.compass_letters[i], LV_TEXT_ALIGN_CENTER, 0);
-    }
-    lv_obj_t *index = lv_obj_create(page);
-    lv_obj_remove_style_all(index);
-    lv_obj_set_size(index, px(9), px(9));
-    lv_obj_set_pos(index, px(176), px(18));
-    lv_obj_set_style_bg_color(index, kRed, 0);
-    lv_obj_set_style_bg_opa(index, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_rotation(index, 450, 0);
+    make_page_surface(page, MOTO_UI_PAGE_COMPASS);
 
-    ui.compass_heading = make_label(page, &lv_font_montserrat_48, kAmber, "359°");
-    lv_obj_align(ui.compass_heading, LV_ALIGN_CENTER, 0, px(-37));
-    ui.compass_cardinal = make_label(page, &lv_font_montserrat_20, kAmber, "N");
-    lv_obj_align(ui.compass_cardinal, LV_ALIGN_CENTER, 0, px(10));
-    ui.compass_speed = make_label(page, &lv_font_montserrat_20, kWhite, "72 km/h");
-    lv_obj_set_style_text_letter_space(ui.compass_speed, px(1), 0);
-    lv_obj_align(ui.compass_speed, LV_ALIGN_CENTER, 0, px(57));
+    ui.compass_marks = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.compass_marks);
+    lv_obj_clear_flag(ui.compass_marks, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.compass_marks, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_add_event_cb(ui.compass_marks, draw_compass_marks,
+                        LV_EVENT_DRAW_MAIN, nullptr);
+
+    ui.compass_cardinal = make_text(page, &moto_font_hero_176,
+                                    TextRole::Display, "N");
+    lv_obj_align(ui.compass_cardinal, LV_ALIGN_CENTER, 0, -px(22));
+
+    ui.compass_heading = make_text(page, &moto_font_display_40,
+                                   TextRole::Accent, "0°");
+    lv_obj_set_style_text_letter_space(ui.compass_heading, px(2), 0);
+    lv_obj_align(ui.compass_heading, LV_ALIGN_CENTER, 0, px(64));
+
+    lv_obj_t *speed = make_slab(page, "0 KM/H", 150, 30);
+    lv_obj_align(speed, LV_ALIGN_CENTER, 0, px(122));
+    ui.compass_speed = lv_obj_get_child(speed, 0);
 }
 
 void create_performance_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_PERFORMANCE];
-    lv_obj_t *title = make_label(page, &lv_font_montserrat_16, kQuiet,
-                                 "PERFORMANCE");
-    lv_obj_set_style_text_letter_space(title, px(4), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, px(48));
+    make_page_surface(page, MOTO_UI_PAGE_PERFORMANCE);
 
-    ui.perf_target = make_label(page, &lv_font_montserrat_20, kQuiet,
-                                "0-100 km/h");
-    lv_obj_set_style_text_letter_space(ui.perf_target, px(2), 0);
-    lv_obj_align(ui.perf_target, LV_ALIGN_TOP_MID, 0, px(95));
+    // State first: a drag strip answers "is the clock running" before it
+    // answers "how fast".
+    ui.perf_chip = make_plate(page, "ARMED", 110, 28, &ui.perf_chip_text);
+    lv_obj_align(ui.perf_chip, LV_ALIGN_TOP_MID, 0, px(58));
 
-    ui.perf_timer = make_label(page, &lv_font_montserrat_48, kWhite, "--.-");
-    lv_obj_align(ui.perf_timer, LV_ALIGN_TOP_MID, 0, px(135));
+    ui.perf_target = make_text(page, &moto_font_display_24, TextRole::Muted,
+                                "0-100 KM/H");
+    lv_obj_set_style_text_letter_space(ui.perf_target, px(3), 0);
+    lv_obj_align(ui.perf_target, LV_ALIGN_TOP_MID, 0, px(92));
 
-    ui.perf_best = make_label(page, &lv_font_montserrat_16, kQuiet,
-                              "BEST --.-");
-    lv_obj_set_style_text_letter_space(ui.perf_best, px(2), 0);
-    lv_obj_align(ui.perf_best, LV_ALIGN_TOP_MID, 0, px(205));
+    // The stopwatch is the page. Nothing else on this screen is allowed to be
+    // within one type size of it.
+    ui.perf_timer = make_text(page, &moto_font_hero_176, TextRole::Display,
+                              "-.-");
+    lv_obj_align(ui.perf_timer, LV_ALIGN_CENTER, 0, -px(14));
 
-    lv_obj_t *gg = lv_obj_create(page);
-    lv_obj_remove_style_all(gg);
-    lv_obj_set_size(gg, px(120), px(120));
-    lv_obj_set_pos(gg, px(120), px(205));
-    lv_obj_set_style_radius(gg, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_color(gg, kGraphite, 0);
-    lv_obj_set_style_border_width(gg, px(1), 0);
-    lv_obj_clear_flag(gg, LV_OBJ_FLAG_CLICKABLE);
+    ui.perf_strip = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.perf_strip);
+    lv_obj_clear_flag(ui.perf_strip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.perf_strip, px(284), px(16));
+    lv_obj_align(ui.perf_strip, LV_ALIGN_CENTER, 0, px(72));
+    for(int i = 0; i < kPerfSegmentCount; ++i) {
+        lv_obj_t *segment = lv_obj_create(ui.perf_strip);
+        lv_obj_remove_style_all(segment);
+        lv_obj_clear_flag(segment, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(segment, px(20), px(16));
+        lv_obj_set_pos(segment, px(i * 24), 0);
+        lv_obj_set_style_bg_color(segment, ui.palette.ink, 0);
+        lv_obj_set_style_bg_opa(segment, LV_OPA_20, 0);
+        ui.perf_segments[i] = segment;
+    }
 
-    ui.perf_gg_dot = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.perf_gg_dot);
-    lv_obj_set_size(ui.perf_gg_dot, px(10), px(10));
-    lv_obj_set_style_radius(ui.perf_gg_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.perf_gg_dot, kIce, 0);
-    lv_obj_set_style_bg_opa(ui.perf_gg_dot, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(ui.perf_gg_dot, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_pos(ui.perf_gg_dot, px(120) + px(60) - px(5),
-                   px(205) + px(60) - px(5));
+    lv_obj_t *best = make_slab(page, "BEST --.-", 170, 30, &ui.perf_best);
+    lv_obj_align(best, LV_ALIGN_CENTER, 0, px(106));
 
-    ui.perf_long_g = make_label(page, &lv_font_montserrat_16, kQuiet,
-                                "LONG --");
-    lv_obj_set_pos(ui.perf_long_g, px(18), px(240));
-    ui.perf_lat_g = make_label(page, &lv_font_montserrat_16, kQuiet,
-                               "LAT --");
-    lv_obj_set_pos(ui.perf_lat_g, px(282), px(240));
+    // The stopwatch runs on its own timer: state snapshots arrive at the BLE
+    // cadence, but the clock has to move between them.
+    ui.perf_timer_task = lv_timer_create(perf_tick, 50, nullptr);
+}
+
+void draw_lean_marks(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    // A protractor printed on the band: every 15 degrees, long marks at the
+    // riding-relevant stops. The scale is fixed; the horizon is what moves.
+    for(int t = -60; t <= 60; t += 15) {
+        const double rad = t * kPi / 180.0;
+        const double sx = std::sin(rad);
+        const double sy = -std::cos(rad);
+        const bool major = t % 45 == 0;
+        lv_point_precise_t pts[2] = {
+            pt(cx + sx * 208.0, cy + sy * 208.0),
+            pt(cx + sx * (major ? 217.0 : 214.0),
+               cy + sy * (major ? 217.0 : 214.0)),
+        };
+        draw_segment(layer, ui.palette.map_ink, major ? 3 : 2, LV_OPA_COVER,
+                     pts, 2);
+    }
+    // The zero reference: the only mark that is a bar rather than a tick.
+    lv_point_precise_t zero[2] = {pt(cx, cy - 218.0), pt(cx, cy - 196.0)};
+    draw_segment(layer, ui.palette.map_ink, 5, LV_OPA_COVER, zero, 2);
+}
+
+// The lean page is an artificial horizon, not a bar graph. The bike is the
+// frame: the disc stays still and the world tilts, which is exactly what the
+// rider sees over the bars. The sun gives the horizon a second reference so a
+// ten-degree lean is readable without reading the number.
+void draw_lean_scene(lv_event_t *event) {
+    if(!ui.lean_has) return;
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const double lean = static_cast<double>(ui.lean_deg);
+    // Right lean tilts the world left: the horizon's right end rises.
+    const double a = -lean * kPi / 180.0;
+    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    const double ux = std::cos(a);
+    const double uy = std::sin(a);
+    const double nx = -std::sin(a);
+    const double ny = std::cos(a);
+    const double horizon = 74.0;
+    const auto at = [&](double along, double down, double &x, double &y) {
+        x = cx + ux * along + nx * down;
+        y = cy + uy * along + ny * down;
+    };
+
+    // The sun is a half disc whose flat edge is the horizon. It orbits the
+    // centre with the world instead of spinning in place.
+    double sx, sy;
+    at(-122.0, horizon, sx, sy);
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.center = {static_cast<int32_t>(std::lround(sx)),
+                  static_cast<int32_t>(std::lround(sy))};
+    arc.rounded = 0;
+    arc.start_angle = static_cast<lv_value_precise_t>(a * 180.0 / kPi + 180.0);
+    arc.end_angle = static_cast<lv_value_precise_t>(a * 180.0 / kPi + 360.0);
+    arc.width = 60;
+    arc.radius = 30;
+    arc.color = ui.palette.outline;
+    arc.opa = LV_OPA_COVER;
+    lv_draw_arc(layer, &arc);
+    arc.width = 54;
+    arc.radius = 27;
+    arc.color = ui.palette.coral;
+    lv_draw_arc(layer, &arc);
+
+    // One datum line, cased so it survives crossing the numeral.
+    double hx1, hy1, hx2, hy2;
+    at(-176.0, horizon, hx1, hy1);
+    at(176.0, horizon, hx2, hy2);
+    lv_point_precise_t line[2] = {pt(hx1, hy1), pt(hx2, hy2)};
+    draw_segment(layer, ui.palette.outline, 11, LV_OPA_COVER, line, 2);
+    draw_segment(layer, ui.palette.ink, 5, LV_OPA_COVER, line, 2);
 }
 
 void create_lean_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_LEAN];
-    lv_obj_t *title = make_label(page, &lv_font_montserrat_16, kQuiet, "LEAN");
-    lv_obj_set_style_text_letter_space(title, px(4), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, px(48));
+    make_page_surface(page, MOTO_UI_PAGE_LEAN);
 
-    ui.lean_value = make_label(page, &lv_font_montserrat_48, kWhite, "--");
-    lv_obj_align(ui.lean_value, LV_ALIGN_CENTER, 0, px(-40));
-    ui.lean_side = make_label(page, &lv_font_montserrat_20, kQuiet, "NO IMU");
-    lv_obj_set_style_text_letter_space(ui.lean_side, px(2), 0);
-    lv_obj_align(ui.lean_side, LV_ALIGN_CENTER, 0, px(15));
+    ui.lean_marks = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.lean_marks);
+    lv_obj_clear_flag(ui.lean_marks, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.lean_marks, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_add_event_cb(ui.lean_marks, draw_lean_marks, LV_EVENT_DRAW_MAIN,
+                        nullptr);
 
-    ui.lean_bar_track = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.lean_bar_track);
-    lv_obj_set_size(ui.lean_bar_track, px(300), px(6));
-    lv_obj_set_pos(ui.lean_bar_track, px(30), px(275));
-    lv_obj_set_style_radius(ui.lean_bar_track, px(3), 0);
-    lv_obj_set_style_bg_color(ui.lean_bar_track, kGraphite, 0);
-    lv_obj_set_style_bg_opa(ui.lean_bar_track, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(ui.lean_bar_track, LV_OBJ_FLAG_CLICKABLE);
+    ui.lean_scene = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.lean_scene);
+    lv_obj_clear_flag(ui.lean_scene, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.lean_scene, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_add_event_cb(ui.lean_scene, draw_lean_scene, LV_EVENT_DRAW_MAIN,
+                        nullptr);
+    lv_obj_add_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
 
-    ui.lean_bar_fill = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.lean_bar_fill);
-    lv_obj_set_height(ui.lean_bar_fill, px(6));
-    lv_obj_set_width(ui.lean_bar_fill, 0);
-    lv_obj_set_pos(ui.lean_bar_fill, px(30) + px(150), px(275));
-    lv_obj_set_style_radius(ui.lean_bar_fill, px(3), 0);
-    lv_obj_set_style_bg_color(ui.lean_bar_fill, kIce, 0);
-    lv_obj_set_style_bg_opa(ui.lean_bar_fill, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(ui.lean_bar_fill, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(ui.lean_bar_fill, LV_OBJ_FLAG_HIDDEN);
+    // The rider point. It rides the rim at the current angle, so the value has
+    // a place on the dial as well as a number.
+    ui.lean_blip = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.lean_blip);
+    lv_obj_clear_flag(ui.lean_blip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.lean_blip, 14, 14);
+    lv_obj_set_style_radius(ui.lean_blip, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ui.lean_blip, ui.palette.accent, 0);
+    lv_obj_set_style_bg_opa(ui.lean_blip, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ui.lean_blip, kOutlineBlack, 0);
+    lv_obj_set_style_border_width(ui.lean_blip, 3, 0);
+    lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
 
-    ui.lean_peak = make_label(page, &lv_font_montserrat_16, kQuiet, "MAX 0°");
-    lv_obj_set_style_text_letter_space(ui.lean_peak, px(2), 0);
-    lv_obj_align(ui.lean_peak, LV_ALIGN_BOTTOM_MID, 0, px(-48));
+    ui.lean_value = make_text(page, &moto_font_hero_176, TextRole::Display,
+                              "--");
+    lv_obj_align(ui.lean_value, LV_ALIGN_CENTER, 0, 0);
+
+    ui.lean_max_l_plate =
+        make_plate(page, "L --", 90, 26, &ui.lean_max_l);
+    lv_obj_set_pos(ui.lean_max_l_plate, px(76), px(72));
+    ui.lean_max_r_plate =
+        make_plate(page, "R --", 90, 26, &ui.lean_max_r);
+    lv_obj_set_pos(ui.lean_max_r_plate, px(188), px(72));
+
+    ui.lean_state = make_plate(page, "NO IMU", 120, 30, &ui.lean_state_text);
+    lv_obj_align(ui.lean_state, LV_ALIGN_CENTER, 0, px(78));
+    lv_obj_add_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
 }
 
 void create_music_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_MUSIC];
-    ui.music_source = make_label(page, &lv_font_montserrat_16, kQuiet, "APPLE MUSIC");
-    lv_obj_set_style_text_letter_space(ui.music_source, px(2), 0);
-    lv_obj_align(ui.music_source, LV_ALIGN_TOP_MID, 0, px(37));
+    make_page_surface(page, MOTO_UI_PAGE_MUSIC);
 
-    ui.music_disc = lv_obj_create(page);
-    lv_obj_set_size(ui.music_disc, px(104), px(104));
-    lv_obj_align(ui.music_disc, LV_ALIGN_TOP_MID, 0, px(71));
-    lv_obj_set_style_radius(ui.music_disc, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.music_disc, kGraphite, 0);
-    lv_obj_set_style_bg_opa(ui.music_disc, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(ui.music_disc, px(5), 0);
-    lv_obj_set_style_border_color(ui.music_disc, kIce, 0);
-    lv_obj_set_style_pad_all(ui.music_disc, 0, 0);
-    lv_obj_t *core = lv_obj_create(ui.music_disc);
-    lv_obj_set_size(core, px(30), px(30));
-    lv_obj_center(core);
-    lv_obj_set_style_radius(core, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(core, kBlack, 0);
-    lv_obj_set_style_bg_opa(core, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(core, 0, 0);
+    // A car radio faceplate, not a media app: source on a plate, the track
+    // printed like a station ident, and three physical keys.
+    ui.music_source_plate =
+        make_plate(page, "APPLE MUSIC", 126, 26, &ui.music_source);
+    lv_obj_set_pos(ui.music_source_plate, px(78), px(68));
 
-    ui.music_title = make_label(page, &lv_font_montserrat_20, kWhite, "NIGHT RIDE");
-    lv_obj_set_width(ui.music_title, px(260));
+    ui.music_title = make_text(page, &moto_font_display_40_cjk,
+                               TextRole::Display, "NIGHT RIDE");
+    lv_obj_set_width(ui.music_title, px(288));
     lv_obj_set_style_text_align(ui.music_title, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(ui.music_title, LV_LABEL_LONG_DOT);
-    lv_obj_align(ui.music_title, LV_ALIGN_TOP_MID, 0, px(190));
-    ui.music_artist = make_label(page, &lv_font_montserrat_16, kQuiet, "PHONE NOW PLAYING");
-    lv_obj_set_width(ui.music_artist, px(260));
+    lv_label_set_long_mode(ui.music_title, LV_LABEL_LONG_WRAP);
+    lv_obj_align(ui.music_title, LV_ALIGN_TOP_MID, 0, px(110));
+
+    ui.music_artist = make_text(page, &moto_font_display_24_cjk,
+                                TextRole::Muted, "PHONE NOW PLAYING");
+    lv_obj_set_width(ui.music_artist, px(288));
     lv_obj_set_style_text_align(ui.music_artist, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(ui.music_artist, LV_LABEL_LONG_DOT);
-    lv_obj_align(ui.music_artist, LV_ALIGN_TOP_MID, 0, px(216));
+    lv_obj_align(ui.music_artist, LV_ALIGN_TOP_MID, 0, px(172));
 
-    static const char *labels[4] = {"<<", ">", ">>", "LIKE"};
-    static const int positions[4][3] = {
-        {72, 254, 54}, {153, 247, 62}, {234, 254, 54}, {147, 312, 66},
-    };
-    for(int i = 0; i < 4; ++i) {
-        ui.music_buttons[i] = lv_button_create(page);
-        lv_obj_set_size(ui.music_buttons[i], px(positions[i][2]),
-                        px(i == 3 ? 28 : positions[i][2]));
-        lv_obj_set_pos(ui.music_buttons[i], px(positions[i][0]),
-                       px(positions[i][1]));
-        lv_obj_set_style_radius(ui.music_buttons[i], LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(ui.music_buttons[i], i == 1 ? kWhite : kGraphite, 0);
+    // The deck: one ink block that carries all three transport keys. It is the
+    // only furniture on the page, so the eyes never hunt for a button.
+    lv_obj_t *deck = lv_obj_create(page);
+    lv_obj_remove_style_all(deck);
+    lv_obj_clear_flag(deck, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(deck, px(260), px(64));
+    lv_obj_align(deck, LV_ALIGN_CENTER, 0, px(52));
+    lv_obj_set_style_bg_color(deck, ui.palette.slab, 0);
+    lv_obj_set_style_bg_opa(deck, LV_OPA_COVER, 0);
+    register_fill(deck, Ui::FillRole::Slab);
+
+    static const int sizes[3] = {52, 62, 52};
+    static const int offsets[3] = {-82, 0, 82};
+    static const char *labels[3] = {"<<", ">", ">>"};
+    for(int i = 0; i < 3; ++i) {
+        const bool primary = i == 1;
+        ui.music_buttons[i] = lv_button_create(deck);
+        lv_obj_set_size(ui.music_buttons[i], px(sizes[i]), px(sizes[i]));
+        lv_obj_align(ui.music_buttons[i], LV_ALIGN_CENTER, px(offsets[i]), 0);
+        lv_obj_set_style_radius(ui.music_buttons[i], 0, 0);
+        lv_obj_set_style_bg_color(
+            ui.music_buttons[i], primary ? ui.palette.accent : ui.palette.slab,
+            0);
         lv_obj_set_style_bg_opa(ui.music_buttons[i], LV_OPA_COVER, 0);
         lv_obj_set_style_shadow_width(ui.music_buttons[i], 0, 0);
-        lv_obj_set_style_border_width(ui.music_buttons[i], 0, 0);
-        // Pin the pressed appearance to the idle appearance. The LVGL default
-        // theme darkens and grows pressed buttons (recolor 35% + 3 px grow);
-        // on the ESP32 PPA render path that pre-composited recolor painted as
-        // a hard-edged yellow-green block over the round button. Identical
-        // pressed styles remove the visual state difference by construction.
-        lv_obj_set_style_bg_color(ui.music_buttons[i], i == 1 ? kWhite : kGraphite,
-                                  LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(ui.music_buttons[i], ui.palette.map_ink,
+                                      0);
+        lv_obj_set_style_border_width(ui.music_buttons[i],
+                                      primary ? 0 : px(2), 0);
+        // Pin the pressed state: LVGL's default recolour + grow painted as a
+        // hard block over the round key on the ESP32 PPA path.
+        lv_obj_set_style_bg_color(
+            ui.music_buttons[i], primary ? ui.palette.accent : ui.palette.slab,
+            LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(ui.music_buttons[i], LV_OPA_COVER,
                                 LV_STATE_PRESSED);
-        lv_obj_set_style_radius(ui.music_buttons[i], LV_RADIUS_CIRCLE,
-                                LV_STATE_PRESSED);
+        lv_obj_set_style_radius(ui.music_buttons[i], 0, LV_STATE_PRESSED);
         lv_obj_set_style_shadow_width(ui.music_buttons[i], 0, LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(ui.music_buttons[i], 0, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(ui.music_buttons[i],
+                                      primary ? 0 : px(2), LV_STATE_PRESSED);
         lv_obj_set_style_recolor_opa(ui.music_buttons[i], LV_OPA_TRANSP,
                                      LV_STATE_PRESSED);
         lv_obj_set_style_transform_width(ui.music_buttons[i], 0,
@@ -2504,10 +2959,28 @@ void create_music_page() {
             ui.music_buttons[i], music_button_event, LV_EVENT_CLICKED,
             reinterpret_cast<void *>(static_cast<std::intptr_t>(i)));
         ui.music_button_labels[i] = make_label(
-            ui.music_buttons[i], i == 3 ? &lv_font_montserrat_16 : &lv_font_montserrat_20,
-            i == 1 ? kBlack : kWhite, labels[i]);
+            ui.music_buttons[i], &moto_font_display_40,
+            primary ? ui.palette.on_accent : ui.palette.on_slab, labels[i]);
         lv_obj_center(ui.music_button_labels[i]);
     }
+
+    // Like is a mode, not a transport key: it lives on the plate row.
+    lv_obj_t *like = lv_button_create(page);
+    ui.music_buttons[3] = like;
+    lv_obj_set_size(like, px(70), px(26));
+    lv_obj_set_pos(like, px(212), px(68));
+    lv_obj_set_style_radius(like, 0, 0);
+    lv_obj_set_style_bg_color(like, ui.palette.accent, 0);
+    lv_obj_set_style_bg_opa(like, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(like, 0, 0);
+    lv_obj_set_style_border_width(like, 0, 0);
+    lv_obj_add_flag(like, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(
+        like, music_button_event, LV_EVENT_CLICKED,
+        reinterpret_cast<void *>(static_cast<std::intptr_t>(3)));
+    ui.music_button_labels[3] = make_label(like, &moto_font_display_24,
+                                           ui.palette.on_accent, "LIKE");
+    lv_obj_center(ui.music_button_labels[3]);
 }
 
 void set_boot_content_opacity(void *object, int32_t opacity) {
@@ -2522,48 +2995,58 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
     teardown_ui();
     if(ui.screen == nullptr) return;
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
-    const lv_color_t boot_black = LV_COLOR_MAKE(0x00, 0x00, 0x00);
-    const lv_color_t boot_white = LV_COLOR_MAKE(0xFF, 0xFF, 0xFF);
-    lv_obj_set_style_bg_color(ui.screen, boot_black, 0);
+    // GTA-poster boot: cream stock, ink type, one magenta slash. The three
+    // colours are the day map's own, so the boot frame belongs to the same
+    // visual system as the radar that replaces it instead of being a separate
+    // black screen that only shares a wordmark with the product.
+    const lv_color_t poster = kGtaDayPalette.background;
+    const lv_color_t ink = kGtaDayPalette.ink;
+    const lv_color_t accent = kGtaDayPalette.accent;
+    lv_obj_set_style_bg_color(ui.screen, poster, 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
 
-    // Keep the AMOLED background truly black and animate only the white mark.
-    // A single opacity animation with a delayed reverse is cheaper than
-    // per-letter animation and fits inside the existing 1.25 s boot cadence.
     lv_obj_t *content = make_layer(ui.screen);
     lv_obj_set_style_opa(content, LV_OPA_TRANSP, 0);
 
-    lv_obj_t *moto = make_label(content, &lv_font_montserrat_48,
-                                boot_white, "MOTO");
-    lv_obj_set_style_text_letter_space(moto, px(4), 0);
-    lv_obj_set_style_text_outline_stroke_color(moto, boot_white, 0);
-    lv_obj_set_style_text_outline_stroke_width(moto, px(2), 0);
-    lv_obj_set_style_text_outline_stroke_opa(moto, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_scale_x(moto, 340, 0);
-    lv_obj_set_style_transform_scale_y(moto, 340, 0);
-    lv_obj_align(moto, LV_ALIGN_CENTER, 0, px(-37));
+    // The slash goes down first so the wordmark sits on top of it. Rotating a
+    // plain rectangle is cheaper than a canvas and needs no asset.
+    lv_obj_t *slash = lv_obj_create(content);
+    lv_obj_remove_style_all(slash);
+    lv_obj_set_size(slash, px(420), px(20));
+    lv_obj_set_pos(slash, px(-31), px(246));
+    lv_obj_set_style_bg_color(slash, accent, 0);
+    lv_obj_set_style_bg_opa(slash, LV_OPA_COVER, 0);
+    lv_obj_set_style_transform_rotation(slash, -120, 0);
 
-    lv_obj_t *gps = make_label(content, &lv_font_montserrat_48,
-                               boot_white, "GPS");
-    lv_obj_set_style_text_letter_space(gps, px(10), 0);
-    lv_obj_set_style_text_outline_stroke_color(gps, boot_white, 0);
-    lv_obj_set_style_text_outline_stroke_width(gps, px(2), 0);
-    lv_obj_set_style_text_outline_stroke_opa(gps, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_scale_x(gps, 340, 0);
-    lv_obj_set_style_transform_scale_y(gps, 340, 0);
-    lv_obj_align(gps, LV_ALIGN_CENTER, 0, px(35));
-
-    // One deliberate signature: a road-like diagonal cut through two solid
-    // white velocity bars. No grey, colour or decorative loading spinner.
+    // Poster rules: heavy ink bars above and below the wordmark, the grammar
+    // the GTA cover art and loading cards use.
     for(int i = 0; i < 2; ++i) {
-        lv_obj_t *bar = lv_obj_create(content);
-        lv_obj_remove_style_all(bar);
-        lv_obj_set_size(bar, px(i == 0 ? 56 : 38), px(5));
-        lv_obj_set_pos(bar, px(i == 0 ? 73 : 250), px(i == 0 ? 259 : 94));
-        lv_obj_set_style_bg_color(bar, boot_white, 0);
-        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-        lv_obj_set_style_transform_rotation(bar, -120, 0);
+        lv_obj_t *rule = lv_obj_create(content);
+        lv_obj_remove_style_all(rule);
+        lv_obj_set_size(rule, px(360), px(6));
+        lv_obj_set_pos(rule, 0, px(i == 0 ? 96 : 352));
+        lv_obj_set_style_bg_color(rule, kViceMagenta, 0);
+        lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
     }
+
+    lv_obj_t *moto = make_label(content, &moto_font_wordmark_132, ink, "MOTO");
+    lv_obj_set_style_text_outline_stroke_color(moto, kOutlineBlack, 0);
+    lv_obj_set_style_text_outline_stroke_width(moto, px(3), 0);
+    lv_obj_set_style_text_outline_stroke_opa(moto, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_letter_space(moto, px(2), 0);
+    lv_obj_align(moto, LV_ALIGN_CENTER, 0, px(-56));
+
+    lv_obj_t *gps = make_label(content, &moto_font_wordmark_132, ink, "GPS");
+    lv_obj_set_style_text_outline_stroke_color(gps, kOutlineBlack, 0);
+    lv_obj_set_style_text_outline_stroke_width(gps, px(3), 0);
+    lv_obj_set_style_text_outline_stroke_opa(gps, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_letter_space(gps, px(6), 0);
+    lv_obj_align(gps, LV_ALIGN_CENTER, 0, px(56));
+
+    lv_obj_t *credit = make_label(content, &moto_font_display_18, ink,
+                                  "NAVIGATION");
+    lv_obj_set_style_text_letter_space(credit, px(6), 0);
+    lv_obj_align(credit, LV_ALIGN_CENTER, 0, px(150));
 
     lv_anim_t fade;
     lv_anim_init(&fade);
@@ -2584,7 +3067,7 @@ extern "C" void moto_nav_ui_show_power_off_screen(void) {
     lv_obj_set_style_bg_color(ui.screen, LV_COLOR_MAKE(0x00, 0x00, 0x00), 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
 
-    lv_obj_t *brand = make_label(ui.screen, &lv_font_montserrat_48,
+    lv_obj_t *brand = make_label(ui.screen, &moto_font_display_40,
                                  LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), "MOTO");
     lv_obj_set_style_text_letter_space(brand, px(4), 0);
     lv_obj_set_style_text_outline_stroke_color(
@@ -2593,11 +3076,23 @@ extern "C" void moto_nav_ui_show_power_off_screen(void) {
     lv_obj_set_style_text_outline_stroke_opa(brand, LV_OPA_COVER, 0);
     lv_obj_align(brand, LV_ALIGN_CENTER, 0, px(-18));
 
-    lv_obj_t *status = make_label(ui.screen, &lv_font_montserrat_16,
+    lv_obj_t *status = make_label(ui.screen, &moto_font_display_18,
                                   LV_COLOR_MAKE(0xFF, 0xFF, 0xFF),
                                   "POWER OFF");
     lv_obj_set_style_text_letter_space(status, px(4), 0);
     lv_obj_align(status, LV_ALIGN_CENTER, 0, px(35));
+}
+
+void install_font_fallbacks() {
+    // Track titles arrive from the phone in whatever script the rider's
+    // library uses. The display face is Latin-only, so a Chinese title used to
+    // render as four empty boxes; the 16 px CJK face keeps it readable.
+    if(moto_font_display_40_cjk.line_height == 0) {
+        moto_font_display_40_cjk = moto_font_display_40;
+        moto_font_display_40_cjk.fallback = &moto_font_text_40;
+        moto_font_display_24_cjk = moto_font_display_24;
+        moto_font_display_24_cjk.fallback = &moto_font_text_24;
+    }
 }
 
 extern "C" void moto_nav_ui_create(void) {
@@ -2605,8 +3100,9 @@ extern "C" void moto_nav_ui_create(void) {
     // the UI is live must retire the old timers before the tree is replaced.
     teardown_ui();
     if(ui.screen == nullptr) return;
+    install_font_fallbacks();
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(ui.screen, kBlack, 0);
+    lv_obj_set_style_bg_color(ui.screen, ui.palette.frame, 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
     // The active screen survives lv_obj_clean(), so a second create() would
     // otherwise stack a duplicate gesture and wake callback on it.
@@ -2647,10 +3143,34 @@ extern "C" void moto_nav_ui_create(void) {
 }
 
 void apply_theme_colors() {
+    for(int i = 0; i < MOTO_UI_PAGE_COUNT; ++i) {
+        if(ui.pages[i] != nullptr) {
+            lv_obj_set_style_bg_color(ui.pages[i], ui.palette.frame, 0);
+        }
+        if(ui.page_discs[i] != nullptr) {
+            lv_obj_set_style_bg_color(ui.page_discs[i], ui.palette.ground, 0);
+        }
+        if(ui.page_frames[i] != nullptr) {
+            lv_obj_invalidate(ui.page_frames[i]);
+        }
+    }
+    if(ui.screen != nullptr) {
+        lv_obj_set_style_bg_color(ui.screen, ui.palette.frame, 0);
+    }
     if(ui.nav_map_background != nullptr) {
         lv_obj_set_style_bg_color(ui.nav_map_background,
                                   ui.palette.background, 0);
     }
+    if(ui.nav_lifecycle != nullptr) {
+        lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.ground, 0);
+    }
+    if(ui.lifecycle_rules[1] != nullptr) {
+        lv_obj_set_style_bg_color(ui.lifecycle_rules[1], ui.palette.slab, 0);
+    }
+    if(ui.lifecycle_slash != nullptr) {
+        lv_obj_set_style_bg_color(ui.lifecycle_slash, ui.palette.accent, 0);
+    }
+
     for(std::uint8_t i = 0; i < ui.nav_building_footprint_count; ++i) {
         const bool landmark = ui.nav_building_spans[i].building_class == 1U;
         lv_obj_set_style_line_color(
@@ -2673,8 +3193,12 @@ void apply_theme_colors() {
         lv_obj_set_style_line_color(ui.nav_route_shadow,
                                     ui.palette.route_shadow, 0);
     }
+    apply_text_colors();
     if(ui.nav_map != nullptr) {
         lv_obj_invalidate(ui.nav_map);
+    }
+    if(ui.nav_lifecycle != nullptr) {
+        lv_obj_invalidate(ui.nav_lifecycle);
     }
 }
 
@@ -2837,15 +3361,6 @@ extern "C" void moto_nav_ui_set_music_state(const moto_music_state_t *state) {
     ui.music.track_title = ui.music_title_text;
     ui.music.artist_name = ui.music_artist_text;
     update_music_view();
-}
-
-extern "C" void moto_nav_ui_set_music_page_enabled(uint8_t enabled) {
-    if(!ui.live) return;
-    ui.music_page_enabled = enabled != 0;
-    if(!ui.music_page_enabled && ui.page == MOTO_UI_PAGE_MUSIC) {
-        show_page(MOTO_UI_PAGE_NAVIGATION, true);
-    }
-    update_page_dots();
 }
 
 extern "C" void moto_nav_ui_set_music_command_callback(
