@@ -234,6 +234,12 @@ final class ESP32BLECentral: NSObject {
     /// session and must not keep a home the rider already replaced.
     private var pendingHomeLocation: HomeLocationBroadcast?
     private var lastSentHomeRevision: UInt32?
+    /// Newest display settings. Retained across a disconnect and re-sent after
+    /// every handshake: the device keeps its watermark while awake, so a resend
+    /// of the same revision is ignored when it is already applied and applied
+    /// when the device rebooted and lost it.
+    private var pendingDeviceSettings: DeviceSettingsBroadcast?
+    private var lastSentSettingsRevision: UInt32?
     private var mapSceneDelivery = BLEMapSceneDelivery()
     private var mapSceneFinalFrame: Data?
     private var shouldMaintainConnection = false
@@ -337,6 +343,14 @@ final class ESP32BLECentral: NSObject {
     func sendHomeLocation(_ home: HomeLocationBroadcast) {
         pendingHomeLocation = home
         flushPendingHomeLocation()
+    }
+
+    /// Same contract as the home address, with one difference that matters:
+    /// the device is the authority on settings, so the echo — not this call's
+    /// return — is what says the glass changed.
+    func sendDeviceSettings(_ settings: DeviceSettingsBroadcast) {
+        pendingDeviceSettings = settings
+        flushPendingDeviceSettings()
     }
 
     private func startScan() {
@@ -595,6 +609,8 @@ final class ESP32BLECentral: NSObject {
                 flushPendingMapScene()
                 lastSentHomeRevision = nil
                 flushPendingHomeLocation()
+                lastSentSettingsRevision = nil
+                flushPendingDeviceSettings()
             }
         } catch {
             recoverFromTransportError(error.localizedDescription)
@@ -927,6 +943,41 @@ final class ESP32BLECentral: NSObject {
             // Keep the newest value for a future protocol-ready session.
             recoverFromTransportError(error.localizedDescription)
         }
+    }
+
+    private func flushPendingDeviceSettings() {
+        guard protocolReady,
+              let codec,
+              let settings = pendingDeviceSettings,
+              settings.supports(capabilities: peerCapabilities),
+              settings.revision != lastSentSettingsRevision
+        else { return }
+
+        do {
+            try send(codec.encodeSettingsState(makeSettingsStateInput(settings)))
+            lastSentSettingsRevision = settings.revision
+            trace("settings revision=\(settings.revision) theme=\(settings.theme) buildings=\(settings.showBuildings)")
+        } catch {
+            // Keep the newest value for a future protocol-ready session.
+            recoverFromTransportError(error.localizedDescription)
+        }
+    }
+
+    private func makeSettingsStateInput(
+        _ settings: DeviceSettingsBroadcast
+    ) -> MotoBLESettingsStateInput {
+        let input = MotoBLESettingsStateInput()
+        input.theme = settings.theme.rawValue
+        input.brightnessPercent = settings.brightnessPercent
+        input.units = settings.units.rawValue
+        input.leanFullScaleDeg = settings.leanFullScale.rawValue
+        input.performanceTargetKph = settings.performanceTarget.rawValue
+        input.visiblePages = settings.visiblePages
+        input.leanZeroOffsetCdeg = settings.leanZeroOffsetCdeg
+        input.ambientNight = settings.ambientNight
+        input.showBuildings = settings.showBuildings
+        input.revision = settings.revision
+        return input
     }
 
     private func makeHomeLocationInput(
