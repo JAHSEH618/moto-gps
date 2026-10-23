@@ -205,4 +205,29 @@ target_include_directories(mount_basis_tests PRIVATE
 )
 target_compile_features(mount_basis_tests PRIVATE cxx_std_17)
 add_test(NAME mount_basis_tests COMMAND mount_basis_tests)
+
+add_executable(dyn_record_tests
+  dyn_record_tests.cpp
+  dyn_replay.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/dyn_record.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/lean_estimator.cpp"
+)
+target_include_directories(dyn_record_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+  "${CMAKE_CURRENT_LIST_DIR}"
+)
+target_compile_features(dyn_record_tests PRIVATE cxx_std_17)
+add_test(NAME dyn_record_tests COMMAND dyn_record_tests)
+
+add_executable(moto_replay
+  moto_replay.cpp
+  dyn_replay.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/dyn_record.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/lean_estimator.cpp"
+)
+target_include_directories(moto_replay PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+  "${CMAKE_CURRENT_LIST_DIR}"
+)
+target_compile_features(moto_replay PRIVATE cxx_std_17)
 add_test(NAME phone_nav_bridge_tests COMMAND phone_nav_bridge_tests)

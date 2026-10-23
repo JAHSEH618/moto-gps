@@ -108,9 +108,14 @@ build_ios() {
     CODE_SIGNING_ALLOWED=NO build
 }
 
+verify_app_size() {
+  scripts/check_app_size.sh
+}
+
 step_run "todo log" verify_todo_log
 step_run "native build and tests" build_native
 step_run "Swift package tests" test_swift
+step_run "app size gate" verify_app_size
 if [[ "$run_ios" == "1" ]]; then
   step_run "iOS app build" build_ios
 fi
