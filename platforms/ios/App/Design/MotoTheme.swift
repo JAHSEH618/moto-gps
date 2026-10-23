@@ -273,7 +273,7 @@ enum MotoMetrics {
     enum RadarSize {
         /// The circle is the product: on a 393pt phone it takes two thirds of
         /// the width instead of reading as a badge.
-        static let hero: CGFloat = 248
+        static let hero: CGFloat = 300
         static let ride: CGFloat = 176
         static let band: CGFloat = 44
     }
