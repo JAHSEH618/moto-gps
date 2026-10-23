@@ -18,6 +18,22 @@ namespace {
 constexpr char kTag[] = "moto_gps";
 constexpr std::uint64_t kPowerHoldMs = 3'000;
 
+// DeviceThemeMode and moto_ui_theme_t are different enums with different
+// orders (Auto is 1 on the wire and 3 in the UI), so never cast.
+moto_ui_theme_t boot_theme_for(moto::device::DeviceThemeMode mode) {
+  switch (mode) {
+    case moto::device::DeviceThemeMode::Day:
+      return MOTO_UI_THEME_GTA_DAY;
+    case moto::device::DeviceThemeMode::Night:
+      return MOTO_UI_THEME_GTA_NIGHT;
+    case moto::device::DeviceThemeMode::Auto:
+      return MOTO_UI_THEME_AUTO;
+    case moto::device::DeviceThemeMode::Official:
+    default:
+      return MOTO_UI_THEME_OFFICIAL;
+  }
+}
+
 moto::ble::AckStatus receive_phone_message(
     const moto::ble::ReassembledMessage& message, void* context) {
   return static_cast<PhoneNavBridge*>(context)->on_message(message);
@@ -114,6 +130,12 @@ extern "C" void app_main(void) {
   ESP_LOGI(kTag, "starting %dx%d RGB565 firmware target",
            MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
 
+  // Read the stored settings before the first frame: the boot screen belongs
+  // to the same paper system as the instrument, and booting it green (or in
+  // the vendor palette) would flash a different product on every power cycle.
+  const moto::device::DeviceSettings boot_settings =
+      moto::device::load_settings();
+
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
     ESP_LOGE(kTag, "board initialization stopped before shared UI startup: %s",
@@ -144,6 +166,7 @@ extern "C" void app_main(void) {
     return;
   }
 
+  moto_nav_ui_set_boot_theme(boot_theme_for(boot_settings.theme));
   moto_nav_ui_show_boot_screen();
   // Commit the deliberately black first animation frame while the physical
   // panel is still hidden, then reveal it.  This removes the white frame that
@@ -166,11 +189,9 @@ extern "C" void app_main(void) {
     return;
   }
 
-  // Read the stored settings before the tree exists: the phone may not connect
-  // for minutes, and booting into the vendor theme first would flash a
-  // different palette at the rider on every power cycle.
-  const moto::device::DeviceSettings boot_settings =
-      moto::device::load_settings();
+  // The tree reset clears the theme and the building visibility, so the boot
+  // settings are applied again after create(); the boot screen used a copy of
+  // the same settings before the tree existed.
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
   static PhoneNavBridge phone_bridge(presenter);
@@ -188,6 +209,11 @@ extern "C" void app_main(void) {
   phone_bridge.apply_settings(boot_settings, false);
   phone_bridge.set_settings_store(moto::device::save_settings);
   phone_bridge.install_ui_callbacks();
+  // Commit the instrument's first frame before the BLE controller starts. The
+  // first UI flush used to race NimBLE initialization and the SPI DMA
+  // underflowed, leaving the panel on the boot screen with no retry: a blank
+  // paper field and a render task waiting for an invalidation that never came.
+  lv_refr_now(display);
   board_port_unlock();
 
   if (!phone_bridge.start_renderer()) {

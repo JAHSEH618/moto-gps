@@ -14,6 +14,10 @@
 
 #define LV_USE_OS LV_OS_NONE
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
+/* The gesture recognizer is the only user of LVGL's float path (it computes
+ * the drag vector and direction). Without this, LV_USE_GESTURE_RECOGNITION
+ * fails at compile time with a hard #error. */
+#define LV_USE_FLOAT 1
 /* Permit the board to attach a 2 MiB PSRAM pool without allocating that space
  * in internal BSS. LVGL's TLSF maximum block size includes this expansion
  * budget; leaving it at zero silently rejects a large lv_mem_add_pool(). */
@@ -31,6 +35,12 @@
 #define LV_USE_LABEL 1
 #define LV_USE_LINE 1
 #define LV_USE_BUTTON 1
+/* Page paging is driven by LV_EVENT_GESTURE. LVGL compiles the gesture
+ * recognizer out by default and this file overrides Kconfig on ESP32, so
+ * without this line the touch driver logs "only single-point pointer events"
+ * and swipe paging is dead on the panel. The native suite cannot catch it:
+ * LV_USE_TEST's mouse indev synthesises the event directly. */
+#define LV_USE_GESTURE_RECOGNITION 1
 // Named objects let the render tests address a control (for example the home
 // glyph) without exposing a test-only accessor in the public header.
 #define LV_USE_OBJ_NAME 1

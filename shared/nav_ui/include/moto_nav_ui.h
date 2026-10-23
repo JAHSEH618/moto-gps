@@ -187,6 +187,10 @@ typedef struct {
 void moto_nav_ui_create(void);
 /** Draw the monochrome power-on wordmark before the full UI is created. */
 void moto_nav_ui_show_boot_screen(void);
+/** Choose the boot frame's palette from persisted settings before the tree is
+    created. AUTO resolves to day at boot because the phone has not supplied an
+    ambient flag yet; the live theme still follows the phone after create(). */
+void moto_nav_ui_set_boot_theme(moto_ui_theme_t theme);
 /** Draw the final monochrome frame before the PMIC removes power. */
 void moto_nav_ui_show_power_off_screen(void);
 void moto_nav_ui_set_state(const moto_ui_state_t *state);
