@@ -29,6 +29,7 @@ void save_lean_calibration(const moto::motion::MountCalibration& mount,
   stored.up = mount.up_axis();
   stored.trim_cdeg = static_cast<std::int16_t>(
       std::lround(mount.trim_deg * 100.0F));
+  stored.static_magnitude_mps2 = mount.static_magnitude_mps2;
   stored.valid = true;
   if (!moto::device::save_mount_basis(stored)) {
     ESP_LOGW(kTag, "lean calibration captured but not persisted");

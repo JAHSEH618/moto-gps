@@ -33,6 +33,7 @@ void test_round_trip() {
   mount.forward = {0.0F, 0.0F, -1.0F};
   mount.up = {0.0F, 1.0F, 0.0F};
   mount.trim_cdeg = -125;
+  mount.static_magnitude_mps2 = 10.12F;
   mount.valid = true;
 
   const auto blob = encode_mount(mount);
@@ -46,17 +47,19 @@ void test_round_trip() {
   check_near(decoded.up.y, 1.0F, 0.0001F);
   check_near(decoded.up.z, 0.0F, 0.0001F);
   CHECK(decoded.trim_cdeg == -125);
+  check_near(decoded.static_magnitude_mps2, 10.12F, 0.01F);
 
   const auto calibration = decoded.calibration();
   CHECK(calibration.stage1);
   check_near(calibration.trim_deg, -1.25F, 0.001F);
+  check_near(calibration.static_magnitude_mps2, 10.12F, 0.01F);
 }
 
 void test_corrupt_blob_is_rejected() {
   StoredMount mount;
   mount.valid = true;
   auto blob = encode_mount(mount);
-  blob[5] ^= 0x40U;
+  blob[6] ^= 0x40U;
   const StoredMount decoded = decode_mount(blob.data(), blob.size());
   CHECK(!decoded.valid);
 }
@@ -68,7 +71,7 @@ void test_short_and_wrong_version_are_rejected() {
   CHECK(!decode_mount(blob.data(), kEncodedMountSize - 1).valid);
 
   auto wrong_version = blob;
-  wrong_version[0] = 2;
+  wrong_version[0] = 3;
   CHECK(!decode_mount(wrong_version.data(), wrong_version.size()).valid);
 }
 

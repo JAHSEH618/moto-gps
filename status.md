@@ -524,3 +524,25 @@ for whether a centred label's box counts as furniture.
 lever-arm cases in `lean_estimator_tests`), `idf.py build` green at 0x335650
 (60% of the app partition free). Still not verified: the H1 tilt table, the
 rider-facing countdown/CAL status, and step 2 on a real ride.
+
+## 2026-10-23T13:12:00+09:00 — Review r1: the learned magnitude becomes the static gate
+
+The review's first code note was right and cheap: the capture learned the
+unit's stationary magnitude from its **first sample**. `MountCalibration` now
+stores the mean of the accepted 2 s window, `is_static` compares `|a|` against
+that value instead of 9.80665, and the value slow-updates (τ=10 s) only inside
+a stationary window. It rides in `att.rmount`, which grew from 17 to 19 bytes
+(version 2, magnitude in 0.01 m/s²). A test now feeds 1.04 g: the learned
+gate reads it as stationary, the nominal gate never does.
+
+Also written: `docs/DESIGN_V2-r1.md`, the reviewable revision draft. It maps
+every checklist item to a section, switches the pseudocode to the gravity-vector
+form actually implemented (`ψ̇ = ω·û`, `φ = atan2(û_y, û_z)`), documents the
+lever-arm and φ̈ gate, tightens the no-speed ZUPT, freezes heading at a
+standstill, moves HOLD to moving-time only, replaces the partition plan with
+4 MB×2, adds round-trip time sync, adds the geometry-gate rules with a
+worst-case string table, and marks the vibration thresholds as temporary
+pending H2. It is deliberately **not committed** yet: the reviewer asked to
+check it item by item first.
+
+Verification: native 13/13, `idf.py build` green at 0x335760 (60% free).

@@ -107,6 +107,9 @@ bool MountCalibration::observe_static(const Vec3f& accel_mps2,
   const Vec3f up = normalise(acc_sum_);
   if (length(up) < 0.5F) return false;
   up_ = up;
+  // The 2 s mean is the honest stationary magnitude for this unit, not the
+  // first sample (which may itself have been a disturbance).
+  static_magnitude_mps2 = length(acc_sum_) / static_cast<float>(acc_count_);
   stage1 = true;
   stage2 = false;
   return true;
@@ -233,7 +236,10 @@ bool LeanEstimator::is_static(const Vec3f& accel, const Vec3f& gyro,
                               const SpeedSample& speed) const {
   if (!finite(accel) || !finite(gyro)) return false;
   if (length(gyro) > 3.0F) return false;
-  if (std::fabs(length(accel) - kGravity) > 0.03F * kGravity) return false;
+  if (std::fabs(length(accel) - mount_.static_magnitude_mps2) >
+      0.03F * kGravity) {
+    return false;
+  }
   if (!speed.valid && accel_delta_ema_ > 0.004F * kGravity) return false;
   return !speed.valid || speed.mps < 1.0F;
 }
@@ -309,6 +315,10 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
   const float bias_hold =
       speed.valid ? kStaticHoldS : kStaticHoldNoSpeedS;
   if (static_for_s_ >= bias_hold) {
+    // Temperature drift moves the magnitude slowly. Only a long stationary
+    // window may follow it; riding must never write to this reference.
+    mount_.static_magnitude_mps2 +=
+        (length(accel) - mount_.static_magnitude_mps2) * (dt / 10.0F);
     // tau = 10 s, applied to the raw body-frame rate.
     const float blend = dt / 10.0F;
     bias_rads_ = add(bias_rads_, scale(sub(scale(gyro_raw, kDegToRad),

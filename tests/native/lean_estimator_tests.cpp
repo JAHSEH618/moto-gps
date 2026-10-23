@@ -202,6 +202,30 @@ void test_static_capture_tolerates_zero_g_offset() {
   CHECK(mount.stage1);
   check_near(mount.to_body({0.0F, offset_magnitude, 0.0F}).z,
              offset_magnitude, 0.1F, "learned static magnitude");
+  check_near(mount.static_magnitude_mps2, offset_magnitude, 0.05F,
+             "captured stationary magnitude");
+}
+
+// The static gate must compare against the unit's own captured magnitude, not
+// the nominal 1 g: 1.04 g would otherwise keep the estimator in GYRO forever.
+void test_static_gate_uses_the_learned_magnitude() {
+  MountCalibration learned;
+  learned.set_basis({1.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F});
+  learned.static_magnitude_mps2 = 1.04F * kGravity;
+  LeanEstimator estimator;
+  estimator.set_mount(learned);
+  run(estimator, {0.0F, 0.0F, 1.04F * kGravity}, {0.0F, 0.0F, 0.0F},
+      SpeedSample{}, 4.0F);
+  CHECK(estimator.output().source == LeanSource::Static);
+  check_near(estimator.output().lean_deg, 0.0F, 0.3F, "offset static lean");
+
+  MountCalibration nominal;
+  nominal.set_basis({1.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F});
+  LeanEstimator other;
+  other.set_mount(nominal);
+  run(other, {0.0F, 0.0F, 1.04F * kGravity}, {0.0F, 0.0F, 0.0F}, SpeedSample{},
+      4.0F);
+  CHECK(other.output().source != LeanSource::Static);
 }
 
 // Step 2 only trims residual yaw: ±10°, and two agreeing segments.
@@ -380,6 +404,7 @@ int main() {
   test_saturation_flag();
   test_stale_speed_disables_kinematic();
   test_static_capture_tolerates_zero_g_offset();
+  test_static_gate_uses_the_learned_magnitude();
   test_forward_trim_is_yaw_only_and_guarded();
   test_trim_shifts_lean();
   test_lever_arm_is_compensated();

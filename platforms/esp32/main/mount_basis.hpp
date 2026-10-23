@@ -16,13 +16,16 @@ struct StoredMount {
   moto::motion::Vec3f forward{1.0F, 0.0F, 0.0F};
   moto::motion::Vec3f up{0.0F, 0.0F, 1.0F};
   std::int16_t trim_cdeg = 0;
+  // This unit's stationary |a| in m/s^2. Restored into the estimator so the
+  // static/ZUPT gate does not fall back to the nominal 1 g.
+  float static_magnitude_mps2 = 9.80665F;
   bool valid = false;
 
   moto::motion::MountCalibration calibration() const;
 };
 
-constexpr std::size_t kEncodedMountSize = 17;
-constexpr std::uint8_t kMountVersion = 1;
+constexpr std::size_t kEncodedMountSize = 19;
+constexpr std::uint8_t kMountVersion = 2;
 // int16 components in 1/10000 units: 1.0 -> 10000, negative -1.0 -> -10000.
 constexpr float kMountScale = 10000.0F;
 

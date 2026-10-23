@@ -45,6 +45,9 @@ moto::motion::MountCalibration StoredMount::calibration() const {
   moto::motion::MountCalibration mount;
   mount.set_basis(forward, up, true);
   mount.set_trim_deg(static_cast<float>(trim_cdeg) / 100.0F);
+  if (static_magnitude_mps2 > 5.0F && static_magnitude_mps2 < 15.0F) {
+    mount.static_magnitude_mps2 = static_magnitude_mps2;
+  }
   return mount;
 }
 
@@ -59,7 +62,10 @@ std::array<std::uint8_t, kEncodedMountSize> encode_mount(
   put_u16(&out[9], static_cast<std::uint16_t>(to_scaled(mount.up.x)));
   put_u16(&out[11], static_cast<std::uint16_t>(to_scaled(mount.up.y)));
   put_u16(&out[13], static_cast<std::uint16_t>(to_scaled(mount.up.z)));
-  put_u16(&out[15], crc16(out.data(), kEncodedMountSize - 2));
+  put_u16(&out[15], static_cast<std::uint16_t>(std::lround(
+                        std::clamp(mount.static_magnitude_mps2, 0.0F, 65.0F) *
+                        100.0F)));
+  put_u16(&out[17], crc16(out.data(), kEncodedMountSize - 2));
   return out;
 }
 
@@ -67,7 +73,7 @@ StoredMount decode_mount(const std::uint8_t* data, std::size_t size) {
   StoredMount mount;
   if (data == nullptr || size < kEncodedMountSize) return mount;
   if (data[0] != kMountVersion) return mount;
-  if (crc16(data, kEncodedMountSize - 2) != get_u16(data + 15)) return mount;
+  if (crc16(data, kEncodedMountSize - 2) != get_u16(data + 17)) return mount;
 
   StoredMount decoded;
   decoded.trim_cdeg = static_cast<std::int16_t>(get_u16(data + 1));
@@ -87,6 +93,9 @@ StoredMount decode_mount(const std::uint8_t* data, std::size_t size) {
                 decoded.up.z * decoded.up.z);
   if (forward_length < 0.5F || up_length < 0.5F) return mount;
   if (std::fabs(decoded.trim_cdeg) > 500) return mount;
+  const float magnitude = static_cast<float>(get_u16(data + 15)) / 100.0F;
+  if (magnitude < 5.0F || magnitude > 15.0F) return mount;
+  decoded.static_magnitude_mps2 = magnitude;
 
   decoded.valid = true;
   return decoded;

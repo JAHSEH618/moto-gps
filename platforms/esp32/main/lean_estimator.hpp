@@ -23,6 +23,10 @@ struct MountCalibration {
   // Residual zero trim about the forward axis, ±5°. Applied after the basis,
   // so it moves Lean and nothing else.
   float trim_deg = 0.0F;
+  // Learned while stationary: this unit's own |specific force| when parked.
+  // Consumer IMUs have tens of mg of zero-g offset, so the static gate and
+  // ZUPT compare against this, not against 9.80665 (v2 review item 5).
+  float static_magnitude_mps2 = 9.80665F;
 
   // Step 1 (DESIGN_V2 §3.3): the mean specific force of a stationary, upright
   // bike is the sensor-frame up axis. Samples are rejected while the bike is
