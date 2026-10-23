@@ -507,6 +507,28 @@ struct ContentView: View {
                         symbol: navigationSymbol
                     )
 
+                    // Distance is the only large number. ETA and speed are
+                    // secondary reads on a band, not two more headline cells:
+                    // three equally weighted stats in a row is the template
+                    // look DESIGN.md rejects.
+                    VStack(alignment: .leading, spacing: MotoMetrics.s2) {
+                        MotoLabel(text: "left", tone: .accent, token: .label)
+                        HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s2) {
+                            MotoNumeral(
+                                value: remainingDistanceValue,
+                                token: .displayXL,
+                                tone: .ink
+                            )
+                            MotoLabel(
+                                text: remainingDistanceUnit,
+                                tone: .muted,
+                                token: .label,
+                                uppercased: false
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     HStack(alignment: .top, spacing: MotoMetrics.s4) {
                         MotoRadar(
                             size: MotoMetrics.RadarSize.ride,
@@ -518,14 +540,6 @@ struct ContentView: View {
                         )
                         VStack(alignment: .leading, spacing: 0) {
                             MotoStatCell(
-                                label: "left",
-                                value: remainingDistanceValue,
-                                unit: remainingDistanceUnit,
-                                token: .displayMD,
-                                tone: .accent
-                            )
-                            MotoRule().padding(.vertical, MotoMetrics.s2)
-                            MotoStatCell(
                                 label: "eta",
                                 value: remainingDurationValue,
                                 unit: remainingDurationUnit,
@@ -536,7 +550,8 @@ struct ContentView: View {
                                 label: "speed",
                                 value: speedValue,
                                 unit: "km/h",
-                                token: .displayMD
+                                token: .displayMD,
+                                tone: .accent
                             )
                         }
                         .padding(.top, MotoMetrics.s2)
