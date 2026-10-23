@@ -178,12 +178,16 @@ struct MotoStatusBand<Right: View>: View {
                     .fill(dotColor)
                     .frame(width: 6, height: 6)
                 MotoLabel(text: linkText, tone: .onSlab, token: .micro)
+                    .fixedSize()
             }
             .accessibilityElement(children: .combine)
 
             MotoRule(axis: .vertical).frame(height: 12)
 
+            // Never ellipsised: at 402 pt the two cells plus the controls fit,
+            // and a truncated `FIX` reads as a bug rather than as a state.
             MotoLabel(text: fixText, tone: .onSlab, token: .micro)
+                .fixedSize()
 
             Spacer(minLength: MotoMetrics.s2)
 
@@ -792,6 +796,10 @@ struct MotoWordmark: View {
             .font(.custom("Anton-Regular", size: size, relativeTo: .largeTitle))
             .tracking(-0.5)
             .foregroundStyle(fill)
+            // A wordmark never wraps: at 132pt "GO" would break into two lines
+            // the moment the row runs out of width.
+            .fixedSize()
+            .lineLimit(1)
             .motoOutline(outline, width: max(2, size * 0.035))
             // Hard drop, always dark: a shadow in the outline colour turns into
             // a smear on light fills.

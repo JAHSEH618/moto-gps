@@ -22,8 +22,8 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
     /// One-line description for the settings row.
     var summary: String {
         switch self {
-        case .vice: return "夜间仪表盘 · 暗底琥珀"
-        case .heat: return "日光海报 · 亮底黑橙"
+        case .vice: return "夜间海报 · 午夜纸面"
+        case .heat: return "日光海报 · 道路奶油"
         }
     }
 
@@ -34,6 +34,7 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The instrument's band. Brand, not state: identical in both themes.
     /// Dark themes drive the system chrome; the light theme must also override it.
     var colorScheme: ColorScheme {
         switch self {
@@ -109,42 +110,45 @@ struct MotoPalette {
     let ok: Color
     let abort: Color
 
-    /// Vice — amber on near-black. Body text 17.4:1, accent 11.6:1.
+    /// Vice — the instrument's night paper. The same tokens as the round screen:
+    /// midnight purple ground, sunset-cream ink, hot pink for the band and for
+    /// whatever is happening now. Body text 15.4:1, ink on accent 5.8:1.
     static let vice = MotoPalette(
-        bg: Color(hex: 0x060808),
-        surface: Color(hex: 0x0E1211),
-        surface2: Color(hex: 0x141918),
-        line: Color(hex: 0x232B2A),
-        lineSoft: Color(white: 1, opacity: 0.10),
-        ink: Color(hex: 0xF2F4EE),
-        inkMuted: Color(hex: 0x93A09C),
-        slab: Color(hex: 0x101514),
-        onSlab: Color(hex: 0xF2F4EE),
-        accent: Color(hex: 0xFFB72E),
-        onAccent: Color(hex: 0x060808),
-        route: Color(hex: 0xFF2D7A),
-        link: Color(hex: 0x5CC7FF),
+        bg: Color(hex: 0x141024),
+        surface: Color(hex: 0x191430),
+        surface2: Color(hex: 0x211A3C),
+        line: Color(hex: 0x2A2145),
+        lineSoft: Color(white: 1, opacity: 0.08),
+        ink: Color(hex: 0xF6F0D7),
+        inkMuted: Color(hex: 0xB9B1C9),
+        slab: Color(hex: 0x0A0614),
+        onSlab: Color(hex: 0xF6F0D7),
+        accent: Color(hex: 0xF34DAA),
+        onAccent: Color(hex: 0x120D1C),
+        route: Color(hex: 0xFF5ACD),
+        link: Color(hex: 0x42F5D7),
         ok: Color(hex: 0x73E6A4),
         abort: Color(hex: 0xFF655F)
     )
 
-    /// Heat — near-black on sunlit paper. Built for direct daylight, not for mood.
-    /// Body text 15.1:1, secondary 6.8:1, accent fill with ink text 5.0:1.
-    /// Accent is never used for body-size text: 3.9:1 only clears AA-large.
+    /// Heat — the instrument's day paper: road cream, outline black, hot pink.
+    /// Body text 17.6:1, secondary 6.4:1, ink on accent 5.7:1.
+    /// Accent is never body-size text: hot pink on cream is 2.9:1, so it fills
+    /// plates that carry ink and nothing smaller.
     static let heat = MotoPalette(
-        bg: Color(hex: 0xF2E6CE),
-        surface: Color(hex: 0xEBDBBC),
-        surface2: Color(hex: 0xE3D0AB),
-        line: Color(hex: 0x17110D).opacity(0.24),
-        lineSoft: Color(hex: 0x17110D).opacity(0.12),
-        ink: Color(hex: 0x17110D),
+        bg: Color(hex: 0xF6F0D7),
+        surface: Color(hex: 0xEFE7C9),
+        surface2: Color(hex: 0xE6DCB8),
+        line: Color(hex: 0x17151B).opacity(0.24),
+        lineSoft: Color(hex: 0x17151B).opacity(0.12),
+        ink: Color(hex: 0x17151B),
         inkMuted: Color(hex: 0x5C4A38),
-        slab: Color(hex: 0x17110D),
-        onSlab: Color(hex: 0xF6E7CE),
-        accent: Color(hex: 0xE8500F),
-        onAccent: Color(hex: 0x17110D),
-        route: Color(hex: 0xD6115C),
-        link: Color(hex: 0x0A5C78),
+        slab: Color(hex: 0x17151B),
+        onSlab: Color(hex: 0xF6F0D7),
+        accent: Color(hex: 0xF34DAA),
+        onAccent: Color(hex: 0x17151B),
+        route: Color(hex: 0xF34DAA),
+        link: Color(hex: 0x0E6F68),
         ok: Color(hex: 0x1D6B3C),
         abort: Color(hex: 0xB3241C)
     )
@@ -269,7 +273,7 @@ enum MotoMetrics {
     enum RadarSize {
         /// The circle is the product: on a 393pt phone it takes two thirds of
         /// the width instead of reading as a badge.
-        static let hero: CGFloat = 248
+        static let hero: CGFloat = 300
         static let ride: CGFloat = 176
         static let band: CGFloat = 44
     }
@@ -343,4 +347,10 @@ extension MotoPalette {
     func inkMuted(contrast: ColorSchemeContrast) -> Color {
         contrast == .increased ? ink : inkMuted
     }
+
+    /// The instrument band. Brand, not state: identical in both themes, never a
+    /// warning colour. Ink on it measures 5.7:1, so plates carry `onBand` type
+    /// and the band is never used for text at prose size.
+    static let band = Color(hex: 0xF34DAA)
+    static let onBand = Color(hex: 0x17151B)
 }
