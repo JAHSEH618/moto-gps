@@ -11,6 +11,7 @@
 | Waveshare BSP / CO5300 初始化 | Component Registry `waveshare/esp32_s3_touch_amoled_1_75c` 3.0.0；板级派生文件 `platforms/esp32/main/board_port_waveshare_1_75c.cpp` | Apache-2.0；见 `LICENSES/Waveshare-Apache-2.0.txt`，该派生文件保留 Apache-2.0 |
 | Source Han Sans SC 字体子集 | `shared/nav_ui/assets/moto_font_nav_16.c`，生成自 LVGL 工具目录的字体 | SIL OFL 1.1；见 `LICENSES/SourceHanSansSC-OFL.txt` |
 | Barlow Condensed 字体（SemiBold / ExtraBold） | `assets/fonts/BarlowCondensed-*.ttf`，取自 Google Fonts `ofl/barlowcondensed` | SIL OFL 1.1；见 `LICENSES/BarlowCondensed-OFL.txt` |
+| Noto Sans SC Bold 字体 | `assets/fonts/NotoSansSC-Bold.otf`，取自 `notofonts/noto-cjk` 的 Sans SubsetOTF | SIL OFL 1.1；见 `LICENSES/NotoSansSC-OFL.txt` |
 | Anton 字体（Regular） | `assets/fonts/Anton-Regular.ttf`，取自 Google Fonts `ofl/anton` | SIL OFL 1.1；见 `LICENSES/Anton-OFL.txt` |
 | Montserrat 内置字体 | LVGL 的内置字体资源 | SIL OFL 1.1；见 `LICENSES/Montserrat-OFL.txt` |
 | OpenStreetMap 数据 / 派生数据库 | `shared/offline_map/jinan-v1.sqlite`、其 SQL/manifest；`shared/demo_fixture` 中的路线/道路/建筑几何；生成 C++ / Swift 常量中的地图数据 | ODbL 1.0，© OpenStreetMap contributors |

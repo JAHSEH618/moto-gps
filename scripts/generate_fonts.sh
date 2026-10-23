@@ -13,3 +13,65 @@ npx --yes lv_font_conv \
   --no-compress \
   --symbols "${symbols}" \
   -o shared/nav_ui/assets/moto_font_nav_16.c
+
+# Display face. The device used LVGL's Montserrat, which is a geometric
+# regular: too light to carry a round instrument panel in daylight. Barlow
+# Condensed ExtraBold is the face DESIGN.md already specifies for the phone's
+# Heat theme, so the radar and the phone read as one product.
+display_symbols='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/+-%()[]<>?!°·—'
+# Text face for phone-supplied strings. The instrument fonts are Latin-only;
+# a Chinese track title used to render as empty boxes. GB2312 level 1 covers
+# the common Chinese character set, and the ASCII block keeps Latin titles on
+# the same face when this file is used directly. Noto Sans SC Bold (SIL OFL)
+# rather than Source Han Sans Normal: a regular-weight CJK title next to the
+# Barlow ExtraBold hero read as a different product.
+text_symbols="$(python3 -c '
+chars = []
+for hi in range(0xB0, 0xD8):
+    for lo in range(0xA1, 0xFF):
+        try:
+            chars.append(bytes([hi, lo]).decode("gb2312"))
+        except UnicodeDecodeError:
+            pass
+extra = "，。！？：；、（）《》“”‘’—…·"
+print("".join(chr(c) for c in range(0x20, 0x7F)) + extra + "".join(chars), end="")
+')"
+for size in 40 24; do
+  npx --yes lv_font_conv \
+    --font assets/fonts/NotoSansSC-Bold.otf \
+    --size "${size}" \
+    --bpp 2 \
+    --format lvgl \
+    --no-compress \
+    --symbols "${text_symbols}" \
+    --force-fast-kern-format \
+    -o "shared/nav_ui/assets/moto_font_text_${size}.c"
+done
+
+# Hero face: the one number the rider reads at speed. 176 px of condensed
+# extra bold fits "42°" inside the disc, and the subset keeps the flash cost
+# of a display-size face down to the glyphs a readout can actually print.
+hero_symbols='0123456789°.:+-/ NSEW'
+npx --yes lv_font_conv \
+  --font assets/fonts/BarlowCondensed-ExtraBold.ttf \
+  --size 176 \
+  --bpp 2 \
+  --format lvgl \
+  --no-compress \
+  --symbols "${hero_symbols}" \
+  --force-fast-kern-format \
+  -o shared/nav_ui/assets/moto_font_hero_176.c
+
+for spec in "72:2" "40:4" "24:4" "18:4"; do
+  size="${spec%%:*}"
+  bpp="${spec##*:}"
+  npx --yes lv_font_conv \
+    --font assets/fonts/BarlowCondensed-ExtraBold.ttf \
+    --size "${size}" \
+    --bpp "${bpp}" \
+    --format lvgl \
+    --no-compress \
+    --symbols "${display_symbols}" \
+    --force-fast-kern-format \
+    -o "shared/nav_ui/assets/moto_font_display_${size}.c"
+done
