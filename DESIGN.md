@@ -269,7 +269,7 @@ page is a different readout of the same instrument.
 
 ### 1. One disc, one bezel, one band
 
-- Paper disc radius 207 px inside a 466 px canvas, black casing 197–207,
+- Paper disc radius 207 px inside a 466 px canvas, black casing 197–212,
   magenta band 212–222, near-black bezel outside.
 - The **magenta band is the gauge**. Progress is painted on it in `ink`:
   speed, route progress, and the lean blip all use the same rim. There is no

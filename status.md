@@ -433,3 +433,50 @@ The review started on the panel, not on a native frame: the lean page was cream 
 **The lean page itself was restored to the poster.** The band moved from 207–217 to 212–222, the casing to 197–212, the ticks and zero bar followed, and the horizon plus sun are painted even when the IMU has no sample; the no-IMU state keeps the composition and puts `NO IMU` on a plate. The 176 px `--` was two solid bricks, so the centre is simply empty until there is data. `test_lean_page_without_attitude_keeps_the_poster` pins the new state.
 
 **Verification and state.** Native 11/11, `scripts/verify.sh` green, firmware `0x333e30` bytes (60% of the 8 MB app partition free), flash verified. Boot log: `loaded settings v2 theme=3 buildings=1`, no gesture warning, no SPI DMA error, no repeated display-perf line while idle. The 0-100 page is still the second page (`nav → 0-100 → lean → speed → compass → music`) and was never removed; it was unreachable because paging was dead and the UI was saturated. The six-page hardware visual pass remains open.
+
+## 2026-10-23T12:32:00+09:00 — v2 P0: lean estimator, mount basis, and the UI quick wins
+
+Started the v2 development guide on branch `feat/gta-attitude`. Baseline before
+the first edit: native 11/11 green, working tree clean apart from an untracked
+`platforms/esp32/sdkconfig.release.bak`.
+
+**The measurement, not the drawing, was wrong.** v1 computed Lean as
+`atan2(-g.x, g.z)` from a low-passed accelerometer vector. In a steady corner
+the specific force is aligned with the bike's own vertical axis, so the more
+settled the corner, the smaller the number it reported. `LeanEstimator`
+(`platforms/esp32/main/lean_estimator.{hpp,cpp}`) replaces it: the gyro
+integrates the world-up vector in the body frame, and three slow observations
+correct it — kinematic (`atan(-v·psi_dot/g)` plus force alignment, 1.5 s),
+static (full up vector, 0.5 s, the only pitch observer) and a straight-line zero
+pseudo-observation (3 s). Bias learns only after 2 s stationary (τ = 10 s) and is
+frozen while moving. Twelve synthetic tests cover it; the one that matters is
+`test_coordinated_turn`, where a 40° steady corner built from physically
+consistent inputs (`a_y = 0`, `a_z = g/cos40`) must read 40 ± 2°. That case is
+the regression v1 could not pass. `test_hang_off` pins 35° frame lean against
+42° effective lean.
+
+**The bracket became a rotation.** `MountCalibration` captures the sensor-frame
+up axis from 2 s of stationary samples and the forward axis from one straight
+acceleration, then maps every sample through that fixed basis. This replaces
+`lean_zero_offset_cdeg`, which could only trim a zero and — as the earlier
+audit found — was never passed to the estimator at all (`motion_heading_sensor.cpp`
+constructed `AttitudeCalibration{}`). The adapter now builds the assumed bracket
+basis (sensor +y up, −z forward) with `CAL_OK = false`, runs one estimator, and
+drops the old yaw-bias calibration loop.
+
+**Range and UI.** `NavPresenter` clamps Lean to ±70° and sets the new
+`lean_saturated` flag. `ui.perf_delta` is now created — the page's state machine
+had been writing `PB`/delta strings into a null label since the 0-100 page was
+introduced. BEST and delta share one row; the speed-limit sign is one component
+used by navigation (61) and speed (52). `update_nav_status()` reads palette
+tokens instead of `kAmber/kGreen/kQuiet/kWhite`, so theme switching no longer
+leaves old literals behind. `DESIGN.md:273` casing corrected to 197–212.
+
+**Docs.** `docs/adr/0003-lean-angle-definition.md` records the definition,
+sign, range, source priority, bias rule and the retirement of the scalar
+offset. Task log entries are in `docs/todo.md`.
+
+**Verification: native 12/12** (`lean_estimator_tests` added; render suite
+still green with the perf-page layout change). Firmware build is the remaining
+gate for the new translation unit; the 125 Hz polling path and the missing
+speed feed are recorded as open v2 tasks rather than guessed at.
