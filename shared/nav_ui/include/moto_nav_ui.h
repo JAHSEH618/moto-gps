@@ -122,6 +122,16 @@ typedef void (*moto_home_shortcut_callback_t)(void *context);
 /* A long press on the Lean page. The device starts the v2 static calibration;
    it is a callback because the sensor task owns the capture. */
 typedef void (*moto_lean_calibration_callback_t)(void *context);
+typedef void (*moto_lean_clear_peaks_callback_t)(void *context);
+
+typedef enum {
+    MOTO_UI_LEAN_CAL_NONE = 0,
+    MOTO_UI_LEAN_CAL_COUNTDOWN = 1, /* value = seconds left */
+    MOTO_UI_LEAN_CAL_CAPTURING = 2,
+    MOTO_UI_LEAN_CAL_OK = 3,
+    MOTO_UI_LEAN_CAL_FAIL_MOVING = 4,
+    MOTO_UI_LEAN_CAL_FAIL_RANGE = 5,
+} moto_ui_lean_cal_state_t;
 
 typedef struct {
     moto_ui_page_t page;
@@ -242,6 +252,13 @@ void moto_nav_ui_set_home_callback(moto_home_shortcut_callback_t callback,
                                    void *context);
 void moto_nav_ui_set_lean_calibration_callback(
     moto_lean_calibration_callback_t callback, void *context);
+void moto_nav_ui_set_clear_peaks_callback(
+    moto_lean_clear_peaks_callback_t callback, void *context);
+/* Thread-safe posts: stored as atomics and applied on the LVGL task. */
+void moto_nav_ui_set_lean_cal_state(moto_ui_lean_cal_state_t state,
+                                    uint8_t value);
+void moto_nav_ui_set_lean_flags(uint8_t cal_unverified, uint8_t imu_poll,
+                                uint8_t log_full);
 /**
  * The phone refused the last home tap (usually: no home address is set).
  * Shows a one-line hint on the navigation page for a few seconds. The device

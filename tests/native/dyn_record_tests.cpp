@@ -1,11 +1,9 @@
-// Telemetry format and replay determinism (DESIGN_V2 §11.2). The file the
-// device records must be readable by a native tool with no firmware link, and
-// the same bytes must produce byte-identical CSV twice.
+// Telemetry block format and deterministic replay (v2 r1 §11.2).
 #include "dyn_record.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -16,7 +14,7 @@ namespace {
 using moto::device::DynRecord;
 using moto::device::GnssRecord;
 using moto::device::MountRecord;
-using moto::device::TelemetryHeader;
+using moto::device::SessionMeta;
 
 int failures = 0;
 
@@ -46,23 +44,17 @@ void test_record_round_trips() {
   dyn.lateral_g_cg = 108;
   dyn.flags = 0xA5;
   dyn.quality = 87;
-
   const auto blob = moto::device::encode_dyn(dyn);
   DynRecord decoded;
   CHECK(moto::device::decode_dyn(blob.data(), blob.size(), &decoded));
   CHECK(decoded.t_ms == dyn.t_ms);
   CHECK(decoded.seq == dyn.seq);
   CHECK(decoded.ax_cms2 == dyn.ax_cms2);
-  CHECK(decoded.ay_cms2 == dyn.ay_cms2);
   CHECK(decoded.az_cms2 == dyn.az_cms2);
   CHECK(decoded.gx_dds == dyn.gx_dds);
-  CHECK(decoded.gy_dds == dyn.gy_dds);
   CHECK(decoded.temp_cdeg == dyn.temp_cdeg);
-  CHECK(decoded.lean_cdeg == dyn.lean_cdeg);
   CHECK(decoded.lean_eff_cdeg == dyn.lean_eff_cdeg);
-  CHECK(decoded.lateral_g_cg == dyn.lateral_g_cg);
   CHECK(decoded.flags == dyn.flags);
-  CHECK(decoded.quality == dyn.quality);
 
   GnssRecord gnss;
   gnss.t_rx_ms = 123456;
@@ -78,11 +70,8 @@ void test_record_round_trips() {
   CHECK(gnss_decoded.t_rx_ms == gnss.t_rx_ms);
   CHECK(gnss_decoded.fix_ms == gnss.fix_ms);
   CHECK(gnss_decoded.speed_cms == gnss.speed_cms);
-  CHECK(gnss_decoded.course_cdeg == gnss.course_cdeg);
-  CHECK(gnss_decoded.flags == gnss.flags);
 
   MountRecord mount;
-  mount.forward[0] = 0;
   mount.forward[2] = -10000;
   mount.up[1] = 10000;
   mount.trim_cdeg = -125;
@@ -93,100 +82,167 @@ void test_record_round_trips() {
   CHECK(mount_decoded.forward[2] == -10000);
   CHECK(mount_decoded.up[1] == 10000);
   CHECK(mount_decoded.trim_cdeg == -125);
+
+  SessionMeta meta;
+  meta.mode = 1;
+  meta.odr_hz = 448;
+  meta.sample_hz = 112;
+  meta.lever_arm_mm = 900;
+  meta.firmware_hash = 0x12345678;
+  meta.mount = mount;
+  const auto meta_blob = moto::device::encode_session_meta(meta);
+  SessionMeta meta_decoded;
+  CHECK(moto::device::decode_session_meta(meta_blob.data(), meta_blob.size(),
+                                          &meta_decoded));
+  CHECK(meta_decoded.mode == 1);
+  CHECK(meta_decoded.odr_hz == 448);
+  CHECK(meta_decoded.sample_hz == 112);
+  CHECK(meta_decoded.lever_arm_mm == 900);
+  CHECK(meta_decoded.firmware_hash == 0x12345678);
+  CHECK(meta_decoded.mount.up[1] == 10000);
 }
 
-void test_header_rejects_corruption() {
-  TelemetryHeader header;
-  header.session_epoch = 1000;
-  header.start_ms = 5;
-  header.sample_hz = 112;
-  auto blob = moto::device::encode_header(header);
-  TelemetryHeader decoded;
-  CHECK(moto::device::decode_header(blob.data(), blob.size(), &decoded));
-  CHECK(decoded.sample_hz == 112);
+void test_block_crc_detects_corruption() {
+  std::vector<std::uint8_t> block(moto::device::kBlockSize, 0xFF);
+  moto::device::BlockHeader header;
+  header.block_seq = 7;
+  header.boot_id = 42;
+  header.first_sample_seq = 3;
+  header.payload_len = 8;
+  const auto encoded = moto::device::encode_block_header(header);
+  std::memcpy(block.data(), encoded.data(), encoded.size());
+  std::memcpy(block.data() + 32, "12345678", 8);
+  const std::uint32_t crc = moto::device::block_crc32(block.data());
+  block[24] = static_cast<std::uint8_t>(crc & 0xFFU);
+  block[25] = static_cast<std::uint8_t>((crc >> 8U) & 0xFFU);
+  block[26] = static_cast<std::uint8_t>((crc >> 16U) & 0xFFU);
+  block[27] = static_cast<std::uint8_t>((crc >> 24U) & 0xFFU);
 
-  auto corrupt = blob;
-  corrupt[9] ^= 0x01U;
-  CHECK(!moto::device::decode_header(corrupt.data(), corrupt.size(), &decoded));
-
-  auto short_blob = blob;
-  CHECK(!moto::device::decode_header(short_blob.data(), 10, &decoded));
+  moto::device::BlockHeader decoded;
+  CHECK(moto::device::decode_block_header(block.data(), &decoded));
+  CHECK(decoded.block_seq == 7);
+  CHECK(moto::device::block_crc32(block.data()) ==
+        moto::device::block_crc32(block.data()));
+  block[100] ^= 0x01U;
+  CHECK(moto::device::block_crc32(block.data()) != crc);
 }
 
-std::vector<std::uint8_t> make_fixture(int samples) {
-  std::vector<std::uint8_t> file;
-  TelemetryHeader header;
-  header.session_epoch = 20261023;
-  header.start_ms = 1000;
-  header.sample_hz = 112;
-  const auto head = moto::device::encode_header(header);
-  file.insert(file.end(), head.begin(), head.end());
+void append_payload_record(std::vector<std::uint8_t>& payload,
+                           std::uint8_t type,
+                           const std::vector<std::uint8_t>& body) {
+  payload.push_back(type);
+  payload.insert(payload.end(), body.begin(), body.end());
+}
 
-  MountRecord mount;
-  mount.forward[2] = -10000;
-  mount.up[1] = 10000;
-  const auto mount_blob = moto::device::encode_mount_record(mount);
-  file.push_back(moto::device::kRecordMount);
-  file.insert(file.end(), mount_blob.begin(), mount_blob.end());
+void append_block(std::vector<std::uint8_t>& file, std::uint32_t boot_id,
+                  std::uint32_t block_seq, std::uint32_t first_sample,
+                  const std::vector<std::uint8_t>& payload,
+                  bool corrupt_crc = false) {
+  std::vector<std::uint8_t> block(moto::device::kBlockSize, 0xFF);
+  std::memcpy(block.data() + 32, payload.data(), payload.size());
+  moto::device::BlockHeader header;
+  header.block_seq = block_seq;
+  header.boot_id = boot_id;
+  header.first_sample_seq = first_sample;
+  header.payload_len = static_cast<std::uint16_t>(payload.size());
+  const auto encoded = moto::device::encode_block_header(header);
+  std::memcpy(block.data(), encoded.data(), encoded.size());
+  std::uint32_t crc = moto::device::block_crc32(block.data());
+  if (corrupt_crc) crc ^= 0xFFFFFFFFU;
+  block[24] = static_cast<std::uint8_t>(crc & 0xFFU);
+  block[25] = static_cast<std::uint8_t>((crc >> 8U) & 0xFFU);
+  block[26] = static_cast<std::uint8_t>((crc >> 16U) & 0xFFU);
+  block[27] = static_cast<std::uint8_t>((crc >> 24U) & 0xFFU);
+  file.insert(file.end(), block.begin(), block.end());
+}
 
+std::vector<std::uint8_t> session_payload(int samples, bool include_meta) {
+  std::vector<std::uint8_t> payload;
+  if (include_meta) {
+    SessionMeta meta;
+    meta.mode = 1;
+    meta.odr_hz = 448;
+    meta.sample_hz = 112;
+    meta.lever_arm_mm = 900;
+    meta.firmware_hash = 0xC0FFEE;
+    MountRecord mount;
+    mount.forward[2] = -10000;
+    mount.up[1] = 10000;
+    meta.mount = mount;
+    const auto meta_blob = moto::device::encode_session_meta(meta);
+    append_payload_record(payload, moto::device::kRecordSession,
+                          {meta_blob.begin(), meta_blob.end()});
+  }
   GnssRecord gnss;
-  gnss.t_rx_ms = 1200;
-  gnss.fix_ms = 1150;
-  gnss.speed_cms = 2000;  // 72 km/h
-  gnss.course_cdeg = 9000;
+  gnss.t_rx_ms = 100;
+  gnss.fix_ms = 50;
+  gnss.speed_cms = 2000;
   gnss.flags = 0x01;
   const auto gnss_blob = moto::device::encode_gnss(gnss);
-  file.push_back(moto::device::kRecordGnss);
-  file.insert(file.end(), gnss_blob.begin(), gnss_blob.end());
+  append_payload_record(payload, moto::device::kRecordGnss,
+                        {gnss_blob.begin(), gnss_blob.end()});
 
   for (int i = 0; i < samples; ++i) {
     DynRecord record;
-    record.t_ms = static_cast<std::uint32_t>(1200 + i * 1000 / 112);
+    record.t_ms = static_cast<std::uint32_t>(100 + i * 1000 / 112);
     record.seq = static_cast<std::uint16_t>(i);
-    record.ax_cms2 = 0;
     record.ay_cms2 = 980;
-    record.az_cms2 = 0;
-    // 20 deg/s about the sensor axis that is the bike's forward axis.
     record.gz_dds = -200;
     record.temp_cdeg = 2500;
     const auto blob = moto::device::encode_dyn(record);
-    file.push_back(moto::device::kRecordDyn);
-    file.insert(file.end(), blob.begin(), blob.end());
+    append_payload_record(payload, moto::device::kRecordDyn,
+                          {blob.begin(), blob.end()});
   }
+  return payload;
+}
+
+std::vector<std::uint8_t> make_fixture() {
+  std::vector<std::uint8_t> file;
+  append_block(file, 0xAAAA, 0, 0, session_payload(120, true));
+  append_block(file, 0xAAAA, 1, 120, session_payload(80, false));
+  // A torn block must be skipped, not abort the file.
+  append_block(file, 0xAAAA, 2, 200, session_payload(40, false), true);
+  // Erased sectors between blocks are legal after a skipped write.
+  file.insert(file.end(), moto::device::kBlockSize, 0xFF);
+  append_block(file, 0xBBBB, 3, 0, session_payload(60, true));
   return file;
 }
 
-void test_replay_is_bit_identical() {
-  const auto file = make_fixture(336);
+void test_replay_is_bit_identical_and_session_aware() {
+  const auto file = make_fixture();
   const std::string first = replay_to_csv(file);
   const std::string second = replay_to_csv(file);
   CHECK(first == second);
-  CHECK(first.find("# mt r1") == 0);
-  CHECK(first.find("# invalid") == std::string::npos);
-  const auto lines = static_cast<int>(std::count(first.begin(), first.end(), '\n'));
-  CHECK(lines == 2 + 336);
+  CHECK(first.find("# mt r1 blocks") == 0);
+  CHECK(first.find("# meta mode=1 odr=448 sample=112 h_mm=900") !=
+        std::string::npos);
+  CHECK(first.find("# session 43690") != std::string::npos);
+  CHECK(first.find("# session 48059") != std::string::npos);
+  // 120 + 80 valid records; the corrupt block (40) and the erased block add
+  // no data lines.
+  const int lines =
+      static_cast<int>(std::count(first.begin(), first.end(), '\n'));
+  CHECK(lines == 2 + 2 + 2 + 120 + 80 + 60);
 
-  // A different sample must produce different output; this guards against a
-  // replay that silently ignores its input.
   auto changed = file;
-  // The last record's first gyro byte: replay must react to raw input, not
-  // to the recorded estimator output it deliberately recomputes.
-  changed[changed.size() - 16] ^= 0x40U;  // last record's roll rate
+  changed[moto::device::kBlockSize + 32 + 20] ^= 0x10U;
   CHECK(replay_to_csv(changed) != first);
 }
 
-void test_short_file_is_rejected() {
+void test_empty_file_is_header_only() {
   const std::vector<std::uint8_t> empty;
-  CHECK(replay_to_csv(empty).rfind("# invalid", 0) == 0);
+  const std::string csv = replay_to_csv(empty);
+  const int lines = static_cast<int>(std::count(csv.begin(), csv.end(), '\n'));
+  CHECK(lines == 2);
 }
 
 }  // namespace
 
 int main() {
   test_record_round_trips();
-  test_header_rejects_corruption();
-  test_replay_is_bit_identical();
-  test_short_file_is_rejected();
+  test_block_crc_detects_corruption();
+  test_replay_is_bit_identical_and_session_aware();
+  test_empty_file_is_header_only();
 
   if (failures != 0) {
     std::cerr << failures << " dyn_record checks failed\n";

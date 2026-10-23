@@ -15,6 +15,7 @@ constexpr char kKey[] = "settings";
 constexpr char kMountKey[] = "att.rmount";
 constexpr char kTlogPosKey[] = "tlog.pos";
 constexpr char kTlogOkKey[] = "tlog.ok";
+constexpr char kImuFifoKey[] = "imu.fifo";
 
 // app_main loads settings before the BLE transport starts, and the transport
 // is the other caller of nvs_flash_init(). ESP-IDF returns ESP_OK for a second
@@ -89,20 +90,21 @@ bool save_settings(const DeviceSettings& settings) {
   return true;
 }
 
-bool load_tlog_pos(std::uint32_t* position) {
-  if (position == nullptr || !ensure_nvs()) return false;
+bool load_imu_fifo_enabled() {
+  if (!ensure_nvs()) return true;
   nvs_handle_t handle = 0;
-  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
-  const esp_err_t result = nvs_get_u32(handle, kTlogPosKey, position);
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return true;
+  std::uint8_t value = 1;
+  const esp_err_t result = nvs_get_u8(handle, kImuFifoKey, &value);
   nvs_close(handle);
-  return result == ESP_OK;
+  return result != ESP_OK ? true : value != 0;
 }
 
-bool save_tlog_pos(std::uint32_t position) {
+bool save_imu_fifo_enabled(bool enabled) {
   if (!ensure_nvs()) return false;
   nvs_handle_t handle = 0;
   if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
-  esp_err_t result = nvs_set_u32(handle, kTlogPosKey, position);
+  esp_err_t result = nvs_set_u8(handle, kImuFifoKey, enabled ? 1 : 0);
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
   return result == ESP_OK;

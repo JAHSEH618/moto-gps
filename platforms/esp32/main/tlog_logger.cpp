@@ -6,6 +6,7 @@
 
 #include "esp_log.h"
 #include "esp_partition.h"
+#include "esp_random.h"
 #include "flash_guard.hpp"
 #include "settings_store.h"
 
@@ -13,131 +14,204 @@ namespace moto::device {
 namespace {
 
 constexpr char kTag[] = "tlog";
-constexpr std::uint32_t kSectorSize = 4096;
 constexpr std::uint32_t kFlushIntervalMs = 2000;
-// A telemetry partition is data subtype 0x40; there is no ESP-IDF subtype for
-// a custom log ring, and reusing spiffs/nvs would mislead every tool that
-// enumerates partitions.
 constexpr esp_partition_subtype_t kTlogSubtype =
     static_cast<esp_partition_subtype_t>(0x40);
 
 std::int16_t to_i16(std::int64_t value) {
-  return static_cast<std::int16_t>(std::clamp<std::int64_t>(
-      value, -32768, 32767));
+  return static_cast<std::int16_t>(
+      std::clamp<std::int64_t>(value, -32768, 32767));
 }
 
 }  // namespace
 
 bool TlogLogger::ensure_partition() {
-  const esp_partition_t* found = esp_partition_find_first(
-      ESP_PARTITION_TYPE_DATA, kTlogSubtype, "tlog");
+  const esp_partition_t* found =
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, kTlogSubtype, "tlog");
   if (found == nullptr) {
     ESP_LOGE(kTag, "no tlog partition; telemetry recording disabled");
     return false;
   }
   partition_ = found;
   capacity_ = found->size;
-  if (capacity_ <= kSectorSize) return false;
-  return true;
+  return capacity_ >= kBlockSize * 2;
 }
 
 bool TlogLogger::erase_sector(std::uint32_t offset) {
-  if (offset % kSectorSize != 0) return false;
-  if (offset + kSectorSize > capacity_) return false;
+  if (offset % kBlockSize != 0 || offset + kBlockSize > capacity_) return false;
   if (!flash_guard_take(500)) return false;
   const esp_err_t result = esp_partition_erase_range(
-      static_cast<const esp_partition_t*>(partition_), offset, kSectorSize);
+      static_cast<const esp_partition_t*>(partition_), offset, kBlockSize);
   flash_guard_give();
   if (result != ESP_OK) {
-    ESP_LOGE(kTag, "erase at 0x%x failed: %s", static_cast<unsigned>(offset),
+    ESP_LOGE(kTag, "erase 0x%x failed: %s", static_cast<unsigned>(offset),
              esp_err_to_name(result));
     return false;
   }
   return true;
 }
 
-bool TlogLogger::write_at(std::uint32_t offset, const std::uint8_t* data,
-                          std::size_t size) {
-  if (offset + size > capacity_) return false;
+bool TlogLogger::write_block() {
+  if (!block_dirty_) return true;
+  if (block_base_ + kBlockSize > capacity_) {
+    full_ = true;
+    return false;
+  }
+  BlockHeader header;
+  header.block_seq = block_seq_;
+  header.boot_id = boot_id_;
+  header.first_sample_seq = first_sample_seq_;
+  header.payload_len = payload_used_;
+  header.crc32 = 0;
+  const auto encoded = encode_block_header(header);
+  std::memcpy(block_, encoded.data(), encoded.size());
+  // Unused payload stays 0xFF so the CRC covers a deterministic block.
+  std::memset(block_ + kBlockHeaderSize + payload_used_, 0xFF,
+              kBlockSize - kBlockHeaderSize - payload_used_);
+  const std::uint32_t crc = block_crc32(block_);
+  block_[24] = static_cast<std::uint8_t>(crc & 0xFFU);
+  block_[25] = static_cast<std::uint8_t>((crc >> 8U) & 0xFFU);
+  block_[26] = static_cast<std::uint8_t>((crc >> 16U) & 0xFFU);
+  block_[27] = static_cast<std::uint8_t>((crc >> 24U) & 0xFFU);
+
+  if (!erase_sector(block_base_)) {
+    ++write_errors_;
+    ready_ = false;
+    return false;
+  }
   if (!flash_guard_take(500)) {
-    ESP_LOGW(kTag, "flash guard timeout");
+    ready_ = false;
     return false;
   }
   const esp_err_t result = esp_partition_write(
-      static_cast<const esp_partition_t*>(partition_), offset, data, size);
+      static_cast<const esp_partition_t*>(partition_), block_base_, block_,
+      kBlockSize);
   flash_guard_give();
   if (result != ESP_OK) {
-    ESP_LOGE(kTag, "write at 0x%x failed: %s", static_cast<unsigned>(offset),
-             esp_err_to_name(result));
+    ++write_errors_;
+    ready_ = false;
+    ESP_LOGE(kTag, "block write at 0x%x failed: %s",
+             static_cast<unsigned>(block_base_), esp_err_to_name(result));
     return false;
+  }
+
+  block_base_ += kBlockSize;
+  ++block_seq_;
+  first_sample_seq_ = seq_;
+  payload_used_ = 0;
+  block_dirty_ = false;
+  return true;
+}
+
+bool TlogLogger::start_block() {
+  if (block_base_ + kBlockSize > capacity_) {
+    full_ = true;
+    return false;
+  }
+  // The next block starts with a clean sector; the header is written at seal
+  // time so a torn block is simply skipped by the reader.
+  payload_used_ = 0;
+  if (!wrote_session_meta_) {
+    const auto meta = encode_session_meta(SessionMeta{
+        session_.mode, session_.odr_hz, session_.sample_hz,
+        session_.lever_arm_mm, 1500, 500, 3000, 300, session_.firmware_hash,
+        session_.mount});
+    block_[kBlockHeaderSize] = kRecordSession;
+    std::memcpy(block_ + kBlockHeaderSize + 1, meta.data(), meta.size());
+    payload_used_ = static_cast<std::uint16_t>(1 + meta.size());
+    wrote_session_meta_ = true;
+    block_dirty_ = true;
   }
   return true;
 }
 
-// The 1.75C has 32 MB of flash and the tlog partition starts at 16 MiB. Access
-// above the first 16 MiB is the one thing that cannot be assumed from the
-// datasheet, so prove erase/write/read once before trusting the region.
+std::uint32_t TlogLogger::find_append_offset() {
+  // Written blocks start with 'MTLG'; an erased sector starts with 0xFF.
+  // Binary search is valid because blocks are appended strictly forward.
+  const std::uint32_t sector_count = capacity_ / kBlockSize;
+  std::uint32_t low = 0;
+  std::uint32_t high = sector_count;
+  std::uint8_t head[4] = {};
+  while (low < high) {
+    const std::uint32_t mid = low + (high - low) / 2;
+    const esp_err_t result = esp_partition_read(
+        static_cast<const esp_partition_t*>(partition_), mid * kBlockSize,
+        head, sizeof(head));
+    const bool erased =
+        result != ESP_OK ||
+        (head[0] == 0xFFU && head[1] == 0xFFU && head[2] == 0xFFU &&
+         head[3] == 0xFFU);
+    if (erased) {
+      high = mid;
+    } else {
+      low = mid + 1;
+    }
+  }
+  return low * kBlockSize;
+}
+
 bool TlogLogger::run_selftest() {
   if (tlog_selftest_done()) return true;
-  const std::uint32_t offset =
-      ((capacity_ - kSectorSize) / kSectorSize) * kSectorSize;
+  const std::uint32_t offset = capacity_ - kBlockSize;
   if (!erase_sector(offset)) return false;
-  std::uint8_t pattern[kSectorSize];
+  alignas(4) std::uint8_t pattern[kBlockSize];
   for (std::size_t i = 0; i < sizeof(pattern); ++i) {
     pattern[i] = static_cast<std::uint8_t>((i * 31U + 7U) & 0xFFU);
   }
-  if (!write_at(offset, pattern, sizeof(pattern))) return false;
-  std::uint8_t readback[kSectorSize];
-  const esp_err_t result = esp_partition_read(
-      static_cast<const esp_partition_t*>(partition_), offset, readback,
-      sizeof(readback));
-  if (result != ESP_OK ||
-      std::memcmp(pattern, readback, sizeof(pattern)) != 0) {
-    ESP_LOGE(kTag, "above-16-MB self-test failed at 0x%x",
-             static_cast<unsigned>(offset));
+  if (!flash_guard_take(500)) return false;
+  esp_err_t result = esp_partition_write(
+      static_cast<const esp_partition_t*>(partition_), offset, pattern,
+      sizeof(pattern));
+  flash_guard_give();
+  if (result != ESP_OK) {
+    ESP_LOGE(kTag, "above-16-MB write failed: %s", esp_err_to_name(result));
     return false;
   }
-  if (!erase_sector(offset)) return false;
+  alignas(4) std::uint8_t readback[kBlockSize];
+  result = esp_partition_read(
+      static_cast<const esp_partition_t*>(partition_), offset, readback,
+      sizeof(readback));
+  const bool ok =
+      result == ESP_OK && std::memcmp(pattern, readback, sizeof(pattern)) == 0;
+  erase_sector(offset);
+  if (!ok) {
+    ESP_LOGE(kTag, "above-16-MB erase/write/read self-test failed");
+    return false;
+  }
   mark_tlog_selftest_done();
-  ESP_LOGI(kTag, "above-16-MB erase/write/read self-test passed");
+  ESP_LOGI(kTag, "above-16-MB self-test passed at 0x%x",
+           static_cast<unsigned>(offset));
   return true;
 }
 
-bool TlogLogger::begin() {
+bool TlogLogger::begin(const TlogSessionInfo& session) {
   flash_guard_init();
+  session_ = session;
   if (!ensure_partition()) return false;
   if (!run_selftest()) return false;
-
-  std::uint32_t stored = 0;
-  bool resumable = false;
-  if (load_tlog_pos(&stored) && stored >= kTelemetryHeaderSize &&
-      stored < capacity_) {
-    std::uint8_t head[kTelemetryHeaderSize];
-    TelemetryHeader header;
-    resumable = esp_partition_read(
-                    static_cast<const esp_partition_t*>(partition_), 0, head,
-                    sizeof(head)) == ESP_OK &&
-                decode_header(head, sizeof(head), &header);
-    if (resumable) position_ = stored;
+  boot_id_ = esp_random();
+  block_seq_ = 0;
+  seq_ = 0;
+  first_sample_seq_ = 0;
+  wrote_session_meta_ = false;
+  block_dirty_ = false;
+  full_ = false;
+  block_base_ = find_append_offset();
+  if (block_base_ + kBlockSize > capacity_) {
+    full_ = true;
+    ready_ = false;
+    ESP_LOGW(kTag, "tlog partition is full");
+    return false;
   }
-
-  if (!resumable) {
-    if (!erase_sector(0)) return false;
-    TelemetryHeader header;
-    header.session_epoch = 0;
-    header.start_ms = 0;
-    header.sample_hz = 125;  // polling path until the FIFO slice lands
-    header.flags = 0x0001;   // development build
-    const auto encoded = encode_header(header);
-    if (!write_at(0, encoded.data(), encoded.size())) return false;
-    position_ = kTelemetryHeaderSize;
-    save_tlog_pos(position_);
-  }
-
+  if (!start_block()) return false;
   ready_ = true;
   last_flush_ms_ = 0;
-  ESP_LOGI(kTag, "recording to tlog at 0x%x of 0x%x",
-           static_cast<unsigned>(position_), static_cast<unsigned>(capacity_));
+  ESP_LOGI(kTag,
+           "recording at 0x%x of 0x%x (mode=%u odr=%uHz sample=%uHz)",
+           static_cast<unsigned>(block_base_), static_cast<unsigned>(capacity_),
+           static_cast<unsigned>(session_.mode),
+           static_cast<unsigned>(session_.odr_hz),
+           static_cast<unsigned>(session_.sample_hz));
   return true;
 }
 
@@ -148,26 +222,18 @@ void TlogLogger::append(std::uint64_t now_ms, const RawImuSample& raw,
     flush();
     last_flush_ms_ = now_ms;
   }
-  if (used_ + kDynRecordSize > kSectorSize) flush();
-  if (position_ + used_ + kDynRecordSize > capacity_) {
-    full_ = true;
-    flush();
-    ESP_LOGW(kTag, "telemetry partition full after %u records",
-             static_cast<unsigned>(seq_));
-    return;
-  }
-  // Entering a fresh sector: it must be erased before the first write, and the
-  // sector holding the header is already erased.
-  if (used_ == 0 && position_ % kSectorSize == 0 && position_ > 0) {
-    if (!erase_sector(position_)) {
+  if (!ready_) return;
+  if (payload_used_ + 1 + kDynRecordSize >
+      kBlockSize - kBlockHeaderSize) {
+    if (!write_block()) return;
+    if (!start_block()) {
       ready_ = false;
       return;
     }
   }
-
   DynRecord record;
   record.t_ms = static_cast<std::uint32_t>(now_ms);
-  record.seq = seq_++;
+  record.seq = static_cast<std::uint16_t>(seq_);
   record.ax_cms2 = to_i16(std::lround(raw.accel_mps2[0] * 100.0F));
   record.ay_cms2 = to_i16(std::lround(raw.accel_mps2[1] * 100.0F));
   record.az_cms2 = to_i16(std::lround(raw.accel_mps2[2] * 100.0F));
@@ -179,27 +245,52 @@ void TlogLogger::append(std::uint64_t now_ms, const RawImuSample& raw,
   record.lean_rate_dds =
       to_i16(std::lround(attitude.lean_rate_dps * 10.0F));
   record.lean_eff_cdeg =
-      attitude.has_lean_eff ? to_i16(std::lround(attitude.lean_eff_deg * 100.0F))
-                            : std::int16_t{-32768};
+      attitude.has_lean_eff
+          ? to_i16(std::lround(attitude.lean_eff_deg * 100.0F))
+          : std::int16_t{-32768};
   record.lateral_g_cg = to_i16(std::lround(attitude.lateral_g * 100.0F));
   record.flags = static_cast<std::uint8_t>(attitude.flags & 0xFFU);
   record.quality = attitude.quality;
 
   const auto encoded = encode_dyn(record);
-  std::memcpy(buffer_ + used_, encoded.data(), encoded.size());
-  used_ += encoded.size();
+  block_[kBlockHeaderSize + payload_used_] = kRecordDyn;
+  std::memcpy(block_ + kBlockHeaderSize + payload_used_ + 1, encoded.data(),
+              encoded.size());
+  payload_used_ = static_cast<std::uint16_t>(payload_used_ + 1 +
+                                             encoded.size());
+  block_dirty_ = true;
+  ++seq_;
+}
+
+void TlogLogger::note_mode(std::uint8_t mode, std::uint16_t odr_hz,
+                           std::uint16_t sample_hz) {
+  if (!ready_ || full_) return;
+  if (payload_used_ + 1 + kSessionMetaSize >
+      kBlockSize - kBlockHeaderSize) {
+    if (!write_block()) return;
+    if (!start_block()) {
+      ready_ = false;
+      return;
+    }
+  }
+  session_.mode = mode;
+  session_.odr_hz = odr_hz;
+  session_.sample_hz = sample_hz;
+  const auto meta = encode_session_meta(SessionMeta{
+      mode, odr_hz, sample_hz, session_.lever_arm_mm, 1500, 500, 3000, 300,
+      session_.firmware_hash, session_.mount});
+  block_[kBlockHeaderSize + payload_used_] = kRecordSession;
+  std::memcpy(block_ + kBlockHeaderSize + payload_used_ + 1, meta.data(),
+              meta.size());
+  payload_used_ =
+      static_cast<std::uint16_t>(payload_used_ + 1 + meta.size());
+  block_dirty_ = true;
 }
 
 void TlogLogger::flush() {
-  if (!ready_ || used_ == 0) return;
-  if (!write_at(position_, buffer_, used_)) {
-    ++write_errors_;
-    ready_ = false;
-    return;
-  }
-  position_ += static_cast<std::uint32_t>(used_);
-  used_ = 0;
-  save_tlog_pos(position_);
+  if (!ready_ || !block_dirty_) return;
+  if (!write_block()) return;
+  if (!start_block()) ready_ = false;
 }
 
 }  // namespace moto::device

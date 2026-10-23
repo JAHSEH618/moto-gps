@@ -441,6 +441,28 @@ struct Ui {
     void *home_callback_context = nullptr;
     moto_lean_calibration_callback_t lean_calibration_callback = nullptr;
     void *lean_calibration_context = nullptr;
+    moto_lean_clear_peaks_callback_t lean_clear_callback = nullptr;
+    void *lean_clear_context = nullptr;
+    lv_obj_t *lean_status_plate = nullptr;
+    lv_obj_t *lean_status_text = nullptr;
+    lv_obj_t *lean_progress = nullptr;
+    lv_timer_t *lean_press_timer = nullptr;
+    lv_timer_t *lean_status_timer = nullptr;
+    uint32_t lean_press_start_ms = 0;
+    uint32_t lean_press_elapsed_ms = 0;
+    bool lean_press_active = false;
+    bool lean_progress_visible = false;
+    volatile uint8_t lean_cal_state = 0;
+    volatile uint8_t lean_cal_value = 0;
+    volatile uint8_t lean_flag_cal = 0;
+    volatile uint8_t lean_flag_poll = 0;
+    volatile uint8_t lean_flag_full = 0;
+    uint8_t lean_cal_applied = 255;
+    uint8_t lean_cal_value_applied = 255;
+    uint8_t lean_flags_applied = 255;
+    bool lean_countdown_pending = false;
+    uint32_t lean_countdown_ms = 0;
+    uint32_t lean_result_ms = 0;
     bool demo_active = false;
     bool reduce_motion = false;
     // True only while the full widget tree from moto_nav_ui_create() exists.
@@ -2824,9 +2846,155 @@ void create_performance_page() {
     ui.perf_timer_task = lv_timer_create(perf_tick, 50, nullptr);
 }
 
-void lean_calibration_event(lv_event_t *) {
-    if(ui.lean_calibration_callback != nullptr) {
-        ui.lean_calibration_callback(ui.lean_calibration_context);
+void clear_lean_peaks() {
+    ui.lean_peak_left = 0.0F;
+    ui.lean_peak_right = 0.0F;
+    if(ui.lean_max_l != nullptr) lv_label_set_text(ui.lean_max_l, "L --");
+    if(ui.lean_max_r != nullptr) lv_label_set_text(ui.lean_max_r, "R --");
+}
+
+void draw_lean_progress(lv_event_t *event) {
+    if(!ui.lean_progress_visible) return;
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const float progress =
+        std::min(1.0F, static_cast<float>(ui.lean_press_elapsed_ms) / 3000.0F);
+    lv_draw_arc_dsc_t dsc;
+    lv_draw_arc_dsc_init(&dsc);
+    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
+    dsc.radius = 190;
+    dsc.width = 6;
+    dsc.rounded = 1;
+    dsc.start_angle = 270.0F;
+    dsc.end_angle = 270.0F + 360.0F * progress;
+    dsc.color = progress >= 1.0F ? ui.palette.ink : ui.palette.accent;
+    dsc.opa = LV_OPA_COVER;
+    lv_draw_arc(layer, &dsc);
+}
+
+void lean_press_tick(lv_timer_t *) {
+    if(!ui.lean_press_active) return;
+    ui.lean_press_elapsed_ms = lv_tick_elaps(ui.lean_press_start_ms);
+    const bool show = ui.lean_press_elapsed_ms >= 300;
+    if(show != ui.lean_progress_visible || show) {
+        if(show && !ui.lean_progress_visible) {
+            ui.lean_progress_visible = true;
+        }
+        lv_obj_invalidate(ui.lean_progress);
+    }
+}
+
+void lean_press_event(lv_event_t *) {
+    ui.lean_press_active = true;
+    ui.lean_press_start_ms = lv_tick_get();
+    ui.lean_press_elapsed_ms = 0;
+    ui.lean_progress_visible = false;
+    lv_timer_resume(ui.lean_press_timer);
+}
+
+void lean_release_event(lv_event_t *event) {
+    if(!ui.lean_press_active) return;
+    const uint32_t elapsed = lv_tick_elaps(ui.lean_press_start_ms);
+    ui.lean_press_active = false;
+    ui.lean_press_elapsed_ms = 0;
+    ui.lean_progress_visible = false;
+    lv_timer_pause(ui.lean_press_timer);
+    if(ui.lean_progress != nullptr) lv_obj_invalidate(ui.lean_progress);
+    if(lv_event_get_code(event) == LV_EVENT_PRESS_LOST) return;
+    if(elapsed >= 3000) {
+        // Countdown starts on release; the sensor capture request fires when
+        // it reaches zero, not while the rider is still holding.
+        ui.lean_cal_state = MOTO_UI_LEAN_CAL_COUNTDOWN;
+        ui.lean_cal_value = 3;
+        ui.lean_countdown_ms = 0;
+        ui.lean_countdown_pending = true;
+    } else if(elapsed >= 2000) {
+        if(ui.lean_clear_callback != nullptr) {
+            ui.lean_clear_callback(ui.lean_clear_context);
+        } else {
+            clear_lean_peaks();
+        }
+    }
+}
+
+void lean_status_tick(lv_timer_t *) {
+    if(ui.lean_cal_state == MOTO_UI_LEAN_CAL_OK ||
+       ui.lean_cal_state == MOTO_UI_LEAN_CAL_FAIL_MOVING ||
+       ui.lean_cal_state == MOTO_UI_LEAN_CAL_FAIL_RANGE) {
+        ui.lean_result_ms += 100;
+        if(ui.lean_result_ms >= 1000) {
+            ui.lean_cal_state = MOTO_UI_LEAN_CAL_NONE;
+            ui.lean_result_ms = 0;
+        }
+    }
+    if(ui.lean_cal_state == MOTO_UI_LEAN_CAL_COUNTDOWN &&
+       ui.lean_countdown_pending) {
+        ui.lean_countdown_ms += 100;
+        if(ui.lean_countdown_ms >= 1000) {
+            ui.lean_countdown_ms = 0;
+            if(ui.lean_cal_value > 0) --ui.lean_cal_value;
+            if(ui.lean_cal_value == 0) {
+                ui.lean_cal_state = MOTO_UI_LEAN_CAL_CAPTURING;
+                ui.lean_countdown_pending = false;
+                if(ui.lean_calibration_callback != nullptr) {
+                    ui.lean_calibration_callback(ui.lean_calibration_context);
+                }
+            }
+        }
+    }
+    const uint8_t flags = static_cast<uint8_t>(
+        (ui.lean_flag_cal != 0 ? 1U : 0U) | (ui.lean_flag_poll != 0 ? 2U : 0U) |
+        (ui.lean_flag_full != 0 ? 4U : 0U));
+    if(ui.lean_status_text == nullptr) return;
+    if(ui.lean_cal_state == ui.lean_cal_applied &&
+       ui.lean_cal_value == ui.lean_cal_value_applied &&
+       flags == ui.lean_flags_applied) {
+        return;
+    }
+    if(ui.lean_cal_state == MOTO_UI_LEAN_CAL_OK ||
+       ui.lean_cal_state == MOTO_UI_LEAN_CAL_FAIL_MOVING ||
+       ui.lean_cal_state == MOTO_UI_LEAN_CAL_FAIL_RANGE) {
+        ui.lean_result_ms = 0;
+    }
+    ui.lean_cal_applied = ui.lean_cal_state;
+    ui.lean_cal_value_applied = ui.lean_cal_value;
+    ui.lean_flags_applied = flags;
+    char text[32];
+    bool visible = true;
+    switch(ui.lean_cal_state) {
+        case MOTO_UI_LEAN_CAL_COUNTDOWN:
+            std::snprintf(text, sizeof(text), "CAL %u",
+                          static_cast<unsigned>(ui.lean_cal_value));
+            break;
+        case MOTO_UI_LEAN_CAL_CAPTURING:
+            std::snprintf(text, sizeof(text), "CAL...");
+            break;
+        case MOTO_UI_LEAN_CAL_OK:
+            std::snprintf(text, sizeof(text), "CAL OK");
+            break;
+        case MOTO_UI_LEAN_CAL_FAIL_MOVING:
+            std::snprintf(text, sizeof(text), "CAL FAIL\nMOVING");
+            break;
+        case MOTO_UI_LEAN_CAL_FAIL_RANGE:
+            std::snprintf(text, sizeof(text), "CAL FAIL\nRANGE");
+            break;
+        default:
+            if((flags & 4U) != 0U) {
+                std::snprintf(text, sizeof(text), "LOG FULL");
+            } else if((flags & 2U) != 0U) {
+                std::snprintf(text, sizeof(text), "IMU POLL");
+            } else if((flags & 1U) != 0U) {
+                std::snprintf(text, sizeof(text), "CAL");
+            } else {
+                visible = false;
+                text[0] = '\0';
+            }
+            break;
+    }
+    lv_label_set_text(ui.lean_status_text, text);
+    if(visible) {
+        lv_obj_remove_flag(ui.lean_status_plate, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(ui.lean_status_plate, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -2923,8 +3091,12 @@ void create_lean_page() {
     lv_obj_set_style_bg_opa(calibration, LV_OPA_TRANSP, 0);
     lv_obj_set_name_static(calibration, "moto-lean-calibration");
     lv_obj_add_flag(calibration, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(calibration, lean_calibration_event,
-                        LV_EVENT_LONG_PRESSED, nullptr);
+    lv_obj_add_event_cb(calibration, lean_press_event, LV_EVENT_PRESSED,
+                        nullptr);
+    lv_obj_add_event_cb(calibration, lean_release_event, LV_EVENT_RELEASED,
+                        nullptr);
+    lv_obj_add_event_cb(calibration, lean_release_event, LV_EVENT_PRESS_LOST,
+                        nullptr);
 
     ui.lean_marks = lv_obj_create(page);
     lv_obj_remove_style_all(ui.lean_marks);
@@ -2967,6 +3139,28 @@ void create_lean_page() {
     ui.lean_state = make_plate(page, "NO IMU", 120, 30, &ui.lean_state_text);
     lv_obj_align(ui.lean_state, LV_ALIGN_CENTER, 0, px(78));
     lv_obj_add_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
+
+    ui.lean_progress = lv_obj_create(page);
+    lv_obj_remove_style_all(ui.lean_progress);
+    lv_obj_clear_flag(ui.lean_progress, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.lean_progress, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_add_event_cb(ui.lean_progress, draw_lean_progress,
+                        LV_EVENT_DRAW_MAIN, nullptr);
+
+    // One status slot: CAL / countdown / result / IMU POLL / LOG FULL. It sits
+    // below the hero and above nothing else, so it never competes with the
+    // horizon (v2 r1 §6.2).
+    ui.lean_status_plate = make_plate(page, "", 150, 56, &ui.lean_status_text);
+    lv_obj_align(ui.lean_status_plate, LV_ALIGN_CENTER, 0, 130);
+    lv_obj_set_name_static(ui.lean_status_plate, "moto-lean-status");
+    lv_obj_set_style_text_align(ui.lean_status_text, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_line_space(ui.lean_status_text, -4, 0);
+    lv_obj_add_flag(ui.lean_status_plate, LV_OBJ_FLAG_HIDDEN);
+
+    ui.lean_press_timer = lv_timer_create(lean_press_tick, 30, nullptr);
+    lv_timer_pause(ui.lean_press_timer);
+    ui.lean_status_timer = lv_timer_create(lean_status_tick, 100, nullptr);
 }
 
 void create_music_page() {
@@ -3474,4 +3668,26 @@ extern "C" void moto_nav_ui_set_lean_calibration_callback(
     moto_lean_calibration_callback_t callback, void *context) {
     ui.lean_calibration_callback = callback;
     ui.lean_calibration_context = context;
+}
+
+extern "C" void moto_nav_ui_set_clear_peaks_callback(
+    moto_lean_clear_peaks_callback_t callback, void *context) {
+    ui.lean_clear_callback = callback;
+    ui.lean_clear_context = context;
+}
+
+extern "C" void moto_nav_ui_set_lean_cal_state(
+    moto_ui_lean_cal_state_t state, uint8_t value) {
+    // Called from the sensor task; only atomics are touched here.
+    ui.lean_cal_value = value;
+    ui.lean_cal_state = static_cast<uint8_t>(state);
+    ui.lean_countdown_pending = false;
+    ui.lean_countdown_ms = 0;
+}
+
+extern "C" void moto_nav_ui_set_lean_flags(uint8_t cal_unverified,
+                                           uint8_t imu_poll, uint8_t log_full) {
+    ui.lean_flag_cal = cal_unverified;
+    ui.lean_flag_poll = imu_poll;
+    ui.lean_flag_full = log_full;
 }

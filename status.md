@@ -613,3 +613,46 @@ that is what shipped and what r1 §11.3 now says.
 Not in this slice: FIFO (register map supplied, implemented next), CAL feedback
 UI, and the r1 full merge. Verified: native 14/14, verify.sh green, idf.py
 build green against the new partition table.
+
+## 2026-10-23T15:20:00+09:00 — Step 2 complete in code: self-describing tlog, FIFO, CAL UI, r1
+
+**tlog is now self-describing.** 4 KiB blocks with magic/version/seq/boot id/
+first sample/payload length/CRC32, payload written first and the header last,
+so a torn block is skipped rather than trusted. Each boot's first block carries
+a SessionMeta record (mode, ODR, sample rate, h, estimator gates, firmware
+hash, mount), and a FIFO fallback appends a fresh one. The append point is the
+first all-0xFF sector found by binary search — `tlog.pos` is gone from NVS,
+which also keeps wear off the 24 KB partition that holds `att.rmount`. The
+partition stops when full and the lean slot reports `LOG FULL`; `moto_replay`
+takes the raw `parttool` image, validates every block CRC and prints a session
+boundary per boot.
+
+**FIFO per the supplied register map.** CTRL1 0x70 / CTRL2 0x24 / CTRL3 0x54 /
+CTRL5 0x99 (read back and logged) / CTRL7 0x03 / CTRL8 0x80, Stream-128 at
+watermark 4, REQ_FIFO→ACK via STATUSINT, read window inside flash_guard, 4-frame
+average to ~112 Hz, TIMESTAMP-based loss accounting, overflow count and
+window max/mean. A fallback is visible everywhere it matters: serial reason,
+`kLeanImuFallback`, session mode 0, and `IMU POLL` on the lean page. The
+runtime switch is NVS `imu.fifo` plus `imu fifo on|off`; `imu stats` and
+`imu lean` are the diagnostics. None of this has touched a board yet.
+
+**CAL UI per r1.** Press starts a timer, the ring appears after 300 ms, a
+2–3 s release clears peaks, ≥3 s release runs a 3 s countdown and then asks
+the sensor to capture. Results are posted as atomics and applied on the LVGL
+task, so the sensor task never touches widgets. `CAL`, the countdown, OK,
+FAIL MOVING/RANGE, `IMU POLL` and `LOG FULL` share one slot at (0,+130).
+Render tests drive real press/release events with a 5 ms simulated tick.
+
+**Pitch sign fixed.** The review was right: `asin(−û_x)` reported nose-down as
+positive. It is now `asin(+û_x)`, and the longitudinal-G term flipped with it.
+The test feeds the physically correct nose-up specific force, not the one that
+matched the old sign.
+
+**Docs.** `docs/DESIGN_V2.md` replaces the draft and the r1 delta; `DESIGN.md`
+now says it is superseded. `docs/BENCH_TEST_PLAN.md` is the ordered bench
+checklist with commands, serial keywords and pass criteria, including the
+three H1 groups and the replay/error-table step.
+
+**Verification:** native 14/14, verify.sh green, `idf.py build` green at
+0x338f80 (46% of the 6 MB slot free). Still unverified: every hardware claim
+in the bench plan.

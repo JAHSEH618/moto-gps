@@ -92,7 +92,9 @@ void test_static_tilt() {
 void test_pitch_is_nose_up_positive() {
   LeanEstimator estimator;
   const float theta = 10.0F * kDegToRad;
-  const Vec3f accel{-kGravity * std::sin(theta), 0.0F,
+  // Nose-up: the body x axis tilts up, so static specific force along body x
+  // is +g*sin(theta).
+  const Vec3f accel{kGravity * std::sin(theta), 0.0F,
                     kGravity * std::cos(theta)};
   run(estimator, accel, {0.0F, 0.0F, 0.0F}, SpeedSample{}, 4.0F);
   check_near(estimator.output().lean_deg, 0.0F, 0.3F, "pitch keeps lean");
@@ -250,6 +252,34 @@ void test_static_gate_uses_the_learned_magnitude() {
   run(other, {0.0F, 0.0F, 1.04F * kGravity}, {0.0F, 0.0F, 0.0F}, SpeedSample{},
       4.0F);
   CHECK(other.output().source != LeanSource::Static);
+}
+
+// The datasheet's initial gyro offset can be ~10 dps, so the stillness gate is
+// the window standard deviation, not the raw mean. A constant offset passes; a
+// noisy window does not.
+void test_static_capture_uses_gyro_stddev() {
+  const Vec3f up{0.0F, 1.0F, 0.0F};
+  MountCalibration biased;
+  biased.begin_static();
+  bool ready = false;
+  for (int i = 0; i < 300; ++i) {
+    ready = biased.observe_static({0.0F, kGravity, 0.0F},
+                                  {8.0F, 0.0F, 0.0F}, 0.01F);
+  }
+  CHECK(ready);
+  CHECK(biased.stage1);
+
+  MountCalibration noisy;
+  noisy.begin_static();
+  bool accepted = false;
+  for (int i = 0; i < 300; ++i) {
+    const float rate = (i % 2 == 0) ? 2.0F : -2.0F;
+    accepted = noisy.observe_static({0.0F, kGravity, 0.0F},
+                                    {rate, 0.0F, 0.0F}, 0.01F);
+  }
+  CHECK(!accepted);
+  CHECK(!noisy.stage1);
+  CHECK(noisy.reject_reason == 1);
 }
 
 // Step 2 only trims residual yaw: ±10°, and two agreeing segments.
@@ -430,6 +460,7 @@ int main() {
   test_stale_speed_disables_kinematic();
   test_static_capture_tolerates_zero_g_offset();
   test_static_gate_uses_the_learned_magnitude();
+  test_static_capture_uses_gyro_stddev();
   test_forward_trim_is_yaw_only_and_guarded();
   test_trim_shifts_lean();
   test_lever_arm_is_compensated();

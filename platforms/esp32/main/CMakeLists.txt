@@ -30,6 +30,7 @@ idf_component_register(
         "lean_estimator.cpp"
         "mount_basis.cpp"
         "motion_heading_sensor.cpp"
+        "qmi8658_fifo.cpp"
         "phone_nav_bridge.cpp"
         "flash_guard.cpp"
         "settings_store.cpp"
@@ -49,6 +50,7 @@ idf_component_register(
         esp_driver_gpio
         esp_driver_i2c
         esp_hw_support
+        esp_app_format
         freertos
         log
         lvgl

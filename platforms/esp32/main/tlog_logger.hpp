@@ -9,47 +9,63 @@
 
 namespace moto::device {
 
-// Development recorder for the `tlog` flash partition (v2 r1 §11.2).
+struct TlogSessionInfo {
+  std::uint8_t mode = 0;  // 0 poll, 1 fifo
+  std::uint16_t odr_hz = 0;
+  std::uint16_t sample_hz = 0;
+  std::int16_t lever_arm_mm = 0;
+  std::uint32_t firmware_hash = 0;
+  MountRecord mount;
+};
+
+// Self-describing block recorder for the `tlog` partition (v2 r1 §11.2).
 //
-// The partition content is the plain telemetry stream from dyn_record.hpp:
-// header at offset 0, then typed records. That is deliberate, because the
-// export path is `parttool.py read_partition --partition-name tlog` piped into
-// `moto_replay`, and any block framing would have to be stripped first.
+// Each 4 KiB sector holds one block: erased, payload written as a whole block,
+// then the header (with payload length and CRC32) is part of that same write.
+// Nothing is stored in NVS: the append point is the first sector whose first
+// four bytes are 0xFF, found by binary search at boot. A torn block fails CRC
+// and is skipped by the replay.
 class TlogLogger {
  public:
-  // Finds the partition, runs the above-16-MB self-test once, resumes from the
-  // position stored in NVS, or starts a fresh file.
-  bool begin();
-
+  bool begin(const TlogSessionInfo& session);
   bool ready() const { return ready_; }
   bool full() const { return full_; }
 
-  // Called from the IMU task with the raw sample and the estimate it produced.
   void append(std::uint64_t now_ms, const RawImuSample& raw,
               const moto::motion::AttitudeEstimate& attitude);
-
-  // Writes the partial sector buffer. Called every 2 s and at shutdown.
   void flush();
+  // Appends a fresh session record (mode changed by FIFO fallback or A/B).
+  void note_mode(std::uint8_t mode, std::uint16_t odr_hz,
+                 std::uint16_t sample_hz);
 
   std::uint32_t records() const { return seq_; }
   std::uint32_t write_errors() const { return write_errors_; }
+  std::uint32_t blocks() const { return block_seq_; }
 
  private:
   bool ensure_partition();
   bool run_selftest();
   bool erase_sector(std::uint32_t offset);
-  bool write_at(std::uint32_t offset, const std::uint8_t* data, std::size_t size);
+  bool write_block();
+  bool start_block();
+  std::uint32_t find_append_offset();
 
   const void* partition_ = nullptr;  // esp_partition_t*
-  std::uint32_t position_ = 0;
+  TlogSessionInfo session_;
   std::uint32_t capacity_ = 0;
-  std::uint16_t seq_ = 0;
+  std::uint32_t block_base_ = 0;
+  std::uint32_t block_seq_ = 0;
+  std::uint32_t boot_id_ = 0;
+  std::uint32_t seq_ = 0;
+  std::uint32_t first_sample_seq_ = 0;
+  std::uint16_t payload_used_ = 0;
   std::uint32_t write_errors_ = 0;
   std::uint64_t last_flush_ms_ = 0;
-  alignas(4) std::uint8_t buffer_[4096] = {};
-  std::size_t used_ = 0;
+  bool wrote_session_meta_ = false;
+  bool block_dirty_ = false;
   bool ready_ = false;
   bool full_ = false;
+  alignas(4) std::uint8_t block_[kBlockSize] = {};
 };
 
 }  // namespace moto::device
