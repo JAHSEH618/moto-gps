@@ -218,6 +218,34 @@ moto::ble::HomeLocation HomeLocationFromInput(MotoBLEHomeLocationInput *input) {
   return home;
 }
 
+moto::ble::SettingsState SettingsStateFromInput(MotoBLESettingsStateInput *input) {
+  moto::ble::SettingsState state;
+  // Theme and units are mapped explicitly rather than cast: the device's
+  // `moto_ui_theme_t` is not this enum, and a reinterpreted value would be a
+  // silently wrong palette rather than a refused message.
+  switch (input.theme) {
+    case 0: state.theme = moto::ble::SettingsTheme::Official; break;
+    case 1: state.theme = moto::ble::SettingsTheme::Auto; break;
+    case 2: state.theme = moto::ble::SettingsTheme::Day; break;
+    case 3: state.theme = moto::ble::SettingsTheme::Night; break;
+    default: state.theme = static_cast<moto::ble::SettingsTheme>(input.theme); break;
+  }
+  switch (input.units) {
+    case 0: state.units = moto::ble::SettingsUnits::Kph; break;
+    case 1: state.units = moto::ble::SettingsUnits::Mph; break;
+    default: state.units = static_cast<moto::ble::SettingsUnits>(input.units); break;
+  }
+  state.brightness_percent = input.brightnessPercent;
+  state.lean_full_scale_deg = input.leanFullScaleDeg;
+  state.performance_target_kph = input.performanceTargetKph;
+  state.visible_pages = input.visiblePages;
+  state.lean_zero_offset_cdeg = input.leanZeroOffsetCdeg;
+  state.ambient_night = input.ambientNight;
+  state.show_buildings = input.showBuildings;
+  state.revision = input.revision;
+  return state;
+}
+
 NSArray<NSData *> *EncodeMessage(CodecStorage *storage,
                                  const moto::ble::Message &message,
                                  std::uint8_t flags,
@@ -338,6 +366,9 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @end
 
 @implementation MotoBLEHomeLocationInput
+@end
+
+@implementation MotoBLESettingsStateInput
 @end
 
 @interface MotoBLEDeviceCommand ()
@@ -549,6 +580,28 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   return EncodeMessage(storage,
                        moto::ble::Message{HomeLocationFromInput(input)},
                        0, error);
+}
+
+- (NSArray<NSData *> *)encodeSettingsState:(MotoBLESettingsStateInput *)input
+                                    error:(NSError **)error {
+  auto *storage = static_cast<CodecStorage *>(_storage);
+  // No Ack: the device echoes the state it applied, and that echo is the only
+  // confirmation worth having — an Ack would confirm delivery, not that the
+  // glass changed.
+  return EncodeMessage(storage,
+                       moto::ble::Message{SettingsStateFromInput(input)},
+                       0, error);
+}
+
+- (NSData *)encodeSettingsStatePayloadForTesting:(MotoBLESettingsStateInput *)input
+                                          error:(NSError **)error {
+  const auto payload =
+      moto::ble::encode_message(moto::ble::Message{SettingsStateFromInput(input)});
+  if (!payload.ok()) {
+    if (error != nullptr) *error = ProtocolError(payload.error, payload.offset);
+    return nil;
+  }
+  return [NSData dataWithBytes:payload.value.data() length:payload.value.size()];
 }
 
 - (NSData *)encodeHomeLocationPayloadForTesting:(MotoBLEHomeLocationInput *)input

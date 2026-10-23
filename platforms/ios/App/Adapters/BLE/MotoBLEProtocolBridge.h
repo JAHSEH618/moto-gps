@@ -85,6 +85,23 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) int32_t longitudeE6;
 @end
 
+@interface MotoBLESettingsStateInput : NSObject
+/// Raw values match `moto::ble::SettingsState`; the shared encoder refuses a
+/// value outside the reviewed table rather than clamping it into a scale the
+/// design never reviewed.
+@property(nonatomic) uint8_t theme;
+@property(nonatomic) uint8_t brightnessPercent;
+@property(nonatomic) uint8_t units;
+@property(nonatomic) uint8_t leanFullScaleDeg;
+@property(nonatomic) uint16_t performanceTargetKph;
+@property(nonatomic) uint8_t visiblePages;
+@property(nonatomic) int16_t leanZeroOffsetCdeg;
+@property(nonatomic) BOOL ambientNight;
+@property(nonatomic) BOOL showBuildings;
+/// Monotonic and non-zero: zero means "never seen" to the device.
+@property(nonatomic) uint32_t revision;
+@end
+
 @interface MotoBLEDeviceCommand : NSObject
 @property(nonatomic, readonly) uint16_t sequence;
 @property(nonatomic, readonly) BOOL ackRequested;
@@ -187,6 +204,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (nullable NSArray<NSData *> *)encodeHomeLocation:(MotoBLEHomeLocationInput *)home
                                              error:(NSError **)error;
+
+- (nullable NSArray<NSData *> *)encodeSettingsState:(MotoBLESettingsStateInput *)settings
+                                              error:(NSError **)error;
+
+/// Test hook for checking the shared SettingsState payload without duplicating
+/// its binary layout in Swift.
+- (nullable NSData *)encodeSettingsStatePayloadForTesting:(MotoBLESettingsStateInput *)settings
+                                                    error:(NSError **)error;
 
 /// Test hook for checking the shared HomeLocation payload without duplicating
 /// its binary layout in Swift.
