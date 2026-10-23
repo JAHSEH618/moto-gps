@@ -582,3 +582,34 @@ land in the next UI slice.
 
 Verification: native 14/14, verify.sh green including the new app-size gate,
 `idf.py build` green.
+
+## 2026-10-23T14:05:00+09:00 — 32 MB storage plan, tlog recorder, and the board report
+
+The SKU changed the storage assumptions: 33691 is a 1.75C with 32 MB flash, no
+TF slot and no GNSS. `partitions.csv` is re-cut accordingly — nvs left at
+0x9000/0x6000 so `att.rmount` survives, app0/app1 6 MB each, assets 3 MB,
+coredump 64 KB, and a 16 MB `tlog` starting at 0x1000000. The size gate now
+enforces 6 MiB × 90%; the image is 3.37 MB, 46% of the slot free. Changing the
+table still requires a USB full flash, which the partition file and TODO say
+explicitly.
+
+`TlogLogger` writes the dyn_record stream to `tlog`: 4 KB sector writes, 2 s
+flush, append position in NVS, one-time above-16-MB erase/write/read self-test,
+capacity stop instead of a wrap (16 MB ≈ 74 min at 3.6 KB/s). It is fed from
+the IMU task with raw accel/gyro/temperature plus the estimator output, and the
+PWR path flushes the partial sector before deep sleep. `flash_guard` exists now
+so the FIFO read window and flash erase cannot interleave when FIFO lands.
+
+The boot report is code, not results: one log line with the real flash size,
+then an I2C scan of 0x08–0x77 naming the expected addresses. r1 §1.1 stays
+unwritten until the board is flashed and the scan is pasted back — the 1.75C
+RTC question is exactly the kind of thing this repo has learned not to assume.
+
+One correction to the review: nvs in the current table is 24 KB
+(0x9000 + 0x6000), not 64 KB. Growing it would overlap the old phy_init page;
+keeping offset and size is what actually preserves the calibration blob, so
+that is what shipped and what r1 §11.3 now says.
+
+Not in this slice: FIFO (register map supplied, implemented next), CAL feedback
+UI, and the r1 full merge. Verified: native 14/14, verify.sh green, idf.py
+build green against the new partition table.

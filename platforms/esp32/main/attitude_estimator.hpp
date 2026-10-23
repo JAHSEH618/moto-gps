@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace moto::motion {
 
 // Bike frame used by the handlebar IMU adapter:
@@ -24,6 +26,13 @@ struct AttitudeEstimate {
   float longitudinal_g = 0.0F;
   // Rightward centripetal acceleration is positive; leftward is negative.
   float lateral_g = 0.0F;
+  // Kinematic target and provenance. The bridge only needs the angles; the
+  // telemetry recorder stores these next to the raw sample.
+  float lean_eff_deg = 0.0F;
+  float lean_rate_dps = 0.0F;
+  bool has_lean_eff = false;
+  std::uint8_t quality = 0;
+  std::uint16_t flags = 0;
   bool valid = false;
 };
 

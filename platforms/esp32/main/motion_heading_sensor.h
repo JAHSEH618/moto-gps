@@ -6,11 +6,20 @@
 #include "lean_estimator.hpp"
 #include "esp_err.h"
 
+// The raw sample (sensor frame) travels with the estimate so the development
+// recorder can store what the estimator actually saw, not just its output.
+struct RawImuSample {
+  float accel_mps2[3] = {0.0F, 0.0F, 0.0F};
+  float gyro_dps[3] = {0.0F, 0.0F, 0.0F};
+  float temp_c = 0.0F;
+};
+
 class MotionHeadingSensor {
  public:
   using SampleCallback = void (*)(
       float heading_rate_dps,
       const moto::motion::AttitudeEstimate& attitude,
+      const RawImuSample& raw,
       std::uint64_t sample_ms,
       void* context);
 

@@ -31,7 +31,9 @@ idf_component_register(
         "mount_basis.cpp"
         "motion_heading_sensor.cpp"
         "phone_nav_bridge.cpp"
+        "flash_guard.cpp"
         "settings_store.cpp"
+        "tlog_logger.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"
         "${MOTO_SHARED_NAV_PRESENTER_SOURCE}"
         ${MOTO_SHARED_UI_FONTS}
@@ -52,6 +54,7 @@ idf_component_register(
         lvgl
         esp_lcd_co5300
         nvs_flash
+        spi_flash
         bt
         esp32_s3_touch_amoled_1_75c
 )
