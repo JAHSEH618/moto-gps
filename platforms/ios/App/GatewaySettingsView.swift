@@ -5,7 +5,11 @@ struct GatewaySettingsView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.motoPalette) private var palette
+    /// Read off the theme: this view applies `.motoTheme` itself, so an
+    /// environment palette here would be the default one.
+    private var palette: MotoPalette {
+        (colorScheme == .dark ? MotoThemeName.vice : .heat).palette
+    }
     @State private var address = ""
     @State private var message: String?
     @State private var isChecking = false

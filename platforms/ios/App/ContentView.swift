@@ -78,6 +78,9 @@ struct ContentView: View {
                 showsDataUse = true
             } else if arguments.contains("--moto-open-gateway") {
                 showsGatewaySettings = true
+            } else if arguments.contains("--moto-open-maps")
+                        || arguments.contains("--moto-open-city-search") {
+                showsMapDownloads = true
             }
         }
         #endif
@@ -325,146 +328,151 @@ struct ContentView: View {
 
     private var mapDownloadsButton: some View {
         Button { showsMapDownloads = true } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("地图与离线下载").foregroundStyle(Color.primary)
+            HStack(spacing: MotoMetrics.s3) {
+                VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                    Text("地图与离线下载")
+                        .font(.system(.body, weight: .semibold))
+                        .foregroundStyle(palette.ink)
                     Text("自动加载周边，也能提前保存城市和沿途地图")
-                        .font(.subheadline).foregroundStyle(Color.secondary)
+                        .font(.system(.footnote))
+                        .foregroundStyle(palette.inkMuted)
                 }
-            } icon: { Image(systemName: "map").foregroundStyle(.blue) }
-            .padding(.vertical, 5)
+                Spacer(minLength: MotoMetrics.s2)
+                Image(systemName: "map")
+                    .font(.system(.body, weight: .semibold))
+                    .foregroundStyle(MotoPalette.band)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, MotoMetrics.s4)
+            .frame(minHeight: 60)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("map-downloads-button")
     }
 
     private var routePreviewScreen: some View {
-        List {
-            if let place = model.selectedPlace {
-                Section {
-                    Label {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(place.name).font(.headline)
-                            Text(placeSubtitle(place))
-                                .font(.subheadline)
-                                .foregroundStyle(Color.secondary)
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "mappin.circle.fill").foregroundStyle(.red)
-                    }
-                    .padding(.vertical, 5)
-                } header: {
-                    Label("从我的位置出发", systemImage: "location.fill").textCase(nil)
-                }
-
-                if model.isPlanningRoutePreview {
-                    Section {
-                        HStack(spacing: 14) {
-                            ProgressView()
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("正在规划路线")
-                                Text("获取当前位置与路况…")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Color.secondary)
-                            }
-                        }
-                        .padding(.vertical, 12)
-                        .accessibilityIdentifier("route-preview-loading")
-                    }
-                } else if model.hasRoutePreview {
-                    Section {
-                        RouteOverviewMap(
-                            candidates: model.routePreviewCandidates,
-                            selectedID: model.selectedRoutePreviewID,
-                            origin: model.routePreviewOrigin,
-                            destination: place.location
-                        )
-                        .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 270)
-                        .listRowInsets(EdgeInsets())
-                        .accessibilityIdentifier("route-preview-map")
-                        .accessibilityLabel("前往\(place.name)的路线全览")
-                    }
-                    Section {
-                        ForEach(model.routePreviewCandidates) { candidate in routeOptionRow(candidate) }
-                    } header: {
-                        Text("选择路线")
-                    } footer: {
-                        Text("高德驾车路线 · 预计时间会随路况变化")
-                    }
-                    Section { mapDownloadsButton }
-                } else if let failure = model.routePreviewFailure {
-                    Section {
-                        ContentUnavailableView {
-                            Label {
-                                Text("无法规划路线")
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } icon: { Image(systemName: "exclamationmark.triangle") }
-                        } description: {
-                            Text(failure)
-                        } actions: {
-                            if model.searchLocationStatus == .permissionDenied {
-                                Button("前往设置", action: openSystemSettings)
-                            }
-                        }
-                    }
-                }
-                if let failure = model.navigationFailure {
-                    Section { failureMessage(failure) }
-                }
+        MotoPosterPage(
+            kicker: "ROUTE 05",
+            title: "路线",
+            backIdentifier: "destination-change-button",
+            onBack: {
+                model.clearDestination()
+                searchFocused = true
             }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("路线")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("更换") {
-                    model.clearDestination()
-                    searchFocused = true
-                }
-                .accessibilityLabel("更换目的地")
-                .accessibilityIdentifier("destination-change-button")
-            }
+        ) {
+            guard let place = model.selectedPlace else { return AnyView(EmptyView()) }
+            return AnyView(routePreviewBody(place))
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { navigationActionBar }
     }
 
-    private func routeOptionRow(_ candidate: RoutePreviewCandidate) -> some View {
+    private func routePreviewBody(_ place: PlaceSearchResult) -> some View {
+        VStack(alignment: .leading, spacing: MotoMetrics.s6) {
+            if model.isPlanningRoutePreview {
+                VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                    MotoHeroWord(word: "…", detail: "正在规划路线")
+                    MotoProse(text: "获取当前位置与路况…", tone: .muted)
+                }
+                .accessibilityIdentifier("route-preview-loading")
+            } else if model.hasRoutePreview, let selected = selectedRoutePreview {
+                // The destination is the small line; the time is the poster.
+                MotoHeroWord(
+                    word: selected.durationText,
+                    detail: "\(place.name) · \(selected.distanceText)"
+                )
+
+                RouteOverviewMap(
+                    candidates: model.routePreviewCandidates,
+                    selectedID: model.selectedRoutePreviewID,
+                    origin: model.routePreviewOrigin,
+                    destination: place.location
+                )
+                .frame(height: dynamicTypeSize.isAccessibilitySize ? 200 : 260)
+                .accessibilityIdentifier("route-preview-map")
+                .accessibilityLabel("前往\(place.name)的路线全览")
+
+                VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                    MotoSectionTitle(index: "01", text: "选择路线")
+                    MotoPanel(padding: 0) {
+                        VStack(spacing: 0) {
+                            ForEach(Array(model.routePreviewCandidates.enumerated()), id: \.element.id) { index, candidate in
+                                if index > 0 { MotoRule() }
+                                routeOptionRow(candidate, index: index + 1)
+                            }
+                        }
+                    }
+                    MotoProse(text: "高德驾车路线 · 预计时间会随路况变化", tone: .muted)
+                }
+
+                VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                    MotoSectionTitle(index: "02", text: "地图")
+                    MotoPanel(padding: 0) { mapDownloadsButton }
+                }
+            } else if let failure = model.routePreviewFailure {
+                MotoHeroWord(word: "—", detail: "无法规划路线")
+                MotoProse(text: failure)
+                if model.searchLocationStatus == .permissionDenied {
+                    Button("前往设置", action: openSystemSettings)
+                        .font(.system(.body, weight: .semibold))
+                        .foregroundStyle(palette.ink)
+                }
+            }
+
+            if let failure = model.navigationFailure {
+                MotoProse(text: failure, tone: .muted)
+            }
+        }
+    }
+
+    private var selectedRoutePreview: RoutePreviewCandidate? {
+        if let id = model.selectedRoutePreviewID,
+           let match = model.routePreviewCandidates.first(where: { $0.id == id })
+        {
+            return match
+        }
+        return model.routePreviewCandidates.first
+    }
+
+    private func routeOptionRow(_ candidate: RoutePreviewCandidate, index: Int) -> some View {
         let selected = candidate.id == model.selectedRoutePreviewID
         return Button {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
                 model.selectRoutePreview(candidate.id)
             }
         } label: {
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(candidate.title)
-                        .font(.subheadline)
-                        .foregroundStyle(selected ? Color.blue : .secondary)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            routeDuration(candidate)
-                            routeDistance(candidate)
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            routeDuration(candidate)
-                            routeDistance(candidate)
-                        }
-                    }
-                    Label(candidate.trafficSummary, systemImage: "car.side")
-                        .font(.subheadline)
+            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
+                Text(String(format: "%02d", index))
+                    .font(.system(.footnote, design: .monospaced).weight(.bold))
+                    .foregroundStyle(selected ? MotoPalette.band : palette.inkMuted)
+                VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                    Text(candidate.durationText)
+                        .font(.system(.title2, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(palette.ink)
+                    Text("\(candidate.title) · \(candidate.distanceText)")
+                        .font(.system(.footnote))
+                        .foregroundStyle(palette.inkMuted)
+                    Text(candidate.trafficSummary)
+                        .font(.system(.caption, weight: .semibold))
                         .foregroundStyle(trafficTint(candidate))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(selected ? Color.blue : Color(uiColor: .tertiaryLabel))
-                    .accessibilityHidden(true)
+                Spacer(minLength: MotoMetrics.s2)
+                if selected {
+                    Text("已选")
+                        .font(.system(.caption, weight: .bold))
+                        .foregroundStyle(MotoPalette.onBand)
+                        .padding(.horizontal, MotoMetrics.s2)
+                        .padding(.vertical, 3)
+                        .background(MotoPalette.band)
+                }
             }
-            .padding(.vertical, 9)
+            .padding(.horizontal, MotoMetrics.s4)
+            .padding(.vertical, MotoMetrics.s3)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("route-option-\(candidate.ordinal)")
         .accessibilityLabel("\(candidate.title)，\(candidate.durationText)，\(candidate.distanceText)，\(candidate.trafficSummary)")
         .accessibilityAddTraits(selected ? .isSelected : [])
