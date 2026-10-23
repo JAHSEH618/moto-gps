@@ -18,6 +18,12 @@ final class AppModel: ObservableObject {
     /// Home address. Owned here so the BLE command handler and the UI share one
     /// source of truth.
     let homeStore = HomeLocationStore()
+    /// Display settings for the round screen. Owned here for the same reason as
+    /// the home address: the sheet writes them and the BLE central re-sends them
+    /// after every handshake.
+    let deviceSettings = DeviceSettingsStore()
+    @Published private(set) var displayTheme: DeviceSettingsTheme = .auto
+    @Published private(set) var showBuildings = false
     @Published private(set) var selectedPlace: PlaceSearchResult?
     @Published private(set) var recentPlaces: [PlaceSearchResult] = []
     @Published private(set) var isSearchingPlaces = false
@@ -106,6 +112,9 @@ final class AppModel: ObservableObject {
             {
                 self.beginRoutePreviewRequestIfPossible()
             }
+            if let point {
+                self.updateAmbientNight(at: point)
+            }
         }
         searchLocation.onStatusChange = { [weak self] status in
             guard let self else { return }
@@ -121,7 +130,10 @@ final class AppModel: ObservableObject {
             }
         }
 
+        displayTheme = deviceSettings.theme
+        showBuildings = deviceSettings.showBuildings
         broadcastHomeLocation()
+        broadcastDeviceSettings()
 
         #if DEBUG
         // Offline UI checks must not request device permissions or contact services.
@@ -305,6 +317,34 @@ final class AppModel: ObservableObject {
                 address: homeStore.place?.location
             )
         )
+    }
+
+    /// Theme the rider picked for the round screen. Deliberately not the
+    /// phone's Vice / Heat palette: the device shows Vice at night and Heat by
+    /// day, and `auto` is its own decision.
+    func setDisplayTheme(_ theme: DeviceSettingsTheme) {
+        guard deviceSettings.apply(theme: theme) else { return }
+        displayTheme = theme
+        broadcastDeviceSettings()
+    }
+
+    func setShowBuildings(_ visible: Bool) {
+        guard deviceSettings.apply(showBuildings: visible) else { return }
+        showBuildings = visible
+        broadcastDeviceSettings()
+    }
+
+    /// `auto` resolves against this observation, so the device has to hear about
+    /// it even when the rider changed nothing.
+    private func updateAmbientNight(at point: WGS84Point) {
+        guard deviceSettings.apply(ambientNight: AmbientNight.isNight(at: point)) else {
+            return
+        }
+        broadcastDeviceSettings()
+    }
+
+    private func broadcastDeviceSettings() {
+        bluetooth.sendDeviceSettings(deviceSettings.broadcast)
     }
 
     /// The sample the ride screen may show, or `nil` when none has arrived yet

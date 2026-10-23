@@ -1,3 +1,4 @@
+import MotoNavigationCore
 import SwiftUI
 
 enum MotoScreen: Hashable {
@@ -65,6 +66,24 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsDataUse) { DataUseView() }
         .sheet(isPresented: $showsGatewaySettings) { GatewaySettingsView(model: model) }
+        #if DEBUG
+        // Screenshot harness: the device sheet is two taps in, and holding a
+        // simulator while a UI test drives taps is a lot of machinery for a
+        // layout review.
+        .task {
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--moto-open-device-sheet") {
+                showsDeviceDetails = true
+            } else if arguments.contains("--moto-open-privacy") {
+                showsDataUse = true
+            } else if arguments.contains("--moto-open-gateway") {
+                showsGatewaySettings = true
+            } else if arguments.contains("--moto-open-maps")
+                        || arguments.contains("--moto-open-city-search") {
+                showsMapDownloads = true
+            }
+        }
+        #endif
     }
 
     // Derive the stack from the session instead of synchronizing two mutable
@@ -309,146 +328,151 @@ struct ContentView: View {
 
     private var mapDownloadsButton: some View {
         Button { showsMapDownloads = true } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("地图与离线下载").foregroundStyle(Color.primary)
+            HStack(spacing: MotoMetrics.s3) {
+                VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                    Text("地图与离线下载")
+                        .font(.system(.body, weight: .semibold))
+                        .foregroundStyle(palette.ink)
                     Text("自动加载周边，也能提前保存城市和沿途地图")
-                        .font(.subheadline).foregroundStyle(Color.secondary)
+                        .font(.system(.footnote))
+                        .foregroundStyle(palette.inkMuted)
                 }
-            } icon: { Image(systemName: "map").foregroundStyle(.blue) }
-            .padding(.vertical, 5)
+                Spacer(minLength: MotoMetrics.s2)
+                Image(systemName: "map")
+                    .font(.system(.body, weight: .semibold))
+                    .foregroundStyle(MotoPalette.band)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, MotoMetrics.s4)
+            .frame(minHeight: 60)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("map-downloads-button")
     }
 
     private var routePreviewScreen: some View {
-        List {
-            if let place = model.selectedPlace {
-                Section {
-                    Label {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(place.name).font(.headline)
-                            Text(placeSubtitle(place))
-                                .font(.subheadline)
-                                .foregroundStyle(Color.secondary)
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "mappin.circle.fill").foregroundStyle(.red)
-                    }
-                    .padding(.vertical, 5)
-                } header: {
-                    Label("从我的位置出发", systemImage: "location.fill").textCase(nil)
-                }
-
-                if model.isPlanningRoutePreview {
-                    Section {
-                        HStack(spacing: 14) {
-                            ProgressView()
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("正在规划路线")
-                                Text("获取当前位置与路况…")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Color.secondary)
-                            }
-                        }
-                        .padding(.vertical, 12)
-                        .accessibilityIdentifier("route-preview-loading")
-                    }
-                } else if model.hasRoutePreview {
-                    Section {
-                        RouteOverviewMap(
-                            candidates: model.routePreviewCandidates,
-                            selectedID: model.selectedRoutePreviewID,
-                            origin: model.routePreviewOrigin,
-                            destination: place.location
-                        )
-                        .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 270)
-                        .listRowInsets(EdgeInsets())
-                        .accessibilityIdentifier("route-preview-map")
-                        .accessibilityLabel("前往\(place.name)的路线全览")
-                    }
-                    Section {
-                        ForEach(model.routePreviewCandidates) { candidate in routeOptionRow(candidate) }
-                    } header: {
-                        Text("选择路线")
-                    } footer: {
-                        Text("高德驾车路线 · 预计时间会随路况变化")
-                    }
-                    Section { mapDownloadsButton }
-                } else if let failure = model.routePreviewFailure {
-                    Section {
-                        ContentUnavailableView {
-                            Label {
-                                Text("无法规划路线")
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } icon: { Image(systemName: "exclamationmark.triangle") }
-                        } description: {
-                            Text(failure)
-                        } actions: {
-                            if model.searchLocationStatus == .permissionDenied {
-                                Button("前往设置", action: openSystemSettings)
-                            }
-                        }
-                    }
-                }
-                if let failure = model.navigationFailure {
-                    Section { failureMessage(failure) }
-                }
+        MotoPosterPage(
+            kicker: "ROUTE 05",
+            title: "路线",
+            backIdentifier: "destination-change-button",
+            onBack: {
+                model.clearDestination()
+                searchFocused = true
             }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("路线")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("更换") {
-                    model.clearDestination()
-                    searchFocused = true
-                }
-                .accessibilityLabel("更换目的地")
-                .accessibilityIdentifier("destination-change-button")
-            }
+        ) {
+            guard let place = model.selectedPlace else { return AnyView(EmptyView()) }
+            return AnyView(routePreviewBody(place))
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { navigationActionBar }
     }
 
-    private func routeOptionRow(_ candidate: RoutePreviewCandidate) -> some View {
+    private func routePreviewBody(_ place: PlaceSearchResult) -> some View {
+        VStack(alignment: .leading, spacing: MotoMetrics.s6) {
+            if model.isPlanningRoutePreview {
+                VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                    MotoHeroWord(word: "…", detail: "正在规划路线")
+                    MotoProse(text: "获取当前位置与路况…", tone: .muted)
+                }
+                .accessibilityIdentifier("route-preview-loading")
+            } else if model.hasRoutePreview, let selected = selectedRoutePreview {
+                // The destination is the small line; the time is the poster.
+                MotoHeroWord(
+                    word: selected.durationText,
+                    detail: "\(place.name) · \(selected.distanceText)"
+                )
+
+                RouteOverviewMap(
+                    candidates: model.routePreviewCandidates,
+                    selectedID: model.selectedRoutePreviewID,
+                    origin: model.routePreviewOrigin,
+                    destination: place.location
+                )
+                .frame(height: dynamicTypeSize.isAccessibilitySize ? 200 : 260)
+                .accessibilityIdentifier("route-preview-map")
+                .accessibilityLabel("前往\(place.name)的路线全览")
+
+                VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                    MotoSectionTitle(index: "01", text: "选择路线")
+                    MotoPanel(padding: 0) {
+                        VStack(spacing: 0) {
+                            ForEach(Array(model.routePreviewCandidates.enumerated()), id: \.element.id) { index, candidate in
+                                if index > 0 { MotoRule() }
+                                routeOptionRow(candidate, index: index + 1)
+                            }
+                        }
+                    }
+                    MotoProse(text: "高德驾车路线 · 预计时间会随路况变化", tone: .muted)
+                }
+
+                VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                    MotoSectionTitle(index: "02", text: "地图")
+                    MotoPanel(padding: 0) { mapDownloadsButton }
+                }
+            } else if let failure = model.routePreviewFailure {
+                MotoHeroWord(word: "—", detail: "无法规划路线")
+                MotoProse(text: failure)
+                if model.searchLocationStatus == .permissionDenied {
+                    Button("前往设置", action: openSystemSettings)
+                        .font(.system(.body, weight: .semibold))
+                        .foregroundStyle(palette.ink)
+                }
+            }
+
+            if let failure = model.navigationFailure {
+                MotoProse(text: failure, tone: .muted)
+            }
+        }
+    }
+
+    private var selectedRoutePreview: RoutePreviewCandidate? {
+        if let id = model.selectedRoutePreviewID,
+           let match = model.routePreviewCandidates.first(where: { $0.id == id })
+        {
+            return match
+        }
+        return model.routePreviewCandidates.first
+    }
+
+    private func routeOptionRow(_ candidate: RoutePreviewCandidate, index: Int) -> some View {
         let selected = candidate.id == model.selectedRoutePreviewID
         return Button {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
                 model.selectRoutePreview(candidate.id)
             }
         } label: {
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(candidate.title)
-                        .font(.subheadline)
-                        .foregroundStyle(selected ? Color.blue : .secondary)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            routeDuration(candidate)
-                            routeDistance(candidate)
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            routeDuration(candidate)
-                            routeDistance(candidate)
-                        }
-                    }
-                    Label(candidate.trafficSummary, systemImage: "car.side")
-                        .font(.subheadline)
+            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
+                Text(String(format: "%02d", index))
+                    .font(.system(.footnote, design: .monospaced).weight(.bold))
+                    .foregroundStyle(selected ? MotoPalette.band : palette.inkMuted)
+                VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                    Text(candidate.durationText)
+                        .font(.system(.title2, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(palette.ink)
+                    Text("\(candidate.title) · \(candidate.distanceText)")
+                        .font(.system(.footnote))
+                        .foregroundStyle(palette.inkMuted)
+                    Text(candidate.trafficSummary)
+                        .font(.system(.caption, weight: .semibold))
                         .foregroundStyle(trafficTint(candidate))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(selected ? Color.blue : Color(uiColor: .tertiaryLabel))
-                    .accessibilityHidden(true)
+                Spacer(minLength: MotoMetrics.s2)
+                if selected {
+                    Text("已选")
+                        .font(.system(.caption, weight: .bold))
+                        .foregroundStyle(MotoPalette.onBand)
+                        .padding(.horizontal, MotoMetrics.s2)
+                        .padding(.vertical, 3)
+                        .background(MotoPalette.band)
+                }
             }
-            .padding(.vertical, 9)
+            .padding(.horizontal, MotoMetrics.s4)
+            .padding(.vertical, MotoMetrics.s3)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("route-option-\(candidate.ordinal)")
         .accessibilityLabel("\(candidate.title)，\(candidate.durationText)，\(candidate.distanceText)，\(candidate.trafficSummary)")
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -483,6 +507,28 @@ struct ContentView: View {
                         symbol: navigationSymbol
                     )
 
+                    // Distance is the only large number. ETA and speed are
+                    // secondary reads on a band, not two more headline cells:
+                    // three equally weighted stats in a row is the template
+                    // look DESIGN.md rejects.
+                    VStack(alignment: .leading, spacing: MotoMetrics.s2) {
+                        MotoLabel(text: "left", tone: .accent, token: .label)
+                        HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s2) {
+                            MotoNumeral(
+                                value: remainingDistanceValue,
+                                token: .displayXL,
+                                tone: .ink
+                            )
+                            MotoLabel(
+                                text: remainingDistanceUnit,
+                                tone: .muted,
+                                token: .label,
+                                uppercased: false
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     HStack(alignment: .top, spacing: MotoMetrics.s4) {
                         MotoRadar(
                             size: MotoMetrics.RadarSize.ride,
@@ -494,14 +540,6 @@ struct ContentView: View {
                         )
                         VStack(alignment: .leading, spacing: 0) {
                             MotoStatCell(
-                                label: "left",
-                                value: remainingDistanceValue,
-                                unit: remainingDistanceUnit,
-                                token: .displayMD,
-                                tone: .accent
-                            )
-                            MotoRule().padding(.vertical, MotoMetrics.s2)
-                            MotoStatCell(
                                 label: "eta",
                                 value: remainingDurationValue,
                                 unit: remainingDurationUnit,
@@ -512,7 +550,8 @@ struct ContentView: View {
                                 label: "speed",
                                 value: speedValue,
                                 unit: "km/h",
-                                token: .displayMD
+                                token: .displayMD,
+                                tone: .accent
                             )
                         }
                         .padding(.top, MotoMetrics.s2)
@@ -565,7 +604,7 @@ struct ContentView: View {
                 .accessibilityLabel("我的圆屏")
                 .accessibilityValue(deviceStatus)
                 .accessibilityIdentifier("device-details-button")
-                MotoLabel(text: rideClockText, tone: .muted, token: .micro)
+                MotoLabel(text: rideClockText, tone: .onSlab, token: .micro)
                     .fixedSize()
                     .layoutPriority(-1)
             }
@@ -637,6 +676,20 @@ struct ContentView: View {
 
     // MARK: - Device sheet
 
+    private var displayThemeBinding: Binding<DeviceSettingsTheme> {
+        Binding(
+            get: { model.displayTheme },
+            set: { model.setDisplayTheme($0) }
+        )
+    }
+
+    private var showBuildingsBinding: Binding<Bool> {
+        Binding(
+            get: { model.showBuildings },
+            set: { model.setShowBuildings($0) }
+        )
+    }
+
     private var deviceToolbarButton: some View {
         Button {
             searchFocused = false
@@ -680,52 +733,111 @@ struct ContentView: View {
     }
 
     private var deviceDetails: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(spacing: 12) {
-                        Image(systemName: "location.north.circle")
-                            .font(.system(size: 64, weight: .ultraLight))
-                            .foregroundStyle(.blue)
-                            .accessibilityHidden(true)
-                        Text(deviceName).font(.title2.weight(.semibold))
-                        Text(deviceDetail)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+        MotoPosterSheet(
+            kicker: "DEVICE 01",
+            title: "我的圆屏",
+            sheetIdentifier: "device-details-sheet",
+            dismissTitle: "完成",
+            dismissIdentifier: "device-details-done",
+            onDismiss: { showsDeviceDetails = false }
+        ) {
+            VStack(alignment: .leading, spacing: MotoMetrics.s4) {
+                HStack(alignment: .top) {
+                    Image(systemName: "location.north.circle")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(palette.ink)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: MotoMetrics.s2)
+                    MotoLabel(
+                        text: deviceName,
+                        tone: .muted,
+                        uppercased: false
+                    )
                 }
-                .listRowBackground(Color.clear)
-                Section {
-                    statusRow("连接状态", symbol: "antenna.radiowaves.left.and.right", value: deviceStatus,
-                              color: model.deviceReady ? .green : .secondary)
-                    Button(connectionActionTitle, action: model.toggleDeviceConnection)
-                        .accessibilityIdentifier("device-connection-action")
-                    if case .bluetoothUnavailable = model.device.connection {
-                        Button("打开系统设置", action: openSystemSettings)
+                // The one enormous thing on this sheet: whether the bar is
+                // talking to the phone. Everything else is a setting.
+                MotoHeroWord(
+                    word: model.deviceReady ? "ONLINE" : "OFFLINE",
+                    detail: deviceDetail
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "01", text: "连接")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "状态") {
+                            MotoLabel(
+                                text: deviceStatus,
+                                tone: model.deviceReady ? .ok : .muted,
+                                uppercased: false
+                            )
+                        }
+                        MotoRule()
+                        Button(connectionActionTitle, action: model.toggleDeviceConnection)
+                            .buttonStyle(MotoPrimaryButtonStyle())
+                            .accessibilityIdentifier("device-connection-action")
+                        if case .bluetoothUnavailable = model.device.connection {
+                            MotoRule()
+                            Button("打开系统设置", action: openSystemSettings)
+                                .buttonStyle(MotoSecondaryButtonStyle())
+                        }
                     }
-                } footer: {
-                    Text("圆屏保持开机并靠近 iPhone。连接成功后，当前导航会自动同步。")
                 }
-                Section("定位") {
-                    statusRow("搜索位置", symbol: "location", value: searchLocationStatus, color: .secondary)
-                    if model.searchLocationStatus == .permissionDenied {
-                        Button("前往设置开启定位", action: openSystemSettings)
+                Text("圆屏保持开机并靠近 iPhone。连接成功后，当前导航会自动同步。")
+                    .font(.system(.footnote))
+                    .foregroundStyle(palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "02", text: "圆屏显示")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoSegment(
+                            options: [
+                                (DeviceSettingsTheme.auto, "自动"),
+                                (DeviceSettingsTheme.day, "白天"),
+                                (DeviceSettingsTheme.night, "夜间"),
+                            ],
+                            selection: displayThemeBinding,
+                            identifierPrefix: "device-theme"
+                        )
+                        .padding(MotoMetrics.s3)
+                        MotoRule()
+                        MotoToggleRow(
+                            title: "显示建筑轮廓",
+                            isOn: showBuildingsBinding,
+                            identifier: "device-buildings-toggle"
+                        )
+                    }
+                }
+                Text("自动跟随手机所在地的日出与日落。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。")
+                    .font(.system(.footnote))
+                    .foregroundStyle(palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "03", text: "定位")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "搜索位置") {
+                            MotoLabel(text: searchLocationStatus, tone: .muted, uppercased: false)
+                        }
+                        if model.searchLocationStatus == .permissionDenied {
+                            MotoRule()
+                            Button("前往设置开启定位", action: openSystemSettings)
+                                .buttonStyle(MotoSecondaryButtonStyle())
+                        }
                     }
                 }
             }
-            .navigationTitle("我的圆屏")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { showsDeviceDetails = false }
-                        .accessibilityIdentifier("device-details-done")
-                }
-            }
-            .accessibilityIdentifier("device-details-sheet")
         }
+        .motoTheme(theme)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }

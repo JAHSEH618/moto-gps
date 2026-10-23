@@ -13,7 +13,7 @@ final class MotoGPSUITests: XCTestCase {
         if !maps.isHittable { app.swipeUp() }
         maps.tap()
         app.buttons["map-download-city"].tap()
-        let search = app.searchFields.firstMatch
+        let search = app.textFields["map-city-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 3))
         search.tap()
         search.typeText("上海")
@@ -33,12 +33,12 @@ final class MotoGPSUITests: XCTestCase {
         if !maps.isHittable { app.swipeUp() }
         maps.tap()
         XCTAssertTrue(app.descendants(matching: .any)["map-downloads-sheet"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["自动加载周边地图"].exists)
+        XCTAssertTrue(app.staticTexts["自动加载"].exists)
         keepScreenshot(of: app, named: "MOTO GPS map downloads")
         app.buttons["map-download-city"].tap()
-        XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["添加常用城市"].exists)
-        try tapSystemBack(in: app)
+        XCTAssertTrue(app.textFields["map-city-search-field"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["输入城市或区县名称"].exists)
+        app.buttons["map-city-back"].tap()
         app.buttons["map-downloads-done"].tap()
         XCTAssertTrue(app.textFields["destination-search-field"].waitForExistence(timeout: 3))
     }

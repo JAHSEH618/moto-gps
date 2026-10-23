@@ -66,10 +66,10 @@ struct HomeScreen: View {
                 bandButton("circle.circle", label: "我的圆屏", identifier: "device-details-button") {
                     showsDeviceDetails = true
                 }
-                MotoLabel(text: clockText, tone: .muted, token: .micro)
+                MotoLabel(text: clockText, tone: .onSlab, token: .micro)
                     .fixedSize()
                     // The clock is the only flexible cell; dropping its width
-                    // must never squeeze the two controls a thumb has to hit.
+                    // must never squeeze the controls a thumb has to hit.
                     .layoutPriority(-1)
             }
         }
@@ -94,6 +94,12 @@ struct HomeScreen: View {
         .accessibilityIdentifier(identifier)
     }
 
+    private var clockText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date())
+    }
+
     private var fixText: String {
         switch model.searchLocationStatus {
         case .available: return "fix"
@@ -101,12 +107,6 @@ struct HomeScreen: View {
         case .permissionDenied: return "no fix"
         case .unavailable: return "no fix"
         }
-    }
-
-    private var clockText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date())
     }
 
     // MARK: - Hero
@@ -132,19 +132,22 @@ struct HomeScreen: View {
         .padding(.top, MotoMetrics.s5)
     }
 
-    /// Poster line: one huge word, the Chinese verb beside it.
+    /// Poster line: one huge word, the Chinese verb and the claim under it.
+    /// The word owns the full width; nothing sits beside it to squeeze it.
     private var wordmark: some View {
-        HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
-            MotoWordmark(text: "GO", size: 88, fill: palette.accent, outline: palette.slab)
-            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+        VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+            HStack(alignment: .top, spacing: MotoMetrics.s3) {
+                MotoWordmark(text: "GO", size: 132, fill: palette.accent, outline: palette.slab)
+                Spacer(minLength: MotoMetrics.s2)
+                homeButton
+            }
+            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
                 Text("出发")
-                    .font(.system(.title2, weight: .bold))
+                    .font(.system(.title, weight: .heavy))
                     .foregroundStyle(palette.ink)
                 MotoLabel(text: "spot · plan · ride", tone: .muted, token: .micro)
+                    .padding(.bottom, 2)
             }
-            .padding(.bottom, MotoMetrics.s1)
-            Spacer(minLength: MotoMetrics.s2)
-            homeButton
         }
     }
 

@@ -5,6 +5,7 @@ enum BLEProtocolGoldenCheck {
         case fixtureMissing
         case vectorMissing
         case homeVectorMissing
+        case settingsVectorMissing
         case mismatch(expected: String, actual: String)
 
         var errorDescription: String? {
@@ -12,6 +13,7 @@ enum BLEProtocolGoldenCheck {
             case .fixtureMissing: "BLE v1 黄金帧资源不存在"
             case .vectorMissing: "BLE v1 黄金帧缺少 navigation.payload"
             case .homeVectorMissing: "BLE v1 黄金帧缺少 home.payload"
+            case .settingsVectorMissing: "BLE v1 黄金帧缺少 settings.payload"
             case let .mismatch(expected, actual):
                 "BLE v1 编码不一致：expected \(expected), actual \(actual)"
             }
@@ -84,6 +86,34 @@ enum BLEProtocolGoldenCheck {
         let actualHome = homePayload.map { String(format: "%02x", $0) }.joined()
         guard actualHome == expectedHome else {
             throw CheckError.mismatch(expected: expectedHome, actual: actualHome)
+        }
+
+        // SettingsState is the one message whose payload is not fixed by the
+        // wire revision: it grew from 14 to 16 bytes without a bump. Pinning it
+        // here is what turns that decision into something a test can fail on.
+        guard let expectedSettings = fixture
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("settings.payload=") })?
+            .split(separator: "=", maxSplits: 1)
+            .last
+            .map(String.init)
+        else { throw CheckError.settingsVectorMissing }
+
+        let settings = MotoBLESettingsStateInput()
+        settings.theme = 3
+        settings.brightnessPercent = 65
+        settings.units = 1
+        settings.leanFullScaleDeg = 40
+        settings.performanceTargetKph = 60
+        settings.visiblePages = 0x1f
+        settings.leanZeroOffsetCdeg = -125
+        settings.ambientNight = true
+        settings.showBuildings = true
+        settings.revision = 5
+        let settingsPayload = try codec.encodeSettingsStatePayload(forTesting: settings)
+        let actualSettings = settingsPayload.map { String(format: "%02x", $0) }.joined()
+        guard actualSettings == expectedSettings else {
+            throw CheckError.mismatch(expected: expectedSettings, actual: actualSettings)
         }
     }
 }
