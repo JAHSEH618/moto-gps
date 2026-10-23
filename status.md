@@ -656,3 +656,76 @@ three H1 groups and the replay/error-table step.
 **Verification:** native 14/14, verify.sh green, `idf.py build` green at
 0x338f80 (46% of the 6 MB slot free). Still unverified: every hardware claim
 in the bench plan.
+
+## 2026-10-23T16:20:00+09:00 — Latch polling replaces the FIFO window; tlog stops erasing
+
+**The decision was to stop relying on the read window, not to tune it.** The
+16:05 measurement said the FIFO lost 10–12% of samples because a 1.36–1.39 ms
+read window recurs every 8.9 ms, and TIMESTAMP reads 0 on this unit so the loss
+had to be inferred from timing anyway. `qmi8658_latch.{hpp,cpp}` therefore
+reads the QMI8658B latch every 4464 µs — two ODR periods, 224.2 Hz — while the
+sensor keeps sampling at 448.4 Hz behind its own LPF. The STATUSINT handshake
+(Avail, then Locked within 12 µs, three retries) is what makes the 14-byte
+TEMP + six-axis burst one instant, so a busy bus no longer throws a sample
+away; the two-sample average then decimates to ≈112 Hz exactly where the FIFO's
+4-frame average used to sit.
+
+**Configuration is explicit and read back.** Soft reset (0x60 = 0xB0) first,
+because the IMU stays powered across an ESP32 reset and a previous FIFO session
+can leave FIFO_CTRL in Stream mode where the output registers and the sync
+status are hidden. Then CTRL7 off, CTRL1 = 0x40 (auto-increment, little-endian),
+CTRL2 = 0x24 (±8 g at 448.4 Hz), CTRL3 = 0x54 (±512 dps, same ODR), CTRL5 = 0x55
+(both LPFs, mode 10), CTRL8 = 0x80 so CTRL9 completion arrives on STATUSINT
+(the IMU INT net is not routed on this board), CTRL9 = 0x12 with CAL1_L = 0x01
+to disable AHB clock gating per §11.2.1, a bounded 50 ms poll for CmdDone, the
+ACK, and only then CTRL7 = 0x83 to sync accel and gyro. Every register is read
+back and logged; the handshake is the one step that fails into a silent
+fallback, so it is also the first thing the bench card checks.
+
+**Gaps are attributed, not just counted.** `flash_guard_take(0)` failing is
+`flash_skips`; an interval longer than two periods is `flash_gaps` when
+`note_flash_blocking()` marked a tlog page write inside it and `missed_reads`
+otherwise, which is the distinction §3.2 asks for. `avail_zero`, `lock_waits`,
+`lock_timeouts`, `i2c_errors`, `invalid_samples` (a magnitude outside 0.1–8 g)
+and interval max/mean complete the set. Eight consecutive I2C errors or twenty
+consecutive lock timeouts falls back to polling, with the reason in the serial
+log, `kLeanImuFallback`, the session meta and the lean plate. `load_imu_fifo_enabled()`
+now returns off when NVS has no value, so latch is what a fresh unit runs and
+`imu fifo on|off` selects the FIFO only for the A/B.
+
+**The health data is on disk.** `ImuStatsRecord` (32 B, type 5) is appended
+every 10 s and on every mode change, and `moto_replay` prints it as `# imu ...`
+so a dump can be audited for acquisition loss without a serial capture. The
+session record's mode byte is now 0 poll / 1 FIFO / 2 latch, carried by the same
+number the sensor task reports.
+
+**tlog never erases at runtime.** A sector is checked with 256-byte reads
+against 0xFF before the append; if it is dirty, recording stops, `dirty_` is
+set and the log names the `parttool.py erase_partition` command. That removes
+the cache-off erase that used to freeze the IMU bus mid-ride, at the cost of a
+host step — the partition is now a prerequisite, not something firmware
+recycles. On the lean plate `LOG DIRTY` outranks `LOG FULL`, which outranks
+`IMU POLL`.
+
+**Display and bench instrumentation.** QSPI went 40 → 30 MHz after the lean page
+produced `DMA TX underflow detected` while LVGL drew from PSRAM; the draw
+buffers are now full height (466 rows, still two PSRAM buffers). The display
+timing window can be logged on demand and carries monotonic totals, `ui dbg`
+reports per-frame ms for the sun, horizon and hero text with a hide mask that
+isolates each layer, and `sys tasks` prints task state and stack high-water for
+the sensor, render, BLE, power and demo tasks.
+
+**The geometry gate is committed.** `moto_nav_ui_page_root()` lets the test walk
+each page's container; `ui_geometry_manifest.txt` records box, colours,
+opacity, radius and scroll/click/gesture flags keyed by child-index path, so a
+moved box or a revived scroll flag shows up as a reviewable diff. It registers
+the boxes; the r≤195 assertion is still open.
+
+**README.** The Xuebao relay advert at the top of both READMEs is gone, along
+with the five `assets/brand/xuebao-*` files only it referenced. The black-and-
+white cover and wordmark are untouched.
+
+**Verification:** native 14/14 and `scripts/verify.sh` green (also through the
+pre-push hook); `idf.py build` green at 0x33d1b0, 46% of the 6 MB slot free.
+Not verified: every claim above that needs a sensor, starting with the AHB
+gating handshake.
