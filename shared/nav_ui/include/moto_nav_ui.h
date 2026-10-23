@@ -258,7 +258,42 @@ void moto_nav_ui_set_clear_peaks_callback(
 void moto_nav_ui_set_lean_cal_state(moto_ui_lean_cal_state_t state,
                                     uint8_t value);
 void moto_nav_ui_set_lean_flags(uint8_t cal_unverified, uint8_t imu_poll,
-                                uint8_t log_full);
+                                uint8_t log_full, uint8_t log_dirty);
+
+/* Test/debug only: the page container. The geometry gate walks this subtree to
+   prove every visible object is registered in ui_geometry_manifest.txt. */
+struct _lv_obj_t;
+struct _lv_obj_t *moto_nav_ui_page_root(moto_ui_page_t page);
+
+/* Lean-page profiling (bench only). The clock is supplied by the platform so
+   the shared UI stays free of esp_timer; when it is NULL the timers are off. */
+typedef uint64_t (*moto_ui_debug_clock_t)(void);
+
+typedef enum {
+    MOTO_UI_DBG_HIDE_SUN = 1u << 0,
+    MOTO_UI_DBG_HIDE_HORIZON = 1u << 1,
+    MOTO_UI_DBG_HIDE_HERO = 1u << 2,
+    MOTO_UI_DBG_HIDE_HALO = 1u << 3,
+    MOTO_UI_DBG_HIDE_CHROME = 1u << 4, /* page disc, frame, marks */
+    MOTO_UI_DBG_HIDE_SCENE = 1u << 5,  /* scene object incl. ground fill */
+} moto_ui_debug_hide_t;
+
+typedef struct {
+    uint32_t sun_us;
+    uint32_t horizon_us;
+    uint32_t hero_us; /* text plus outline; use HIDE_HALO to isolate the halo */
+    uint32_t sun_draws;
+    uint32_t horizon_draws;
+    uint32_t hero_draws;
+} moto_ui_debug_stats_t;
+
+void moto_nav_ui_debug_set_clock(moto_ui_debug_clock_t clock);
+void moto_nav_ui_debug_set_enabled(uint8_t enabled);
+uint8_t moto_nav_ui_debug_enabled(void);
+void moto_nav_ui_debug_set_hidden(uint32_t mask);
+uint32_t moto_nav_ui_debug_hidden(void);
+void moto_nav_ui_debug_reset(void);
+void moto_nav_ui_debug_stats(moto_ui_debug_stats_t *out);
 /**
  * The phone refused the last home tap (usually: no home address is set).
  * Shows a one-line hint on the navigation page for a few seconds. The device

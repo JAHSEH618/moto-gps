@@ -52,6 +52,13 @@ bool board_port_lock(uint32_t timeout_ms);
 /** Release a lock previously acquired with board_port_lock. */
 void board_port_unlock(void);
 
+/** Reset the display frame-time window (bench page measurements). */
+void board_port_reset_display_timing(void);
+/** Print the current window on demand, tagged `manual`. */
+void board_port_log_display_timing(void);
+/** Cumulative render time and frame count since boot (lean-page profiling). */
+void board_port_display_totals(uint64_t *render_us, uint32_t *frames);
+
 /** GPIO3/SYS_OUT is high while the case PWR key is physically held. */
 bool board_port_power_button_pressed(void);
 

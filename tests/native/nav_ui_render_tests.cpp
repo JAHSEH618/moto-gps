@@ -12,13 +12,16 @@
 // with lv_obj_send_event, because gesture_event() reads the direction from
 // the active indev.
 #include "src/debugging/test/lv_test_indev.h"
+#include "src/core/lv_obj_class_private.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -588,7 +591,7 @@ void test_lean_press_durations_dispatch_actions() {
   capture();
 
   lv_obj_t *layer =
-      lv_obj_find_by_name(lv_screen_active(), "moto-lean-calibration");
+      lv_obj_find_by_name(lv_screen_active(), "moto-lean-page");
   CHECK(layer != nullptr);
   if (layer == nullptr) return;
   lean_calibration_requests = 0;
@@ -628,10 +631,21 @@ void test_lean_status_slot_reports_cal_and_fallback() {
   CHECK(plate != nullptr);
   if (plate == nullptr) return;
 
-  moto_nav_ui_set_lean_flags(0, 1, 0);  // IMU POLL
+  // The previous press test leaves a capture in flight; start from a clean
+  // status slot so the flags below are what the plate shows.
+  moto_nav_ui_set_lean_cal_state(MOTO_UI_LEAN_CAL_NONE, 0);
+  moto_nav_ui_set_lean_flags(0, 1, 0, 0);  // IMU POLL
   pump(30);
   CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
-  moto_nav_ui_set_lean_flags(0, 0, 1);  // LOG FULL outranks POLL
+  moto_nav_ui_set_lean_flags(0, 0, 1, 0);  // LOG FULL outranks POLL
+  pump(30);
+  CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
+  moto_nav_ui_set_lean_flags(0, 0, 0, 1);  // LOG DIRTY outranks FULL
+  pump(30);
+  CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
+  CHECK(std::strcmp(lv_label_get_text(lv_obj_get_child(plate, 0)),
+                    "LOG DIRTY") == 0);
+  moto_nav_ui_set_lean_flags(0, 0, 1, 0);  // back to FULL while dirty clears
   pump(30);
   CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
   moto_nav_ui_set_lean_cal_state(MOTO_UI_LEAN_CAL_FAIL_MOVING, 0);
@@ -642,7 +656,7 @@ void test_lean_status_slot_reports_cal_and_fallback() {
   pump(300);
   CHECK(!lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
   moto_nav_ui_set_lean_cal_state(MOTO_UI_LEAN_CAL_NONE, 0);
-  moto_nav_ui_set_lean_flags(0, 0, 0);
+  moto_nav_ui_set_lean_flags(0, 0, 0, 0);
   pump(30);
   CHECK(lv_obj_has_flag(plate, LV_OBJ_FLAG_HIDDEN));
 }
@@ -1225,6 +1239,141 @@ void test_every_page_paints_its_own_surface() {
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
 
+
+// Geometry gate: every visible object in every page is registered in
+// tests/native/ui_geometry_manifest.txt. The manifest is the registry; a new
+// object, a moved box, a revived scroll flag or a changed style all produce a
+// diff and fail the suite until the manifest is deliberately updated with
+// MOTO_UI_GEOMETRY_WRITE=1. Object paths are child indices, not LVGL's global
+// object names, so they are stable across rebuilds.
+void collect_visible(lv_obj_t *obj, const std::string &path,
+                     std::string &out) {
+  if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return;
+  const lv_obj_class_t *cls = lv_obj_get_class(obj);
+  lv_area_t area;
+  lv_obj_get_coords(obj, &area);
+  const char *name = lv_obj_get_name(obj);
+  char line[320];
+  std::snprintf(
+      line, sizeof(line),
+      "%s|%s|%s|%d,%d-%d,%d|bg=%06x/opa%d|bd=%06x/%d|opa=%d|r=%d|%s%s%s%s\n",
+      path.c_str(),
+      cls != nullptr && cls->name != nullptr ? cls->name : "?",
+      name != nullptr ? name : "-", area.x1, area.y1, area.x2, area.y2,
+      static_cast<unsigned>(lv_color_to_u32(
+          lv_obj_get_style_bg_color(obj, LV_PART_MAIN))),
+      static_cast<int>(lv_obj_get_style_bg_opa(obj, LV_PART_MAIN)),
+      static_cast<unsigned>(lv_color_to_u32(
+          lv_obj_get_style_border_color(obj, LV_PART_MAIN))),
+      static_cast<int>(lv_obj_get_style_border_width(obj, LV_PART_MAIN)),
+      static_cast<int>(lv_obj_get_style_opa(obj, LV_PART_MAIN)),
+      static_cast<int>(lv_obj_get_style_radius(obj, LV_PART_MAIN)),
+      lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE) ? "S" : "-",
+      lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE) ? "C" : "-",
+      lv_obj_has_flag(obj, LV_OBJ_FLAG_GESTURE_BUBBLE) ? "G" : "-",
+      lv_obj_has_flag(obj, LV_OBJ_FLAG_EVENT_BUBBLE) ? "E" : "-");
+  out += line;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) {
+    collect_visible(lv_obj_get_child(obj, i),
+                    path + "." + std::to_string(i), out);
+  }
+}
+
+std::string build_geometry_manifest() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_lean_flags(0, 0, 0, 0);
+  moto_music_state_t music{};
+  music.connected = 1;
+  music.playing = 1;
+  music.like_available = 1;
+  music.source_name = "APPLE MUSIC";
+  music.track_title = "NIGHT RIDE";
+  music.artist_name = "PHONE NOW PLAYING";
+  moto_nav_ui_set_music_state(&music);
+
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_NAVIGATION;
+  state.has_attitude = 1;
+  state.lean_deg = 12.0F;
+  state.longitudinal_g = 0.2F;
+  state.lateral_g = 0.1F;
+  fill_route(state, 12);
+  fill_streets(state);
+
+  std::string manifest;
+  for (int page = 0; page < MOTO_UI_PAGE_COUNT; ++page) {
+    state.page = static_cast<moto_ui_page_t>(page);
+    moto_nav_ui_set_state(&state);
+    (void)capture();
+    lv_obj_t *root = moto_nav_ui_page_root(static_cast<moto_ui_page_t>(page));
+    CHECK(root != nullptr);
+    if (root == nullptr) continue;
+    manifest += "page " + std::to_string(page) + "\n";
+    collect_visible(root, "p", manifest);
+  }
+  state.page = MOTO_UI_PAGE_NAVIGATION;
+  moto_nav_ui_set_state(&state);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  (void)capture();
+  return manifest;
+}
+
+void test_visible_objects_are_registered() {
+  const std::string actual = build_geometry_manifest();
+  if (std::getenv("MOTO_UI_GEOMETRY_WRITE") != nullptr) {
+    std::ofstream out(MOTO_UI_GEOMETRY_MANIFEST);
+    out << actual;
+    std::cout << "wrote " << MOTO_UI_GEOMETRY_MANIFEST << '\n';
+    return;
+  }
+  std::ifstream in(MOTO_UI_GEOMETRY_MANIFEST);
+  CHECK(in.good());
+  if (!in.good()) return;
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+  const std::string expected = buffer.str();
+  if (expected == actual) return;
+  std::cerr << "geometry manifest changed; review the diff and regenerate by\n"
+            << "  running the same binary with MOTO_UI_GEOMETRY_WRITE=1\n";
+  std::istringstream expected_stream(expected);
+  std::istringstream actual_stream(actual);
+  std::string e;
+  std::string a;
+  int line = 0;
+  while (std::getline(expected_stream, e) &&
+         std::getline(actual_stream, a)) {
+    ++line;
+    if (e != a) {
+      std::cerr << "first diff line " << line << "\nexpected: " << e
+                << "\nactual:   " << a << '\n';
+      break;
+    }
+  }
+  CHECK(false);
+}
+
+// The Lean page used to trap the pager: its transparent full-screen
+// calibration overlay kept LV_OBJ_FLAG_SCROLLABLE, so a horizontal drag
+// scrolled the overlay instead of producing a page gesture. Entering and
+// leaving the page twenty times is the regression the bench card repeats by
+// hand. The overlay is gone; the page container owns the long press.
+void test_lean_page_survives_twenty_swipes() {
+  moto_nav_ui_set_reduce_motion(1);
+  lv_test_indev_create_all();
+  moto_nav_ui_set_page(MOTO_UI_PAGE_PERFORMANCE);
+  capture();
+  for(int i = 0; i < 20; ++i) {
+    swipe(320, 180);  // performance -> lean
+    CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_LEAN);
+    swipe(180, 320);  // lean -> performance
+    CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_PERFORMANCE);
+  }
+  lv_test_indev_delete_all();
+  pump(1100);
+}
+
 void test_one_swipe_moves_one_page_even_after_a_rebuild() {
   moto_nav_ui_set_reduce_motion(1);
   lv_test_indev_create_all();
@@ -1310,6 +1459,8 @@ int main(int argc, char **argv) {
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
   test_one_swipe_moves_one_page_even_after_a_rebuild();
+  test_visible_objects_are_registered();
+  test_lean_page_survives_twenty_swipes();
   test_every_page_paints_its_own_surface();
 
   // Visual check runs while the instrument is still alive; the terminal

@@ -29,6 +29,12 @@ class PhoneNavBridge {
   // Starts the sole background owner of NavPresenter and all LVGL writes.
   // BLE/IMU callbacks only retain state and signal this low-priority task.
   bool start_renderer();
+#ifdef ESP_PLATFORM
+  // For the `sys tasks` bench command. Null before start_renderer().
+  TaskHandle_t render_task_handle() const {
+    return render_task_handle_.load(std::memory_order_acquire);
+  }
+#endif
 #ifndef ESP_PLATFORM
   // Deterministic pump for native tests. Production firmware always uses the
   // task created by start_renderer().

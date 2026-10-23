@@ -31,6 +31,7 @@ idf_component_register(
         "mount_basis.cpp"
         "motion_heading_sensor.cpp"
         "qmi8658_fifo.cpp"
+        "qmi8658_latch.cpp"
         "phone_nav_bridge.cpp"
         "flash_guard.cpp"
         "settings_store.cpp"

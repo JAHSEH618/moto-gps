@@ -19,6 +19,7 @@ constexpr std::size_t kDynRecordSize = 32;
 constexpr std::size_t kGnssRecordSize = 20;
 constexpr std::size_t kMountRecordSize = 14;
 constexpr std::size_t kSessionMetaSize = 40;
+constexpr std::size_t kImuStatsRecordSize = 32;
 
 extern const std::array<std::uint8_t, 4> kBlockMagic;
 
@@ -27,6 +28,7 @@ enum RecordType : std::uint8_t {
   kRecordGnss = 2,
   kRecordMount = 3,
   kRecordSession = 4,
+  kRecordImuStats = 5,
 };
 
 struct BlockHeader {
@@ -70,6 +72,25 @@ struct MountRecord {
   std::int16_t trim_cdeg = 0;
 };
 
+// One acquisition-health sample, written every 10 s and on mode changes. The
+// session meta says which chain ran; this record says whether it kept up. The
+// latch counters are the acceptance set from DESIGN_V2 r2 §3.2; on the FIFO
+// A/B chain `samples`/`missed` carry `received`/`lost`.
+struct ImuStatsRecord {
+  std::uint32_t t_ms = 0;
+  std::uint32_t samples = 0;
+  std::uint32_t avail_zero = 0;
+  std::uint32_t lock_waits = 0;
+  std::uint16_t i2c_errors = 0;
+  std::uint16_t missed_reads = 0;
+  std::uint16_t flash_skips = 0;
+  std::uint16_t interval_max_us = 0;
+  std::uint16_t interval_avg_us = 0;
+  std::uint16_t flash_gaps = 0;
+  std::uint8_t mode = 0;   // 0 poll, 1 FIFO, 2 latch
+  std::uint8_t flags = 0;  // bit0 log dirty, bit1 log full
+};
+
 // Replay needs the acquisition conditions to reproduce a ride: mode, actual
 // ODR, mount, and the estimator's tuning at the time.
 struct SessionMeta {
@@ -105,6 +126,11 @@ std::array<std::uint8_t, kSessionMetaSize> encode_session_meta(
     const SessionMeta& meta);
 bool decode_session_meta(const std::uint8_t* data, std::size_t size,
                          SessionMeta* meta);
+
+std::array<std::uint8_t, kImuStatsRecordSize> encode_imu_stats(
+    const ImuStatsRecord& record);
+bool decode_imu_stats(const std::uint8_t* data, std::size_t size,
+                      ImuStatsRecord* record);
 
 // CRC32 (IEEE 802.3), used over a whole block with the CRC field zeroed.
 std::uint32_t block_crc32(const std::uint8_t* block);

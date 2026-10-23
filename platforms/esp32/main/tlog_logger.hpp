@@ -30,6 +30,9 @@ class TlogLogger {
   bool begin(const TlogSessionInfo& session);
   bool ready() const { return ready_; }
   bool full() const { return full_; }
+  // A sector at the append point was not erased. Recording stopped; only the
+  // host can reset the partition. Runtime never erases (DESIGN_V2 r2 §11).
+  bool dirty() const { return dirty_; }
 
   void append(std::uint64_t now_ms, const RawImuSample& raw,
               const moto::motion::AttitudeEstimate& attitude);
@@ -37,6 +40,9 @@ class TlogLogger {
   // Appends a fresh session record (mode changed by FIFO fallback or A/B).
   void note_mode(std::uint8_t mode, std::uint16_t odr_hz,
                  std::uint16_t sample_hz);
+  // Acquisition health, written every 10 s. This is the on-disk half of the
+  // `imu stats` contract; replay prints it as `# imu ...`.
+  void append_stats(const ImuStatsRecord& stats);
 
   std::uint32_t records() const { return seq_; }
   std::uint32_t write_errors() const { return write_errors_; }
@@ -46,6 +52,7 @@ class TlogLogger {
   bool ensure_partition();
   bool run_selftest();
   bool erase_sector(std::uint32_t offset);
+  bool sector_is_erased(std::uint32_t offset);
   bool write_block();
   bool start_block();
   std::uint32_t find_append_offset();
@@ -65,6 +72,7 @@ class TlogLogger {
   bool block_dirty_ = false;
   bool ready_ = false;
   bool full_ = false;
+  bool dirty_ = false;
   alignas(4) std::uint8_t block_[kBlockSize] = {};
 };
 

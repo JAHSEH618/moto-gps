@@ -1,8 +1,9 @@
 #include "motion_heading_sensor.h"
 
-// The vendored qmi8658.h is guarded by an #endif placed before its
-// extern "C" close, so a second include emits a stray brace. It is included
-// exactly once, through this header, and M_PI is cleared here.
+// qmi8658.h defines M_PI as a float macro; the estimator uses its own double
+// constant, so the macro is cleared before the standard headers are parsed.
+// The vendored header's extern "C" guard was fixed in place (the old #endif
+// sat before the closing brace, so a second include emitted a stray brace).
 #ifdef M_PI
 #undef M_PI
 #endif
@@ -68,12 +69,40 @@ void MotionHeadingSensor::set_mode_callback(ModeCallback callback,
   mode_context_ = context;
 }
 
+const char* MotionHeadingSensor::mode_name() const {
+  switch (acquisition_mode()) {
+    case AcquisitionMode::Latch:
+      return "latch";
+    case AcquisitionMode::Fifo:
+      return "fifo";
+    case AcquisitionMode::Poll:
+    default:
+      return "poll";
+  }
+}
+
+const char* MotionHeadingSensor::fallback_reason() const {
+  if (acquisition_mode() == AcquisitionMode::Poll) {
+    if (latch_failed_ && latch_reason_ != nullptr) return latch_reason_;
+    if (fifo_reason_ != nullptr) return fifo_reason_;
+  }
+  return nullptr;
+}
+
+void MotionHeadingSensor::reset_imu_stats() {
+  latch_.reset_stats();
+}
+
 esp_err_t MotionHeadingSensor::start(SampleCallback callback, void* context) {
   if (callback == nullptr) return ESP_ERR_INVALID_ARG;
   if (started_) return ESP_ERR_INVALID_STATE;
   callback_ = callback;
   callback_context_ = context;
-  if (xTaskCreate(task_entry, "moto_qmi_heading", 8'192, this, 3, nullptr) !=
+  // Above the LVGL adapter task (6): a 0.4 ms I2C read every 4.46 ms must
+  // preempt a long page render, otherwise a 100 ms frame starves the latch and
+  // the acquisition acceptance (lost reads) fails while the rider looks at the
+  // horizon. The tlog page write inherits this priority too.
+  if (xTaskCreate(task_entry, "moto_qmi_heading", 8'192, this, 7, nullptr) !=
       pdPASS) {
     callback_ = nullptr;
     callback_context_ = nullptr;
@@ -88,14 +117,18 @@ void MotionHeadingSensor::task_entry(void* context) {
   vTaskDelete(nullptr);
 }
 
-void MotionHeadingSensor::run() {
-  const esp_err_t init = qmi8658_init(
-      &device_, bsp_i2c_get_handle(), QMI8658_ADDRESS_HIGH);
-  if (init != ESP_OK) {
-    ESP_LOGW(kTag, "QMI8658 unavailable; using phone course only: %s",
-             esp_err_to_name(init));
-    return;
+void MotionHeadingSensor::announce_mode(AcquisitionMode mode) {
+  mode_ = static_cast<std::uint8_t>(mode);
+  latch_active_ = mode == AcquisitionMode::Latch;
+  if (mode_callback_ != nullptr) {
+    mode_callback_(static_cast<std::uint8_t>(mode), mode_context_);
   }
+}
+
+void MotionHeadingSensor::configure_poll_mode() {
+  // Restore the 125 Hz polling shape and leave syncSmpl. CTRL1 keeps
+  // auto-increment on and byte order little-endian, which is what the vendored
+  // read helper decodes.
   ESP_ERROR_CHECK_WITHOUT_ABORT(
       qmi8658_set_accel_range(&device_, QMI8658_ACCEL_RANGE_4G));
   ESP_ERROR_CHECK_WITHOUT_ABORT(
@@ -104,8 +137,22 @@ void MotionHeadingSensor::run() {
       qmi8658_set_gyro_range(&device_, QMI8658_GYRO_RANGE_512DPS));
   ESP_ERROR_CHECK_WITHOUT_ABORT(
       qmi8658_set_gyro_odr(&device_, QMI8658_GYRO_ODR_125HZ));
-  qmi8658_set_accel_unit_mps2(&device_, true);
-  qmi8658_set_gyro_unit_dps(&device_, true);
+  qmi8658_write_register(&device_, 0x02, 0x40);  // AI on, BE off
+  qmi8658_write_register(&device_, 0x06, 0x00);  // no LPF on the fallback path
+  qmi8658_write_register(&device_, 0x09, 0x00);  // INT1 handshake default
+  qmi8658_write_register(&device_, 0x08, 0x03);  // accel + gyro, sync off
+}
+
+void MotionHeadingSensor::run() {
+  task_handle_ = xTaskGetCurrentTaskHandle();
+  const esp_err_t init = qmi8658_init(
+      &device_, bsp_i2c_get_handle(), QMI8658_ADDRESS_HIGH);
+  if (init != ESP_OK) {
+    ESP_LOGW(kTag, "QMI8658 unavailable; using phone course only: %s",
+             esp_err_to_name(init));
+    return;
+  }
+  configure_poll_mode();
 
   mount_ = has_mount_ ? mount_ : [] {
     moto::motion::MountCalibration assumed;
@@ -117,42 +164,73 @@ void MotionHeadingSensor::run() {
   temperature_countdown_ = 0;
 
   bool fifo_enabled = moto::device::load_imu_fifo_enabled();
+  bool poll_mode = false;
   while (true) {
     if (fifo_request_ >= 0) {
       fifo_enabled = fifo_request_ == 1;
       fifo_request_ = -1;
+      latch_failed_ = false;
+      poll_mode = false;
       moto::device::save_imu_fifo_enabled(fifo_enabled);
     }
     bool restart = false;
-    bool fallback = false;
+
     if (fifo_enabled) {
-      moto::motion::Qmi8658Fifo fifo;
-      if (fifo.begin(&device_)) {
-        fifo_active_ = true;
+      if (fifo_.begin(&device_)) {
         fifo_reason_ = nullptr;
-        if (mode_callback_ != nullptr) mode_callback_(true, mode_context_);
-        fifo_loop(fifo, restart);
-        fifo_active_ = false;
-        fifo_stats_ = fifo.stats();
-        fallback = fifo.fallback_reason() != nullptr;
-        if (fallback) {
-          fifo_reason_ = fifo.fallback_reason();
+        announce_mode(AcquisitionMode::Fifo);
+        fifo_loop(restart);
+        fifo_.shutdown();
+        const char* reason = fifo_.fallback_reason();
+        if (reason != nullptr) {
+          fifo_reason_ = reason;
           fifo_enabled = false;
-          if (mode_callback_ != nullptr) mode_callback_(false, mode_context_);
-          ESP_LOGW(kTag, "falling back to polling: %s", fifo_reason_);
+          poll_mode = false;
+          ESP_LOGW(kTag, "FIFO fell back: %s", reason);
         }
       } else {
-        fifo_reason_ = fifo.fallback_reason();
+        fifo_reason_ = fifo_.fallback_reason();
         fifo_enabled = false;
-        fallback = true;
-        if (mode_callback_ != nullptr) mode_callback_(false, mode_context_);
+        poll_mode = false;
         ESP_LOGW(kTag, "FIFO unavailable: %s",
                  fifo_reason_ != nullptr ? fifo_reason_ : "init failed");
       }
+      if (restart) continue;
     }
-    if (fallback) restart = false;  // fallback must not retry the FIFO loop
-    if (!fifo_enabled) poll_loop(restart);
-    if (restart) continue;
+
+    if (!fifo_enabled && !poll_mode) {
+      // Latch polling is the production chain. It is only skipped after it
+      // failed once in this boot; a mode request clears the latch_failed_ flag.
+      if (!latch_failed_ && latch_.begin(&device_)) {
+        latch_reason_ = nullptr;
+        announce_mode(AcquisitionMode::Latch);
+        latch_loop(restart);
+        const char* reason = latch_.fallback_reason();
+        latch_.shutdown();
+        if (!latch_.active()) {
+          latch_failed_ = true;
+          if (reason != nullptr) {
+            latch_reason_ = reason;
+            ESP_LOGW(kTag, "latch fell back: %s", reason);
+          }
+        }
+      } else {
+        latch_reason_ = latch_.fallback_reason() != nullptr
+                            ? latch_.fallback_reason()
+                            : "init failed";
+        latch_failed_ = true;
+        ESP_LOGW(kTag, "latch unavailable: %s", latch_reason_);
+      }
+      if (restart) continue;
+      poll_mode = true;
+      configure_poll_mode();
+      announce_mode(AcquisitionMode::Poll);
+    }
+
+    if (poll_mode) {
+      poll_loop(restart);
+      if (restart) continue;
+    }
   }
 }
 
@@ -185,13 +263,18 @@ void MotionHeadingSensor::run_calibration() {
 }
 
 void MotionHeadingSensor::emit(const RawImuSample& raw,
-                               std::uint64_t sample_ms) {
+                               std::int64_t sample_us) {
+  // The estimator integrates gyro rate; dt from the sample timestamps keeps
+  // its scale right even when a flash page write or a skipped tick stretches
+  // one interval. The 2 ms floor matches the old 125 Hz path.
   const float dt =
       have_emit_
-          ? std::clamp(static_cast<float>(sample_ms - last_emit_ms_) / 1000.0F,
+          ? std::clamp(static_cast<float>(sample_us - last_emit_us_) / 1.0e6F,
                        0.002F, 0.05F)
-          : 1.0F / 125.0F;
-  last_emit_ms_ = sample_ms;
+          : 1.0F / 112.0F;
+  const std::uint64_t sample_ms =
+      static_cast<std::uint64_t>(sample_us) / 1'000U;
+  last_emit_us_ = sample_us;
   have_emit_ = true;
   lean_.step({raw.gyro_dps[0], raw.gyro_dps[1], raw.gyro_dps[2]},
              {raw.accel_mps2[0], raw.accel_mps2[1], raw.accel_mps2[2]}, dt,
@@ -218,13 +301,14 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
   attitude.has_lean_eff = std::isfinite(out.lean_eff_deg);
   attitude.quality = out.quality;
   attitude.flags = out.flags;
-  if (!fifo_active_) attitude.flags |= moto::motion::kLeanImuFallback;
+  if (acquisition_mode() == AcquisitionMode::Poll) {
+    attitude.flags |= moto::motion::kLeanImuFallback;
+  }
   attitude.valid = out.valid;
   callback_(-out.yaw_rate_dps, attitude, raw, sample_ms, callback_context_);
 }
 
-void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
-                                    bool& restart) {
+void MotionHeadingSensor::fifo_loop(bool& restart) {
   constexpr std::uint32_t kOdrHz10 = 4484;  // 448.4 Hz in 0.1 Hz
   constexpr float kPeriodUs = 1.0e6F / 448.4F;
   struct PendingFrame {
@@ -236,13 +320,13 @@ void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
   const std::uint64_t warmup_end = monotonic_ms() + kWarmupMs;
   TickType_t next = xTaskGetTickCount();
   while (true) {
-    if (fifo_request_ >= 0 || !fifo.active()) {
+    if (fifo_request_ >= 0 || !fifo_.active()) {
       restart = true;
       return;
     }
     if (calibration_requested_) run_calibration();
     moto::motion::FifoFrame frames[16];
-    const std::size_t count = fifo.poll(frames, 16);
+    const std::size_t count = fifo_.poll(frames, 16);
     if (count > 0) {
       const std::uint64_t now = monotonic_ms();
       for (std::size_t i = 0; i < count && pending_count < 64; ++i) {
@@ -273,7 +357,9 @@ void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
           }
         }
         raw.temp_c = temperature_c_;
-        if (sample_ms > warmup_end) emit(raw, sample_ms);
+        if (sample_ms > warmup_end) {
+          emit(raw, static_cast<std::int64_t>(sample_ms) * 1'000);
+        }
         for (std::size_t i = 4; i < pending_count; ++i) {
           pending[i - 4] = pending[i];
         }
@@ -283,6 +369,84 @@ void MotionHeadingSensor::fifo_loop(moto::motion::Qmi8658Fifo& fifo,
     (void)kOdrHz10;
     xTaskDelayUntil(&next, kFifoPollDelay);
   }
+}
+
+void MotionHeadingSensor::latch_timer_notify(void* context) {
+  auto* sensor = static_cast<MotionHeadingSensor*>(context);
+  // esp_timer callbacks run in the esp_timer task, not in an ISR.
+  if (sensor->task_handle_ != nullptr) {
+    xTaskNotifyGive(sensor->task_handle_);
+  }
+}
+
+void MotionHeadingSensor::latch_loop(bool& restart) {
+  task_handle_ = xTaskGetCurrentTaskHandle();
+  esp_timer_create_args_t timer_args{};
+  timer_args.callback = latch_timer_notify;
+  timer_args.arg = this;
+  timer_args.dispatch_method = ESP_TIMER_TASK;
+  timer_args.name = "moto_imu_tick";
+  esp_timer_handle_t timer = nullptr;
+  if (esp_timer_create(&timer_args, &timer) != ESP_OK) {
+    latch_reason_ = "esp_timer create failed";
+    latch_.shutdown();
+    return;
+  }
+  if (esp_timer_start_periodic(timer, moto::motion::Qmi8658Latch::kPeriodUs) !=
+      ESP_OK) {
+    esp_timer_delete(timer);
+    latch_reason_ = "esp_timer start failed";
+    latch_.shutdown();
+    return;
+  }
+
+  moto::motion::LatchSample pair[2];
+  std::size_t pair_count = 0;
+  const std::int64_t warmup_end_us =
+      esp_timer_get_time() + static_cast<std::int64_t>(kWarmupMs) * 1'000;
+  bool logged_status = false;
+  while (true) {
+    // The tick is the whole clock. A 50 ms timeout only exists so a mode
+    // request or a stopped timer is still noticed.
+    (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));
+    if (fifo_request_ >= 0 || !latch_.active()) {
+      restart = fifo_request_ >= 0;
+      break;
+    }
+    if (calibration_requested_) {
+      // Calibration needs the driver's blocking read path. Its sample gaps are
+      // outside the acquisition acceptance window; the bench card says to
+      // reset the counters after a successful CAL.
+      run_calibration();
+      continue;
+    }
+    if (!logged_status && esp_timer_get_time() >= warmup_end_us) {
+      latch_.log_status("after warmup");
+      logged_status = true;
+    }
+    moto::motion::LatchSample sample;
+    if (!latch_.read(&sample)) continue;
+    pair[pair_count++] = sample;
+    if (pair_count < 2) continue;
+    pair_count = 0;
+
+    RawImuSample raw;
+    for (int axis = 0; axis < 3; ++axis) {
+      raw.accel_mps2[axis] =
+          (pair[0].accel_mps2[axis] + pair[1].accel_mps2[axis]) * 0.5F;
+      raw.gyro_dps[axis] =
+          (pair[0].gyro_dps[axis] + pair[1].gyro_dps[axis]) * 0.5F;
+    }
+    raw.temp_c = (pair[0].temp_c + pair[1].temp_c) * 0.5F;
+    // The pair describes the centre of its two read instants, not the later
+    // one; this keeps the 112 Hz timestamps evenly spaced.
+    const std::int64_t sample_us =
+        (pair[0].timestamp_us + pair[1].timestamp_us) / 2;
+    if (sample_us >= warmup_end_us) emit(raw, sample_us);
+  }
+
+  esp_timer_stop(timer);
+  esp_timer_delete(timer);
 }
 
 void MotionHeadingSensor::poll_loop(bool& restart) {
@@ -313,7 +477,7 @@ void MotionHeadingSensor::poll_loop(bool& restart) {
         }
       }
       raw.temp_c = temperature_c_;
-      emit(raw, monotonic_ms());
+      emit(raw, static_cast<std::int64_t>(monotonic_ms()) * 1'000);
     } else if (result != ESP_OK) {
       ESP_LOGW(kTag, "QMI8658 read error: %s", esp_err_to_name(result));
     }

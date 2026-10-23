@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
 #include "esp_timer.h"
+#include "moto_nav_ui.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "sdkconfig.h"
@@ -29,7 +30,7 @@ constexpr char kTag[] = "board_waveshare";
 // Keep internal SRAM available for BLE and heading task stacks. Two 320-row
 // PSRAM buffers reduce repeated map traversal and still overlap drawing with
 // QSPI DMA. A 32-row internal-buffer experiment exhausted BLE startup memory.
-constexpr std::uint16_t kDrawBufferHeight = 320;
+constexpr std::uint16_t kDrawBufferHeight = MOTO_DISPLAY_HEIGHT;
 constexpr bool kDrawBuffersUsePsram = true;
 constexpr std::size_t kLvglExtraPoolBytes = 2U * 1024U * 1024U;
 static_assert(kLvglExtraPoolBytes <= LV_MEM_POOL_EXPAND_SIZE,
@@ -110,6 +111,55 @@ struct DisplayTiming {
   std::uint32_t over_budget_frames = 0;
 } display_timing;
 
+// Monotonic totals for the `ui dbg` window; display_timing itself resets every
+// five seconds for the periodic log.
+std::uint64_t display_total_render_us = 0;
+std::uint32_t display_total_frames = 0;
+
+void log_display_timing(const char* reason) {
+  auto& timing = display_timing;
+  if (timing.frames == 0) {
+    ESP_LOGI(kTag, "display perf (%s): no frames in this window", reason);
+    return;
+  }
+  const std::uint64_t window_us =
+      static_cast<std::uint64_t>(esp_timer_get_time() -
+                                 timing.window_start_us);
+  ESP_LOGI(kTag,
+           "display perf (%s) page=%d: %.1f fps, render %.1f/%.1f ms "
+           "avg/max, TE/DMA wait %.1f/%.1f ms/frame, %.1f flushes/frame, "
+           "over-%dms %lu/%lu",
+           reason, static_cast<int>(moto_nav_ui_get_page()),
+           window_us == 0 ? 0.0
+                          : static_cast<double>(timing.frames) * 1'000'000.0 /
+                                static_cast<double>(window_us),
+           static_cast<double>(timing.render_total_us) / timing.frames / 1'000.0,
+           static_cast<double>(timing.render_max_us) / 1'000.0,
+           static_cast<double>(timing.te_wait_total_us) / timing.frames / 1'000.0,
+           static_cast<double>(timing.dma_wait_total_us) / timing.frames / 1'000.0,
+           static_cast<double>(timing.flushes) / timing.frames,
+           LV_DEF_REFR_PERIOD,
+           static_cast<unsigned long>(timing.over_budget_frames),
+           static_cast<unsigned long>(timing.frames));
+  ESP_LOGI(kTag,
+           "display flush cb: %.1f ms total, %.1f ms/flush avg, "
+           "%.1f ms max, %.1f ms/frame (excludes TE)",
+           static_cast<double>(timing.flush_callback_total_us) / 1'000.0,
+           timing.flushes == 0 ? 0.0 :
+               static_cast<double>(timing.flush_callback_total_us) /
+                   timing.flushes / 1'000.0,
+           static_cast<double>(timing.flush_callback_max_us) / 1'000.0,
+           static_cast<double>(timing.flush_callback_total_us) /
+               timing.frames / 1'000.0);
+  ESP_LOGI(kTag, "internal heap: free %lu KiB, minimum %lu KiB",
+           static_cast<unsigned long>(heap_caps_get_free_size(
+               MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024U),
+           static_cast<unsigned long>(heap_caps_get_minimum_free_size(
+               MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024U));
+  timing = {};
+  timing.window_start_us = esp_timer_get_time();
+}
+
 void display_timing_event(lv_event_t* event) {
   const lv_event_code_t code = lv_event_get_code(event);
   const std::int64_t now_us = esp_timer_get_time();
@@ -138,41 +188,15 @@ void display_timing_event(lv_event_t* event) {
     const auto duration = static_cast<std::uint32_t>(
         now_us - timing.render_start_us);
     timing.render_total_us += duration;
+    display_total_render_us += duration;
+    ++display_total_frames;
     if (duration > timing.render_max_us) timing.render_max_us = duration;
     if (duration > LV_DEF_REFR_PERIOD * 1'000U) ++timing.over_budget_frames;
     ++timing.frames;
     timing.render_start_us = 0;
     const auto window_us = now_us - timing.window_start_us;
     if (window_us >= 5'000'000) {
-      ESP_LOGI(kTag,
-               "display perf: %.1f fps, render %.1f/%.1f ms avg/max, "
-               "TE/DMA wait %.1f/%.1f ms/frame, %.1f flushes/frame, over-%dms %lu/%lu",
-               static_cast<double>(timing.frames) * 1'000'000.0 / window_us,
-               static_cast<double>(timing.render_total_us) / timing.frames / 1'000.0,
-               static_cast<double>(timing.render_max_us) / 1'000.0,
-               static_cast<double>(timing.te_wait_total_us) / timing.frames / 1'000.0,
-               static_cast<double>(timing.dma_wait_total_us) / timing.frames / 1'000.0,
-               static_cast<double>(timing.flushes) / timing.frames,
-               LV_DEF_REFR_PERIOD,
-               static_cast<unsigned long>(timing.over_budget_frames),
-               static_cast<unsigned long>(timing.frames));
-      ESP_LOGI(kTag,
-               "display flush cb: %.1f ms total, %.1f ms/flush avg, "
-               "%.1f ms max, %.1f ms/frame (excludes TE)",
-               static_cast<double>(timing.flush_callback_total_us) / 1'000.0,
-               timing.flushes == 0 ? 0.0 :
-                   static_cast<double>(timing.flush_callback_total_us) /
-                       timing.flushes / 1'000.0,
-               static_cast<double>(timing.flush_callback_max_us) / 1'000.0,
-               static_cast<double>(timing.flush_callback_total_us) /
-                   timing.frames / 1'000.0);
-      ESP_LOGI(kTag, "internal heap: free %lu KiB, minimum %lu KiB",
-               static_cast<unsigned long>(heap_caps_get_free_size(
-                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024U),
-               static_cast<unsigned long>(heap_caps_get_minimum_free_size(
-                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024U));
-      timing = {};
-      timing.window_start_us = now_us;
+      log_display_timing("auto");
     }
   }
 }
@@ -238,15 +262,17 @@ esp_err_t initialize_hidden_panel(std::size_t maximum_transfer_size,
   io_config.cs_gpio_num = BSP_LCD_CS;
   io_config.dc_gpio_num = -1;
   io_config.spi_mode = 0;
-  io_config.pclk_hz = 40 * 1'000 * 1'000;
+  // 40 MHz left the QSPI DMA with no margin while LVGL drew from PSRAM and
+  // produced `DMA TX underflow detected` on the Lean page. 30 MHz keeps
+  // 466x466 RGB565 above 25 fps with margin.
+  io_config.pclk_hz = 30 * 1'000 * 1'000;
   io_config.trans_queue_depth = CONFIG_BSP_LCD_TRANS_QUEUE_DEPTH;
   io_config.lcd_cmd_bits = 32;
   io_config.lcd_param_bits = 8;
   io_config.flags.quad_mode = true;
-  // ESP32-S3 GPSPI can read an aligned PSRAM color buffer directly through
-  // GDMA. Without this flag esp_lcd allocates and copies into a same-sized
-  // internal bounce buffer for every flush, which caused the old large-buffer
-  // configuration to fail once NimBLE was active.
+  // Direct PSRAM DMA needs headroom: the GDMA engine reads the color buffer
+  // from the same PSRAM the CPU is drawing into. 30 MHz below keeps that
+  // margin; a bounce-buffer build exhausted internal DMA memory under load.
   io_config.flags.psram_dma_direct = true;
   esp_lcd_panel_io_handle_t new_panel_io = nullptr;
   ESP_RETURN_ON_ERROR(
@@ -966,6 +992,21 @@ extern "C" void board_port_unlock(void) {
   if (display != nullptr) {
     bsp_display_unlock();
   }
+}
+
+extern "C" void board_port_reset_display_timing(void) {
+  display_timing = {};
+  display_timing.window_start_us = esp_timer_get_time();
+}
+
+extern "C" void board_port_log_display_timing(void) {
+  log_display_timing("manual");
+}
+
+extern "C" void board_port_display_totals(uint64_t *render_us,
+                                           uint32_t *frames) {
+  if (render_us != nullptr) *render_us = display_total_render_us;
+  if (frames != nullptr) *frames = display_total_frames;
 }
 
 extern "C" bool board_port_power_button_pressed(void) {
