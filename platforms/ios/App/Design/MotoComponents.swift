@@ -796,6 +796,10 @@ struct MotoWordmark: View {
             .font(.custom("Anton-Regular", size: size, relativeTo: .largeTitle))
             .tracking(-0.5)
             .foregroundStyle(fill)
+            // A wordmark never wraps: at 132pt "GO" would break into two lines
+            // the moment the row runs out of width.
+            .fixedSize()
+            .lineLimit(1)
             .motoOutline(outline, width: max(2, size * 0.035))
             // Hard drop, always dark: a shadow in the outline colour turns into
             // a smear on light fills.

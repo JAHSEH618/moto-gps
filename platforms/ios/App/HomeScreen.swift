@@ -132,19 +132,22 @@ struct HomeScreen: View {
         .padding(.top, MotoMetrics.s5)
     }
 
-    /// Poster line: one huge word, the Chinese verb beside it.
+    /// Poster line: one huge word, the Chinese verb and the claim under it.
+    /// The word owns the full width; nothing sits beside it to squeeze it.
     private var wordmark: some View {
-        HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
-            MotoWordmark(text: "GO", size: 88, fill: palette.accent, outline: palette.slab)
-            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+        VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+            HStack(alignment: .top, spacing: MotoMetrics.s3) {
+                MotoWordmark(text: "GO", size: 132, fill: palette.accent, outline: palette.slab)
+                Spacer(minLength: MotoMetrics.s2)
+                homeButton
+            }
+            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
                 Text("出发")
-                    .font(.system(.title2, weight: .bold))
+                    .font(.system(.title, weight: .heavy))
                     .foregroundStyle(palette.ink)
                 MotoLabel(text: "spot · plan · ride", tone: .muted, token: .micro)
+                    .padding(.bottom, 2)
             }
-            .padding(.bottom, MotoMetrics.s1)
-            Spacer(minLength: MotoMetrics.s2)
-            homeButton
         }
     }
 
