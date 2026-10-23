@@ -238,7 +238,71 @@ struct MotoHeaderButton: View {
     }
 }
 
+/// A pushed poster page: same band header, a back chevron instead of a dismiss.
+struct MotoPosterPage<Content: View>: View {
+    let kicker: String
+    let title: String
+    let backIdentifier: String
+    let onBack: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.motoPalette) private var palette
+    @Environment(\.motoType) private var type
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                VStack(spacing: MotoMetrics.s6) {
+                    content()
+                }
+                .padding(.horizontal, MotoMetrics.s4)
+                .padding(.top, MotoMetrics.s5)
+                .padding(.bottom, MotoMetrics.s7)
+            }
+        }
+        .background(palette.bg)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var header: some View {
+        HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
+            Button(action: onBack) {
+                Image(systemName: "chevron.left")
+                    .font(.system(.body, weight: .bold))
+                    .foregroundStyle(MotoPalette.onBand)
+                    .frame(width: 32, height: 32, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("返回")
+            .accessibilityIdentifier(backIdentifier)
+            .padding(.bottom, MotoMetrics.s1)
+
+            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                Text(kicker)
+                    .font(type.mono(.micro))
+                    .tracking(MotoMetrics.microTracking)
+                    .foregroundStyle(MotoPalette.onBand.opacity(0.72))
+                Text(title)
+                    .font(.system(.largeTitle, weight: .heavy))
+                    .foregroundStyle(MotoPalette.onBand)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MotoMetrics.s4)
+        .padding(.top, MotoMetrics.s5)
+        .padding(.bottom, MotoMetrics.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MotoPalette.band)
+    }
+}
+
 // MARK: - Prose
+
 
 /// Body copy on paper. Sentence case, real line spacing, never mono: the poster
 /// grammar puts monospace on caps labels and data, and prose in the reading face.
