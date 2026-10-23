@@ -51,6 +51,22 @@ esp_err_t MotionHeadingSensor::start(SampleCallback callback, void* context) {
   return ESP_OK;
 }
 
+void MotionHeadingSensor::set_mount(
+    const moto::motion::MountCalibration& mount) {
+  mount_ = mount;
+  has_mount_ = true;
+}
+
+void MotionHeadingSensor::request_static_calibration() {
+  calibration_requested_ = true;
+}
+
+void MotionHeadingSensor::set_calibration_callback(
+    CalibrationCallback callback, void* context) {
+  calibration_callback_ = callback;
+  calibration_context_ = context;
+}
+
 void MotionHeadingSensor::task_entry(void* context) {
   static_cast<MotionHeadingSensor*>(context)->run();
   vTaskDelete(nullptr);
@@ -79,8 +95,13 @@ void MotionHeadingSensor::run() {
   qmi8658_set_accel_unit_mps2(&device, true);
   qmi8658_set_gyro_unit_dps(&device, true);
 
-  moto::motion::MountCalibration mount;
-  mount.set_basis(kSensorForward, kSensorUp, false);
+  moto::motion::MountCalibration mount =
+      has_mount_ ? mount_
+                 : [] {
+                     moto::motion::MountCalibration assumed;
+                     assumed.set_basis(kSensorForward, kSensorUp, false);
+                     return assumed;
+                   }();
   moto::motion::LeanEstimator lean;
   lean.set_mount(mount);
 
@@ -89,6 +110,35 @@ void MotionHeadingSensor::run() {
   std::uint64_t last_sample_ms = monotonic_ms();
   TickType_t next_sample_tick = xTaskGetTickCount();
   while (true) {
+    if (calibration_requested_) {
+      calibration_requested_ = false;
+      // Step 1 only: a stationary capture gives the sensor-frame up axis and
+      // completes in ~2 s. Step 2 (forward trim) needs a straight-line
+      // acceleration and is left to a later ride, guarded to ±10°.
+      moto::motion::MountCalibration candidate = mount;
+      candidate.begin_static();
+      bool ok = false;
+      const std::uint64_t started = monotonic_ms();
+      while (!ok && monotonic_ms() - started < 4'000U) {
+        bool capture_ready = false;
+        if (qmi8658_is_data_ready(&device, &capture_ready) == ESP_OK &&
+            capture_ready &&
+            qmi8658_read_sensor_data(&device, &data) == ESP_OK) {
+          ok = candidate.observe_static(
+              {data.accelX, data.accelY, data.accelZ},
+              {data.gyroX, data.gyroY, data.gyroZ}, 0.008F);
+        }
+        vTaskDelay(pdMS_TO_TICKS(8));
+      }
+      if (ok) {
+        mount = candidate;
+        lean.set_mount(mount);
+      }
+      ESP_LOGI(kTag, "static calibration %s", ok ? "captured" : "rejected");
+      if (calibration_callback_ != nullptr) {
+        calibration_callback_(mount, ok, calibration_context_);
+      }
+    }
     bool ready = false;
     esp_err_t result = qmi8658_is_data_ready(&device, &ready);
     if (result == ESP_OK && ready) {

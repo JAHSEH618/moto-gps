@@ -12,6 +12,7 @@ namespace {
 constexpr char kTag[] = "settings_store";
 constexpr char kNamespace[] = "moto_device";
 constexpr char kKey[] = "settings";
+constexpr char kMountKey[] = "att.rmount";
 
 // app_main loads settings before the BLE transport starts, and the transport
 // is the other caller of nvs_flash_init(). ESP-IDF returns ESP_OK for a second
@@ -81,6 +82,52 @@ bool save_settings(const DeviceSettings& settings) {
   nvs_close(handle);
   if(result != ESP_OK) {
     ESP_LOGE(kTag, "settings write failed: %s", esp_err_to_name(result));
+    return false;
+  }
+  return true;
+}
+
+}  // namespace moto::device
+
+namespace moto::device {
+
+StoredMount load_mount_basis() {
+  if (!ensure_nvs()) return StoredMount{};
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) {
+    return StoredMount{};
+  }
+  std::uint8_t blob[kEncodedMountSize]{};
+  std::size_t size = sizeof(blob);
+  const esp_err_t result = nvs_get_blob(handle, kMountKey, blob, &size);
+  nvs_close(handle);
+  if (result != ESP_OK) {
+    ESP_LOGI(kTag, "no stored mount basis (%s)", esp_err_to_name(result));
+    return StoredMount{};
+  }
+  const StoredMount mount = decode_mount(blob, size);
+  ESP_LOGI(kTag, "mount basis %s (trim %d cdeg)",
+           mount.valid ? "loaded" : "rejected",
+           static_cast<int>(mount.trim_cdeg));
+  return mount;
+}
+
+bool save_mount_basis(const StoredMount& mount) {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  esp_err_t result = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if (result != ESP_OK) {
+    ESP_LOGE(kTag, "nvs_open failed: %s", esp_err_to_name(result));
+    return false;
+  }
+  const auto blob = encode_mount(mount);
+  result = nvs_set_blob(handle, kMountKey, blob.data(), blob.size());
+  if (result == ESP_OK) {
+    result = nvs_commit(handle);
+  }
+  nvs_close(handle);
+  if (result != ESP_OK) {
+    ESP_LOGE(kTag, "mount basis write failed: %s", esp_err_to_name(result));
     return false;
   }
   return true;

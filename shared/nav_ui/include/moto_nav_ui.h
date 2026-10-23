@@ -119,6 +119,9 @@ typedef void (*moto_page_change_callback_t)(moto_ui_page_t page,
 typedef void (*moto_demo_change_callback_t)(uint8_t enabled,
                                              void *context);
 typedef void (*moto_home_shortcut_callback_t)(void *context);
+/* A long press on the Lean page. The device starts the v2 static calibration;
+   it is a callback because the sensor task owns the capture. */
+typedef void (*moto_lean_calibration_callback_t)(void *context);
 
 typedef struct {
     moto_ui_page_t page;
@@ -237,6 +240,8 @@ void moto_nav_ui_set_demo_change_callback(
  */
 void moto_nav_ui_set_home_callback(moto_home_shortcut_callback_t callback,
                                    void *context);
+void moto_nav_ui_set_lean_calibration_callback(
+    moto_lean_calibration_callback_t callback, void *context);
 /**
  * The phone refused the last home tap (usually: no home address is set).
  * Shows a one-line hint on the navigation page for a few seconds. The device

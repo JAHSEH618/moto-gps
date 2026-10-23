@@ -20,6 +20,9 @@ namespace moto::motion {
 struct MountCalibration {
   bool stage1 = false;
   bool stage2 = false;
+  // Residual zero trim about the forward axis, ±5°. Applied after the basis,
+  // so it moves Lean and nothing else.
+  float trim_deg = 0.0F;
 
   // Step 1 (DESIGN_V2 §3.3): the mean specific force of a stationary, upright
   // bike is the sensor-frame up axis. Samples are rejected while the bike is
@@ -29,15 +32,22 @@ struct MountCalibration {
                       float dt);
 
   // Step 2: a straight-line acceleration or braking event gives the forward
-  // axis once gravity is projected out. `accelerating` selects the sign.
+  // axis once gravity is projected out. Step 2 is only allowed to trim residual
+  // yaw: the result is clamped to ±10°, and two consecutive segments must
+  // agree before it is written. A bad braking-in-a-corner segment is rejected
+  // instead of silently poisoning the basis. `accelerating` selects the sign.
   void begin_forward();
   bool observe_forward(const Vec3f& accel_mps2, bool accelerating, float dt);
+
+  void set_trim_deg(float degrees);
 
   // Rebuild the basis from an already known pair (tests, NVS restore).
   void set_basis(const Vec3f& sensor_forward, const Vec3f& sensor_up,
                  bool calibrated = true);
 
   Vec3f to_body(const Vec3f& sensor) const;
+  Vec3f forward_axis() const { return forward_; }
+  Vec3f up_axis() const { return up_; }
   bool valid() const { return stage1; }
 
  private:
@@ -45,9 +55,15 @@ struct MountCalibration {
   Vec3f up_{0.0F, 0.0F, 1.0F};       // sensor frame, world up at rest
   Vec3f acc_sum_{};
   Vec3f fwd_sum_{};
+  Vec3f pending_forward_{};
+  bool has_pending_forward_ = false;
   int acc_count_ = 0;
   float fwd_weight_ = 0.0F;
   float acc_time_s_ = 0.0F;
+  // Learned stationary specific-force magnitude: consumer IMUs have tens of mg
+  // of zero-g offset, so "|a| == 1 g" is not a usable gate (v2 review §5).
+  float static_magnitude_ = 9.80665F;
+  float last_magnitude_ = 9.80665F;
 };
 
 // attitude_estimator.hpp output (x right, y forward, z up) to ISO body.
@@ -109,6 +125,11 @@ class LeanEstimator {
   void set_mount(const MountCalibration& mount);
   bool calibrated() const { return mount_.stage1; }
 
+  // v2 review §1: the IMU sits h metres above the roll axis, so a_y picks up
+  // h*lean_accel and a_z picks up h*lean_rate^2. Vehicle-profile parameter;
+  // zero until the real mounting height is measured.
+  void set_lever_arm_m(float meters) { lever_arm_m_ = meters; }
+
   // gyro in deg/s, accel in m/s^2, both in the sensor frame. dt in seconds.
   void step(const Vec3f& gyro_dps, const Vec3f& accel_mps2, float dt,
             const SpeedSample& speed);
@@ -124,8 +145,11 @@ class LeanEstimator {
  private:
   static constexpr float kDegToRad = 0.017453292519943295F;
   static constexpr float kRadToDeg = 57.29577951308232F;
-  // A stationary 2 s window opens bias learning; driving never does.
+  // A stationary 2 s window opens bias learning; driving never does. Without
+  // a speed source the window is longer because a smooth straight can pass the
+  // gyro/magnitude gate (v2 review §3).
   static constexpr float kStaticHoldS = 2.0F;
+  static constexpr float kStaticHoldNoSpeedS = 3.0F;
   // Correction time constants from DESIGN_V2 appendix A.
   static constexpr float kKinematicTauS = 1.5F;
   static constexpr float kStaticTauS = 0.5F;
@@ -141,7 +165,7 @@ class LeanEstimator {
   // Gate the kinematic correction on fast transitions and bumps so a pothole
   // cannot yank the horizon. The bump test compares against a running mean.
   float adapt_gain(float base, float lean_rate_dps,
-                   const Vec3f& accel) const;
+                   float lean_accel_dps2, const Vec3f& accel) const;
 
   MountCalibration mount_{};
   // World-up expressed in the body frame; the whole attitude state.
@@ -155,6 +179,14 @@ class LeanEstimator {
   float static_for_s_ = 0.0F;
   float straight_for_s_ = 0.0F;
   float az_ref_ = 9.80665F;
+  float lever_arm_m_ = 0.0F;
+  float lean_rate_prev_dps_ = 0.0F;
+  float roll_accel_ema_ = 0.0F;
+  // Exponential mean of |d|a||. Road excitation keeps this well above the
+  // standstill floor, which is what separates "parked" from "riding straight"
+  // when the phone's GPS has expired (v2 review §3).
+  float accel_delta_ema_ = 0.0F;
+  float last_accel_magnitude_ = 9.80665F;
   bool in_corner_ = false;
   LeanOutput out_{};
 };

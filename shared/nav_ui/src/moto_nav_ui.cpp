@@ -439,6 +439,8 @@ struct Ui {
     void *demo_callback_context = nullptr;
     moto_home_shortcut_callback_t home_callback = nullptr;
     void *home_callback_context = nullptr;
+    moto_lean_calibration_callback_t lean_calibration_callback = nullptr;
+    void *lean_calibration_context = nullptr;
     bool demo_active = false;
     bool reduce_motion = false;
     // True only while the full widget tree from moto_nav_ui_create() exists.
@@ -849,13 +851,24 @@ void draw_home_blip(lv_event_t *event) {
 void update_page_dots() {
     for(int i = 0; i < MOTO_UI_PAGE_COUNT; ++i) {
         const bool active = i == static_cast<int>(ui.page);
-        lv_obj_set_size(ui.page_dots[i], px(active ? 16 : 5), px(5));
+        const int width = px(active ? 16 : 5);
+        lv_obj_set_size(ui.page_dots[i], width, px(5));
         lv_obj_set_style_radius(ui.page_dots[i], px(3), 0);
         lv_obj_set_style_bg_color(
             ui.page_dots[i], active ? ui.palette.accent : ui.palette.map_ink, 0);
         lv_obj_set_style_bg_opa(ui.page_dots[i],
                                 active ? LV_OPA_COVER : LV_OPA_40, 0);
-        lv_obj_set_x(ui.page_dots[i], px(145 + i * 22 - (active ? 5 : 0)));
+        // The dots ride the casing, not a straight row: at y=+203 the outer
+        // ends of a row sit outside the glass (v2 review §4).
+        const double radius = 203.0;
+        const double dx = (i - (MOTO_UI_PAGE_COUNT - 1) / 2.0) * px(22);
+        const double dy = std::sqrt(radius * radius - dx * dx);
+        lv_obj_set_x(ui.page_dots[i],
+                     static_cast<int>(std::lround(
+                         MOTO_UI_CANVAS_WIDTH / 2.0 + dx - width / 2.0)));
+        lv_obj_set_y(ui.page_dots[i],
+                     static_cast<int>(std::lround(
+                         MOTO_UI_CANVAS_HEIGHT / 2.0 + dy - px(5) / 2.0)));
         // Every page is reachable at all times. The music page used to
         // disappear until the phone advertised media capabilities, which
         // meant the controls vanished exactly when a rider wanted them.
@@ -2258,7 +2271,6 @@ void create_page_dots() {
         ui.page_dots[i] = lv_obj_create(ui.screen);
         lv_obj_remove_style_all(ui.page_dots[i]);
         lv_obj_set_size(ui.page_dots[i], px(5), px(5));
-        lv_obj_set_y(ui.page_dots[i], px(337));
         lv_obj_set_style_bg_opa(ui.page_dots[i], LV_OPA_COVER, 0);
         lv_obj_set_style_radius(ui.page_dots[i], px(3), 0);
         lv_obj_clear_flag(ui.page_dots[i], LV_OBJ_FLAG_CLICKABLE);
@@ -2560,7 +2572,7 @@ void create_navigation_page() {
     ui.nav_home = lv_obj_create(page);
     lv_obj_remove_style_all(ui.nav_home);
     lv_obj_set_size(ui.nav_home, px(46), px(46));
-    lv_obj_set_pos(ui.nav_home, px(334), px(300));
+    lv_obj_set_pos(ui.nav_home, px(206), px(262));
     lv_obj_set_style_radius(ui.nav_home, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(ui.nav_home, kBlack, 0);
     lv_obj_set_style_bg_opa(ui.nav_home, LV_OPA_70, 0);
@@ -2812,6 +2824,12 @@ void create_performance_page() {
     ui.perf_timer_task = lv_timer_create(perf_tick, 50, nullptr);
 }
 
+void lean_calibration_event(lv_event_t *) {
+    if(ui.lean_calibration_callback != nullptr) {
+        ui.lean_calibration_callback(ui.lean_calibration_context);
+    }
+}
+
 void draw_lean_marks(lv_event_t *event) {
     lv_layer_t *layer = lv_event_get_layer(event);
     const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
@@ -2894,6 +2912,19 @@ void draw_lean_scene(lv_event_t *event) {
 void create_lean_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_LEAN];
     make_page_surface(page, MOTO_UI_PAGE_LEAN);
+
+    // v2 calibration entry (DESIGN_V2 §3.3 step 1): a long press anywhere on
+    // the Lean page. It is created under the artwork and stays transparent;
+    // the other layers are not clickable, so hit testing still finds this one.
+    // The sensor rejects the request unless the bike is stationary.
+    lv_obj_t *calibration = lv_obj_create(page);
+    lv_obj_remove_style_all(calibration);
+    lv_obj_set_size(calibration, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_style_bg_opa(calibration, LV_OPA_TRANSP, 0);
+    lv_obj_set_name_static(calibration, "moto-lean-calibration");
+    lv_obj_add_flag(calibration, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(calibration, lean_calibration_event,
+                        LV_EVENT_LONG_PRESSED, nullptr);
 
     ui.lean_marks = lv_obj_create(page);
     lv_obj_remove_style_all(ui.lean_marks);
@@ -3437,4 +3468,10 @@ extern "C" void moto_nav_ui_set_home_callback(
     moto_home_shortcut_callback_t callback, void *context) {
     ui.home_callback = callback;
     ui.home_callback_context = context;
+}
+
+extern "C" void moto_nav_ui_set_lean_calibration_callback(
+    moto_lean_calibration_callback_t callback, void *context) {
+    ui.lean_calibration_callback = callback;
+    ui.lean_calibration_context = context;
 }
