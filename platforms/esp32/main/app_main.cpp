@@ -421,6 +421,17 @@ extern "C" void app_main(void) {
     g_calibration_unverified = false;
   }
   moto_nav_ui_set_lean_flags(g_calibration_unverified ? 1 : 0, 0, 0);
+  moto::device::TlogSessionInfo session_info;
+  const bool fifo_wanted = moto::device::load_imu_fifo_enabled();
+  session_info.mode = fifo_wanted ? 1 : 0;
+  session_info.odr_hz = fifo_wanted ? 448 : 125;
+  session_info.sample_hz = fifo_wanted ? 112 : 125;
+  session_info.mount = mount_record_from(motion_sensor.mount());
+  if (const esp_app_desc_t* desc = esp_app_get_description()) {
+    std::memcpy(&session_info.firmware_hash, desc->app_elf_sha256, 4);
+  }
+  tlog.begin(session_info);
+  motion_sensor.set_mode_callback(lean_mode_changed, nullptr);
   motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
   moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,
                                             &motion_sensor);
@@ -429,6 +440,15 @@ extern "C" void app_main(void) {
   if (motion_result != ESP_OK) {
     ESP_LOGW(kTag, "QMI8658 heading assist could not start: %s",
              esp_err_to_name(motion_result));
+  } else {
+    if (xTaskCreate(serial_command_task, "moto_cmd", 4'096, &motion_sensor, 1,
+                    nullptr) != pdPASS) {
+      ESP_LOGW(kTag, "serial command task could not start");
+    }
+    if (xTaskCreate(ui_flags_task, "moto_ui_flags", 3'072, nullptr, 1,
+                    nullptr) != pdPASS) {
+      ESP_LOGW(kTag, "UI flag task could not start");
+    }
   }
 
   // Demo generation fills the retained snapshot in place, but geometry and

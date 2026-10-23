@@ -97,6 +97,9 @@ bool Qmi8658Fifo::begin(qmi8658_dev_t* device) {
     fall_back("CTRL1 write failed");
     return false;
   }
+  std::uint8_t ctrl1 = 0;
+  read_register(kCtrl1, &ctrl1, 1);
+  ESP_LOGI(kTag, "CTRL1=0x%02x (expect 0x70)", ctrl1);
   // CTRL2/3: +-8 g, +-512 dps, 448.4 Hz in 6DOF (ODR code 0100).
   if (!write_register(kCtrl2, 0x24) || !write_register(kCtrl3, 0x54)) {
     fall_back("ODR/range write failed");
@@ -148,15 +151,14 @@ bool Qmi8658Fifo::validate_endianness(const std::uint8_t* raw,
   // A stationary board reads ~1 g on its gravity axis whatever the mounting.
   // Try both byte orders and accept the one whose dominant axis is near 4096.
   const auto plausible = [&](bool big_endian) {
+    if (frames == 0) return false;
+    // Newest frame: the oldest could be pre-reset garbage.
+    const std::uint8_t* p = raw + (frames - 1) * 12;
     float best = 0.0F;
-    for (std::size_t frame = 0; frame < frames; ++frame) {
-      const std::uint8_t* p = raw + frame * 12;
-      for (int axis = 0; axis < 3; ++axis) {
-        const float lsb =
-            std::fabs(static_cast<float>(to_signed(
-                decode16(p + axis * 2, big_endian))));
-        best = std::max(best, lsb);
-      }
+    for (int axis = 0; axis < 3; ++axis) {
+      const float lsb = std::fabs(
+          static_cast<float>(to_signed(decode16(p + axis * 2, big_endian))));
+      best = std::max(best, lsb);
     }
     return best > 0.7F * kAccelLsbPerG && best < 1.3F * kAccelLsbPerG;
   };
@@ -173,6 +175,9 @@ bool Qmi8658Fifo::validate_endianness(const std::uint8_t* raw,
 }
 
 std::size_t Qmi8658Fifo::read_batch(FifoFrame* frames, std::size_t capacity) {
+  // FIFO_SMPL_CNT (0x15) and FIFO_STATUS (0x16) are adjacent and the address
+  // auto-increments, so one transaction replaces two. Every saved
+  // transaction is ~0.1 ms inside a 2.23 ms budget.
   std::uint8_t count = 0;
   std::uint8_t status = 0;
   if (!read_register(kFifoCount, &count, 1) ||
@@ -184,10 +189,6 @@ std::size_t Qmi8658Fifo::read_batch(FifoFrame* frames, std::size_t capacity) {
       (static_cast<std::uint32_t>(status & 0x03U) << 8U) | count;
   const std::uint32_t bytes = words * 2U;
   if (bytes == 0) return 0;
-  if (bytes > capacity * 12U) {
-    fall_back("FIFO batch larger than the decode buffer");
-    return 0;
-  }
 
   // Read the sample counter before the batch to reconstruct produced samples.
   std::uint8_t ts[3] = {};
@@ -246,10 +247,15 @@ std::size_t Qmi8658Fifo::read_batch(FifoFrame* frames, std::size_t capacity) {
   const std::size_t frame_count = std::min<std::size_t>(bytes, sizeof(raw)) / 12U;
   if (!endian_checked_) {
     if (!validate_endianness(raw, frame_count)) {
-      fall_back("FIFO byte order validation failed");
+      // The first batch after a reset can still be warm-up data; retry a few
+      // times before disabling the chain.
+      if (++endian_failures_ >= 3) {
+        fall_back("FIFO byte order validation failed");
+      }
       return 0;
     }
     endian_checked_ = true;
+    endian_failures_ = 0;
   }
 
   const std::size_t n = std::min<std::size_t>(frame_count, capacity);
@@ -267,28 +273,41 @@ std::size_t Qmi8658Fifo::read_batch(FifoFrame* frames, std::size_t capacity) {
   }
   ++stats_.batches;
   stats_.received += static_cast<std::uint32_t>(n);
-  if (have_timestamp_) {
-    const std::uint32_t produced = (timestamp - last_timestamp_) & 0xFFFFFFU;
-    stats_.produced += produced;
-    if (produced > n) {
-      stats_.lost += produced - static_cast<std::uint32_t>(n);
-      ++consecutive_loss_;
-    } else {
-      consecutive_loss_ = 0;
-    }
+  // TIMESTAMP has been observed reading 0 on this unit, so produced samples
+  // fall back to elapsed time at the configured ODR. That still catches gaps
+  // (a flash erase inside the loop, a stalled task); if the counter starts
+  // moving, its exact delta wins.
+  std::uint32_t produced = 0;
+  if (have_timestamp_ && timestamp != last_timestamp_) {
+    timestamp_live_ = true;
+    produced = (timestamp - last_timestamp_) & 0xFFFFFFU;
+  } else if (last_batch_us_ != 0) {
+    const std::uint64_t elapsed_us =
+        static_cast<std::uint64_t>(esp_timer_get_time()) - last_batch_us_;
+    produced = static_cast<std::uint32_t>(
+        (elapsed_us * 4484ULL + 5'000ULL) / 10'000'000ULL);
   }
+  last_batch_us_ = static_cast<std::uint64_t>(esp_timer_get_time());
   last_timestamp_ = timestamp;
   have_timestamp_ = true;
+  stats_.produced += produced;
+  if (produced > n) {
+    stats_.lost += produced - static_cast<std::uint32_t>(n);
+    ++consecutive_loss_;
+  } else {
+    consecutive_loss_ = 0;
+  }
 
   if (window_us > static_cast<std::int64_t>(kWindowLimitUs)) {
     ++slow_windows_;
-    if (slow_windows_ >= 3 && !watermark_reduced_) {
-      set_watermark(3);
+    if (slow_windows_ >= 3 && watermark_ > 2) {
+      set_watermark(static_cast<std::uint8_t>(watermark_ - 1));
       watermark_reduced_ = true;
       slow_windows_ = 0;
-      ESP_LOGW(kTag, "read window > 2.0 ms; watermark reduced to 3");
-    } else if (slow_windows_ >= 3 && watermark_reduced_) {
-      fall_back("read window stayed above 2.0 ms after lowering watermark");
+      ESP_LOGW(kTag, "read window > 2.0 ms; watermark reduced to %u",
+               static_cast<unsigned>(watermark_));
+    } else if (slow_windows_ >= 3) {
+      fall_back("read window stayed above 2.0 ms at the minimum watermark");
       return n;
     }
   } else {
@@ -304,6 +323,7 @@ std::size_t Qmi8658Fifo::poll(FifoFrame* frames, std::size_t capacity) {
   if (!active_ || frames == nullptr || capacity == 0) return 0;
   std::uint8_t status = 0;
   if (!read_register(kFifoStatus, &status, 1)) return 0;
+
   const bool ready = (status & 0x40U) != 0U || (status & 0x80U) != 0U ||
                      (status & 0x20U) != 0U;
   if (!ready) return 0;

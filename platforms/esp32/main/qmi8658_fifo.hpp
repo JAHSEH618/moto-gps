@@ -57,15 +57,19 @@ class Qmi8658Fifo {
   qmi8658_dev_t* device_ = nullptr;
   FifoStats stats_{};
   const char* fallback_reason_ = nullptr;
-  std::uint8_t watermark_ = 4;
+  std::uint8_t watermark_ = 2;
   bool big_endian_ = true;
   bool active_ = false;
   bool endian_checked_ = false;
   int consecutive_loss_ = 0;
+  int endian_failures_ = 0;
   int slow_windows_ = 0;
   bool watermark_reduced_ = false;
   std::uint32_t last_timestamp_ = 0;
   bool have_timestamp_ = false;
+  std::uint32_t poll_count_ = 0;
+  std::uint64_t last_batch_us_ = 0;
+  bool timestamp_live_ = false;
 };
 
 }  // namespace moto::motion
