@@ -63,6 +63,38 @@ class MotionHeadingFusion {
     }
   }
 
+  // The phone's compass (magnetometer) heading, which it sends while the
+  // bike is too slow for a GNSS course (NavigationHeadingCompass). Without
+  // it a parked handlebar keeps whatever course it last had: the rider saw
+  // 60 degrees on the bars while the phone said due east. The compass is
+  // absolute at any speed, so it replaces a gyro or stationary placeholder at
+  // once and pulls an existing heading towards itself quickly; the next
+  // moving course still replaces it in one update, because a course does
+  // not depend on how the phone sits in its mount.
+  void anchor_compass(float compass_deg, float speed_mps) noexcept {
+    if (!std::isfinite(compass_deg)) return;
+    if (std::isfinite(speed_mps)) {
+      if (speed_mps >= kCourseAnchorSpeedMps) {
+        stationary_ = false;
+      } else if (speed_mps < kStationarySpeedMps) {
+        stationary_ = true;
+      }
+    }
+    const float compass = normalize(compass_deg);
+    has_moving_course_ = false;
+    if (!has_phone_reference_) {
+      heading_deg_ = compass;
+      initialized_ = true;
+      has_phone_reference_ = true;
+      return;
+    }
+    // The phone filters its own compass and reports about once a second;
+    // most of the error per report keeps a parked bike's pivot readable
+    // without a visible snap.
+    const float error = shortest_delta(compass, heading_deg_);
+    heading_deg_ = normalize(heading_deg_ + error * kCompassCorrection);
+  }
+
   // yaw_rate_dps is positive for increasing compass heading (clockwise).
   // Returns true when a new display heading is available.
   bool integrate(float yaw_rate_dps, std::uint64_t sample_ms) noexcept {
@@ -117,6 +149,7 @@ class MotionHeadingFusion {
   static constexpr float kCourseAnchorSpeedMps = 1.5F;
   static constexpr float kStationarySpeedMps = 0.6F;
   static constexpr float kDeadbandDps = 0.65F;
+  static constexpr float kCompassCorrection = 0.7F;
   static constexpr std::uint64_t kMaximumIntegrationGapMs = 160;
 
   static float normalize(float value) noexcept {

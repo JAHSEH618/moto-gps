@@ -285,6 +285,9 @@ enum Capability : std::uint32_t {
   // echoes them back. Without this bit the phone keeps its settings to itself
   // rather than sending a type the firmware would reject.
   CapabilityDeviceSettings = 1U << 10U,
+  // The device understands NavigationHeadingCompass. Without this bit the
+  // phone never sets that flag, which an older firmware would reject.
+  CapabilityCompassHeading = 1U << 11U,
 };
 
 struct ConnectionStatus {
@@ -381,13 +384,18 @@ enum NavigationFlag : std::uint16_t {
   NavigationRouteRequestInFlight = 1U << 5U,
   NavigationTrafficRequestInFlight = 1U << 6U,
   NavigationHasRouteView = 1U << 7U,
+  // heading_cdeg is the phone's compass (magnetometer) heading, not a GNSS
+  // course. A course exists only while moving; parked, the phone sends its
+  // compass instead, and only to a peer that advertises
+  // CapabilityCompassHeading.
+  NavigationHeadingCompass = 1U << 8U,
 };
 
 constexpr std::uint16_t kKnownNavigationFlags =
     NavigationHasDestination | NavigationHasFix | NavigationGnssStale |
     NavigationOffRoute | NavigationHasNextManeuver |
     NavigationRouteRequestInFlight | NavigationTrafficRequestInFlight |
-    NavigationHasRouteView;
+    NavigationHasRouteView | NavigationHeadingCompass;
 
 struct NavigationSnapshot {
   NavigationState state = NavigationState::Idle;

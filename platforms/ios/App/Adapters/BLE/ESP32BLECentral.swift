@@ -185,6 +185,9 @@ final class ESP32BLECentral: NSObject {
     var onSnapshotChange: ((BLEDeviceSnapshot) -> Void)?
     var onDeviceCommand: ((MotoBLEDeviceCommand) -> BLECommandDisposition)?
     var onAttitudeSample: ((MotoBLEAttitudeSample) -> Void)?
+    /// The phone's current compass heading, read for every navigation
+    /// snapshot sent while the bike is too slow for a GNSS course.
+    var compassHeadingDeg: (() -> Double?)?
     private(set) var snapshot = BLEDeviceSnapshot() {
         didSet { onSnapshotChange?(snapshot) }
     }
@@ -207,6 +210,11 @@ final class ESP32BLECentral: NSObject {
     /// one run-loop turn.
     private static let writeWithoutResponsePacingMs: UInt64 = 15
     private static let mapSceneCapability: UInt32 = 1 << 7
+    /// The device understands NavigationHeadingCompass (protocol bit 11).
+    private static let compassHeadingCapability: UInt32 = 1 << 11
+    /// Below this the handlebar does not trust a GNSS course (it matches
+    /// MotionHeadingFusion's course-anchor speed), so the compass goes instead.
+    private static let courseMinimumSpeedMPS = 1.5
 
     private struct RouteGeometrySignature: Equatable {
         let routeID: String
@@ -1228,10 +1236,19 @@ final class ESP32BLECentral: NSObject {
         input.totalDistanceM = clampedUInt32(state.totalDistanceM)
         input.speedDeciKPH = UInt16(clamping: Int((state.speedMPS * 36).rounded()))
         input.speedLimitKPH = state.speedLimitKPH
-        if state.headingDeg.isFinite {
-            let heading = state.headingDeg
+        // A course is a heading only while moving; parked, the phone's last
+        // course is stale, so a device that understands it gets the compass.
+        var heading = state.headingDeg
+        if state.speedMPS < Self.courseMinimumSpeedMPS || !heading.isFinite,
+           peerCapabilities & Self.compassHeadingCapability != 0,
+           let compass = compassHeadingDeg?() {
+            heading = compass
+            input.headingIsCompass = true
+        }
+        if heading.isFinite {
             let normalized = heading.truncatingRemainder(dividingBy: 360) + (heading < 0 ? 360 : 0)
-            input.headingCentiDegrees = UInt16(clamping: Int((normalized * 100).rounded()))
+            // 360.0 after rounding is north, and the wire accepts 0..35999.
+            input.headingCentiDegrees = UInt16(clamping: Int((normalized * 100).rounded()) % 36_000)
         }
         input.accuracyDecimeters = UInt16(clamping: Int((state.horizontalAccuracyM * 10).rounded()))
         input.crossTrackDecimeters = UInt16(clamping: Int((state.crossTrackDistanceM * 10).rounded()))

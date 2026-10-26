@@ -186,7 +186,9 @@ u16 heartbeat_interval_ms  >=250
 
 能力位：bit0 navigation、bit1 route geometry、bit2 traffic、bit3 media state、
 bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene、
-bit8 attitude telemetry、bit9 home location、bit10 device settings。
+bit8 attitude telemetry、bit9 home location、bit10 device settings、
+bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标志；手机只对
+声明了它的对端置该位，旧固件会拒绝未知标志）。
 
 `0x16` 与 `0x17` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
 根本不认识这两种类型，而不是收到后忽略。
@@ -258,6 +260,7 @@ u8[] instruction          UTF-8，无 NUL
 | 5 | RouteRequestInFlight | `route_request_in_flight` |
 | 6 | TrafficRequestInFlight | `traffic_request_in_flight` |
 | 7 | HasRouteView | 可使用匹配的已提交 RouteGeometry |
+| 8 | HeadingCompass | `heading_cdeg` 是手机罗盘（磁力计）朝向而非 GNSS 航向；仅发给声明 bit11 的对端 |
 
 `route_token` 是完整 UTF-8 `RouteBundle::route_id` 的 FNV-1a 32-bit：offset basis
 `2166136261`，逐字节 xor 后乘 `16777619`，自然按 uint32 溢出；若结果为 0 则改为

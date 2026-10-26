@@ -214,7 +214,9 @@ u16 heartbeat_interval_ms  >=250
 
 Capability bits: bit0 navigation, bit1 route geometry, bit2 traffic, bit3 media state, bit4
 touch commands, bit5 music commands, bit6 command ACK, bit7 map scene,
-bit8 attitude telemetry, bit9 home location, bit10 device settings.
+bit8 attitude telemetry, bit9 home location, bit10 device settings, bit11 compass heading (the
+device understands NavigationSnapshot's HeadingCompass flag; the phone sets that flag only for
+a peer that advertises this bit, because an older firmware rejects unknown flags).
 
 `0x16` and `0x17` are optional messages: the phone only sends them to a peer that advertises
 the matching capability. An older firmware does not know the types at all, rather than
@@ -288,6 +290,7 @@ The fixed part together with the two string length bytes is 53 bytes. flags:
 | 5 | RouteRequestInFlight | `route_request_in_flight` |
 | 6 | TrafficRequestInFlight | `traffic_request_in_flight` |
 | 7 | HasRouteView | a matching committed RouteGeometry may be used |
+| 8 | HeadingCompass | `heading_cdeg` is the phone's compass (magnetometer) heading, not a GNSS course; sent only to a peer advertising bit11 |
 
 `route_token` is the FNV-1a 32-bit hash of the complete UTF-8 `RouteBundle::route_id`: offset
 basis `2166136261`, xor per byte and then multiply by `16777619`, overflowing naturally as

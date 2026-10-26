@@ -819,6 +819,36 @@ uncommitted HEAPPROBE lines were built in and not touched. **Not verified:** the
 cover and the new Lean page have only been seen as PPM dumps, not on the glass,
 and the link states only through the dump harness (no phone was connected).
 
+## 2026-10-26T16:39:42+09:00 — Compass: the phone's compass when parked
+
+**Cause.** The rider saw due east on the phone (the iPhone compass) and 60°
+NE on the handlebar. The board has no magnetometer; its absolute heading is
+the phone's GNSS course, trusted only above 1.5 m/s, with the gyro between
+fixes. Parked there is no course, and the phone's nav core keeps sending the
+last one (`nav_core.cpp` keeps `view_.heading_deg` when a fix has none), so
+the handlebar held a stale course. The page itself draws the heading
+correctly, and the IMU axes and mount basis are right-handed.
+
+**Fix, both sides.** Protocol: `NavigationHeadingCompass` (flag bit 8) says
+`heading_cdeg` is the phone's compass, and `CapabilityCompassHeading` (bit 11)
+gates it, because older firmware rejects unknown flags; both spec tables
+updated. Phone: `CoreLocationNavigationSource` starts heading updates with
+location (portrait orientation, 2° filter, calibrated readings under 3 s
+old), and `ESP32BLECentral` sends the compass, flagged, whenever the bike is
+under 1.5 m/s or has no course and the device advertises bit 11. It also
+wraps a heading that rounds to 360.00° to 0 instead of sending 36000, which
+the encoder rejects. Firmware: `MotionHeadingFusion::anchor_compass` takes the
+compass as the reference at once, then pulls the heading 70 % of the way per
+report; the next moving course still replaces it in one update.
+
+**Verification:** native 15/15 with new protocol, fusion and bridge tests (the
+bridge test reproduces the report: course 60°, parked, compass 90° → 90°, and
+fails with the new path disabled). The firmware is built and flashed and boots
+normally. The iOS app builds for the simulator, and an unsigned sideload IPA
+is at `build/sideload/MOTO-GPS-0.3.1-6-unsigned.ipa`. **Not verified:** nothing has run on a real iPhone, including what
+`CLHeading` reports for a phone standing upright in a handlebar mount, as
+opposed to lying flat.
+
 ## 2026-10-26T18:10:00+09:00 — Lean: the screen's top is QMI +x, and CAL can capture
 
 **Symptom.** Flat on the desk, tilting forward/back moved the Lean number

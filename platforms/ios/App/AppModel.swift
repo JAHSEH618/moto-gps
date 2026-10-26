@@ -78,6 +78,9 @@ final class AppModel: ObservableObject {
         bluetooth.onAttitudeSample = { [weak self] sample in
             self?.attitude.receive(AttitudeSample(sample), at: Date())
         }
+        bluetooth.compassHeadingDeg = { [weak liveLocation] in
+            liveLocation?.compassHeadingDeg
+        }
         bluetooth.onDeviceCommand = { [weak self] command in
             guard let self else { return .failed }
             switch command.kind {

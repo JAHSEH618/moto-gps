@@ -385,6 +385,26 @@ void test_all_message_round_trips() {
   }
 }
 
+// Parked, the phone sends its compass heading and says so; the flag must
+// survive the wire, and the bit above it must still be refused.
+void test_compass_heading_flag() {
+  NavigationSnapshot parked = navigation_fixture();
+  parked.flags = NavigationHasFix | NavigationHeadingCompass;
+  parked.speed_deci_kph = 0;
+  parked.heading_cdeg = 9'000;
+  const BytesResult encoded = encode_message(Message{parked});
+  CHECK(encoded.ok());
+  if (encoded.ok()) {
+    const MessageResult decoded = decode_message(
+        MessageType::NavigationSnapshot, ByteView(encoded.value));
+    CHECK(decoded.ok());
+    if (decoded.ok()) CHECK(decoded.value == Message{parked});
+  }
+  NavigationSnapshot unknown = parked;
+  unknown.flags = static_cast<std::uint16_t>(NavigationHeadingCompass << 1U);
+  CHECK(!encode_message(Message{unknown}).ok());
+}
+
 void test_home_shortcut_command() {
   // The wire value is part of the contract with the firmware; a renumber
   // silently breaks older devices.
@@ -797,6 +817,7 @@ int main(int argc, char** argv) {
   test_uuid_contract();
   test_crc_and_sequence_primitives();
   test_all_message_round_trips();
+  test_compass_heading_flag();
   test_home_shortcut_command();
   test_golden_vectors();
   test_attitude_sample_validation();

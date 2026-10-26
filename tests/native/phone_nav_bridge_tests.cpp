@@ -857,6 +857,40 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
 }
 
 
+// The rider's report: phone due east, handlebar 60 degrees. The last moving
+// course was 60; parked, the phone now sends its compass, flagged, and the
+// compass page must follow it to east.
+void test_parked_compass_heading_reaches_the_compass_page() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  moto::ble::NavigationSnapshot navigation;
+  navigation.state = moto::ble::NavigationState::Navigating;
+  navigation.display_page = moto::ble::DisplayPage::Compass;
+  navigation.flags = moto::ble::NavigationHasFix;
+  navigation.heading_cdeg = 6'000;
+  navigation.speed_deci_kph = 300;
+  CHECK(bridge.on_message(make_message(navigation, 1)) == moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_heading_deg() == 60);
+
+  // Parked without the compass: the stale course is ignored, as before.
+  navigation.speed_deci_kph = 0;
+  CHECK(bridge.on_message(make_message(navigation, 2)) == moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_heading_deg() == 60);
+
+  navigation.flags |= moto::ble::NavigationHeadingCompass;
+  navigation.heading_cdeg = 9'000;
+  for (std::uint16_t sequence = 3; sequence < 8; ++sequence) {
+    CHECK(bridge.on_message(make_message(navigation, sequence)) ==
+          moto::ble::AckStatus::Ok);
+    pump(bridge);
+  }
+  const auto heading = moto::test::phone_nav_bridge_last_heading_deg();
+  CHECK(heading >= 89 && heading <= 90);
+}
+
 struct AttitudeSenderContext {
   std::vector<moto::ble::AttitudeSample> samples;
   std::vector<std::uint8_t> flags;
@@ -1130,6 +1164,7 @@ int main() {
   test_ios_demo_token_attaches_context_and_live_route_clears_it();
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();
   test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored();
+  test_parked_compass_heading_reaches_the_compass_page();
   test_imu_attitude_reaches_the_lean_page();
   test_attitude_uplink_is_gated_and_paced();
   test_home_location_projects_onto_the_radar();

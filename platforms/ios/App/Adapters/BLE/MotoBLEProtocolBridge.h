@@ -17,6 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) BOOL routeRequestInFlight;
 @property(nonatomic) BOOL trafficRequestInFlight;
 @property(nonatomic) BOOL hasRouteView;
+/// headingCentiDegrees is the phone's compass, not a GNSS course. Set only
+/// for a peer that advertises CapabilityCompassHeading.
+@property(nonatomic) BOOL headingIsCompass;
 @property(nonatomic) uint32_t routeToken;
 @property(nonatomic) uint32_t routeGeneration;
 @property(nonatomic) uint32_t maneuverID;

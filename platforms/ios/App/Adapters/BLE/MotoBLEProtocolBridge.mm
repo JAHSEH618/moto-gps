@@ -110,6 +110,9 @@ moto::ble::NavigationSnapshot SnapshotFromInput(
     snapshot.flags |= moto::ble::NavigationTrafficRequestInFlight;
   }
   if (input.hasRouteView) snapshot.flags |= moto::ble::NavigationHasRouteView;
+  if (input.headingIsCompass) {
+    snapshot.flags |= moto::ble::NavigationHeadingCompass;
+  }
   if (input.maneuverName.length > 0 &&
       ![input.maneuverName isEqualToString:@"unknown"]) {
     snapshot.flags |= moto::ble::NavigationHasNextManeuver;

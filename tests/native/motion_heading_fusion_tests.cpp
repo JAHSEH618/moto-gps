@@ -134,6 +134,42 @@ void test_stationary_freeze_holds_heading_until_riding_resumes() {
   CHECK(fusion.heading_deg() > 5.0F);
 }
 
+// The rider's report: the phone said due east, the handlebar said 60 degrees
+// north-east. Parked, the only heading the phone had was the last GNSS
+// course, which the fusion rightly ignores at standstill, so the handlebar
+// kept a stale reference. The phone's compass is the parked reference.
+void test_parked_compass_replaces_a_stale_course() {
+  MotionHeadingFusion fusion;
+  fusion.anchor(60.0F, 8.0F, true);   // last course while moving
+  fusion.anchor(60.0F, 0.0F, true);   // parked: the course is now stale
+  for (int i = 0; i < 4; ++i) fusion.anchor_compass(90.0F, 0.0F);
+  CHECK(std::abs(fusion.heading_deg() - 90.0F) < 2.0F);
+}
+
+void test_first_compass_reading_sets_the_reference() {
+  MotionHeadingFusion fusion;
+  feed_rate(fusion, 90.0F, 8, 248);  // gyro-only local zero, not absolute
+  fusion.anchor_compass(271.0F, 0.0F);
+  CHECK(std::abs(fusion.heading_deg() - 271.0F) < 0.01F);
+}
+
+void test_compass_turns_the_short_way_through_north() {
+  MotionHeadingFusion fusion;
+  fusion.anchor_compass(350.0F, 0.0F);
+  fusion.anchor_compass(10.0F, 0.0F);
+  const float heading = fusion.heading_deg();
+  CHECK(heading > 350.0F || heading < 10.0F);
+}
+
+void test_moving_course_takes_over_from_the_compass() {
+  MotionHeadingFusion fusion;
+  fusion.anchor_compass(90.0F, 0.0F);
+  // Pulling away: the course replaces the parked compass in one update, as
+  // it replaces any stationary placeholder.
+  fusion.anchor(200.0F, 8.0F, true);
+  CHECK(std::abs(fusion.heading_deg() - 200.0F) < 0.01F);
+}
+
 }  // namespace
 
 int main() {
@@ -146,6 +182,10 @@ int main() {
   test_large_sensor_gap_is_not_integrated();
   test_stale_timestamp_does_not_rewind_integration_clock();
   test_stationary_freeze_holds_heading_until_riding_resumes();
+  test_parked_compass_replaces_a_stale_course();
+  test_first_compass_reading_sets_the_reference();
+  test_compass_turns_the_short_way_through_north();
+  test_moving_course_takes_over_from_the_compass();
 
   if (failures != 0) {
     std::cerr << failures << " motion heading checks failed\n";

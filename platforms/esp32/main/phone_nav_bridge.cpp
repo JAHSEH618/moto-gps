@@ -746,9 +746,15 @@ void PhoneNavBridge::consume_navigation(
         static_cast<float>(input.heading_cdeg) / 100.0F;
     const bool has_usable_fix = has_flag(
         input.flags, moto::ble::NavigationHasFix);
-    heading_fusion_.anchor(phone_heading_deg, phone_speed_mps,
-                           has_usable_fix && !has_flag(
-                               input.flags, moto::ble::NavigationGnssStale));
+    // Parked, the phone sends its compass instead of a stale course; only a
+    // phone that saw CapabilityCompassHeading in our status sets the flag.
+    if (has_flag(input.flags, moto::ble::NavigationHeadingCompass)) {
+      heading_fusion_.anchor_compass(phone_heading_deg, phone_speed_mps);
+    } else {
+      heading_fusion_.anchor(phone_heading_deg, phone_speed_mps,
+                             has_usable_fix && !has_flag(
+                                 input.flags, moto::ble::NavigationGnssStale));
+    }
     speed_listener = speed_listener_;
     speed_context = speed_listener_context_;
     speed_mps = phone_speed_mps;
