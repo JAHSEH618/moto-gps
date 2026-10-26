@@ -361,6 +361,10 @@ void test_a_building_footprint_interior_is_filled() {
   // The old fan-spoke seams must be covered as well, not just the centre.
   CHECK(pixel_at(125, 125) == kNightBlock);
   CHECK(pixel_at(175, 175) == kNightBlock);
+  // The adjacent-row spans are merged into one rectangle; the first and last
+  // rows must still be painted, not just the row that opened the run.
+  CHECK(pixel_at(150, 101) == kNightBlock);
+  CHECK(pixel_at(150, 199) == kNightBlock);
   // The rest of the map must remain the page background.
   CHECK(pixel_at(300, 150) == kNightGround);
 }

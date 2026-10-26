@@ -1007,3 +1007,10 @@ register reads have never seen a fitted cell.
 - The RTC counter and `RTC_DATA_ATTR` survive deep sleep but not an AXP2101 full power cut; the board has no PCF85063 (0x51 absent). A cold boot therefore starts without a last-lit record instead of guessing. This limit is documented in BENCH_TEST_PLAN §5.
 - `tlog status` prints ready/full/dirty/records/blocks, the current unlit duration and whether the 6 h rule would fire.
 - Rebuilt: `moto_gps_esp32.bin` 0x5084a0, 16% of the 6 MiB slot free; RTC data section 0x10 bytes at 0x50000000.
+
+## 2026-10-27T01:00:00+09:00 — Building fills: adjacent scanlines are one rectangle
+
+- On the board, the map page with building fills was rendering at 102–179 ms per frame. The scanline fill submitted one `lv_draw_rect` per row (16–24 footprints × tens of rows). Identical adjacent spans are now merged into one rectangle; concave rows still fall back to per-row spans.
+- Measured after flashing: render avg 12–13 ms (max 19–20 ms) on the stationary 24-road scene, internal heap 39–40 KiB free. The 2 fps figure is the idle map update rate, not the refresh ceiling.
+- `test_a_building_footprint_interior_is_filled` now samples the first and last rows of a merged run.
+- The 6-hour retention flag now distinguishes "lit" from "unlit": `RTC_DATA_ATTR g_screen_lit` is set at reveal and in the 60 s PWR refresh, cleared just before deep sleep. A software reset while the panel is on no longer looks like six hours of darkness, and `tlog status` reports `unlit=0` while lit.

@@ -1525,6 +1525,26 @@ void draw_building_fills(lv_event_t *event) {
         const int32_t last_row = std::min(
             std::min<int32_t>(local_height, clip.y2 - area.y1),
             static_cast<int32_t>(std::floor(maximum_y)));
+        // Most OSM footprints are rectangles: the scanline span repeats for
+        // every row. Merge identical spans into one rectangle instead of
+        // submitting one draw task per row. The old row-per-rect path was the
+        // dominant cost of a moving map frame once building fills were on.
+        bool run_active = false;
+        int32_t run_x1 = 0;
+        int32_t run_x2 = 0;
+        int32_t run_y1 = 0;
+        int32_t run_y2 = 0;
+        const auto flush_run = [&]() {
+            if(!run_active) return;
+            lv_area_t run_area = {
+                area.x1 + run_x1,
+                area.y1 + run_y1,
+                area.x1 + run_x2,
+                area.y1 + run_y2,
+            };
+            lv_draw_rect(layer, &fill, &run_area);
+            run_active = false;
+        };
         for(int32_t row = first_row; row <= last_row; ++row) {
             const float scan_y = static_cast<float>(row) + 0.5F;
             float crossings[MOTO_UI_BUILDING_POINT_CAPACITY];
@@ -1544,6 +1564,29 @@ void draw_building_fills(lv_event_t *event) {
                          static_cast<float>(points[i].x));
             }
             std::sort(crossings, crossings + crossing_count);
+            if(crossing_count == 2) {
+                const int32_t first_column = std::max(
+                    clip_left, static_cast<int32_t>(
+                                   std::ceil(crossings[0] - 0.5F)));
+                const int32_t last_column = std::min(
+                    clip_right, static_cast<int32_t>(
+                                    std::floor(crossings[1] - 0.5F)));
+                if(first_column <= last_column) {
+                    if(run_active && run_x1 == first_column &&
+                       run_x2 == last_column && run_y2 + 1 == row) {
+                        run_y2 = row;
+                    } else {
+                        flush_run();
+                        run_active = true;
+                        run_x1 = first_column;
+                        run_x2 = last_column;
+                        run_y1 = row;
+                        run_y2 = row;
+                    }
+                    continue;
+                }
+            }
+            flush_run();
             for(std::size_t i = 0; i + 1 < crossing_count; i += 2) {
                 const int32_t first_column = std::max(
                     clip_left, static_cast<int32_t>(
@@ -1561,6 +1604,7 @@ void draw_building_fills(lv_event_t *event) {
                 lv_draw_rect(layer, &fill, &row_area);
             }
         }
+        flush_run();
         packed_index += static_cast<std::size_t>(count) + 1U;
     }
 }

@@ -57,13 +57,28 @@ constexpr std::uint64_t kUnlitClearAfterUs =
     6ULL * 60ULL * 60ULL * 1'000'000ULL;
 RTC_DATA_ATTR static std::uint64_t g_last_lit_rtc_us = 0;
 RTC_DATA_ATTR static std::uint32_t g_last_lit_magic = 0;
+// Set while the panel is lit. A software reset while the screen was on must
+// not be mistaken for six hours of darkness.
+RTC_DATA_ATTR static std::uint8_t g_screen_lit = 0;
 
 void note_screen_lit() {
   g_last_lit_rtc_us = esp_rtc_get_time_us();
   g_last_lit_magic = kScreenLitMagic;
+  g_screen_lit = 1;
+}
+
+void note_screen_unlit() {
+  g_last_lit_rtc_us = esp_rtc_get_time_us();
+  g_last_lit_magic = kScreenLitMagic;
+  g_screen_lit = 0;
 }
 
 bool screen_unlit_for_clear(std::uint64_t* elapsed_us = nullptr) {
+  // A lit screen is not unlit, even if the periodic stamp is a minute old.
+  if (g_screen_lit != 0) {
+    if (elapsed_us != nullptr) *elapsed_us = 0;
+    return false;
+  }
   if (g_last_lit_magic != kScreenLitMagic || g_last_lit_rtc_us == 0) {
     return false;
   }
@@ -833,10 +848,10 @@ void power_button_task(void*) {
       while (board_port_power_button_pressed()) {
         vTaskDelay(pdMS_TO_TICKS(20));
       }
-      // The screen is about to go dark; stamp that moment for the unlit
-      // retention clock, then flush the partial 4 KB sector before the rail
-      // drops (up to 2 s of records live in RAM between flushes).
-      note_screen_lit();
+      // The screen is about to go dark; mark it unlit and stamp that moment
+      // for the retention clock, then flush the partial 4 KB sector before
+      // the rail drops (up to 2 s of records live in RAM between flushes).
+      note_screen_unlit();
       tlog.flush();
       ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
           1ULL << 3, ESP_EXT1_WAKEUP_ANY_HIGH));
