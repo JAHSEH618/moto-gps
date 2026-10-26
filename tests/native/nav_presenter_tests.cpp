@@ -280,6 +280,28 @@ void test_heading_up_route_projection_keeps_rider_fixed() {
   CHECK(state.route_points[1].y < state.route_points[0].y);
 }
 
+// Without a route the map window's centre anchors the home blip: the rider
+// still sees which way home is. Neither origin means no blip at all.
+void test_home_is_placed_from_the_map_window_without_a_route() {
+  NavPresenter presenter;
+  NavSnapshot snapshot;
+  snapshot.state = NavState::Idle;
+  snapshot.heading_deg = 0.0F;
+  snapshot.has_home = true;
+  snapshot.home = {31.2404, 121.4737};  // about 1.1 km due north
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().has_home == 0);
+
+  snapshot.has_map_origin = true;
+  snapshot.map_origin = {31.2304, 121.4737};
+  presenter.update(snapshot);
+  const moto_ui_state_t& state = presenter.ui_state();
+  CHECK(state.has_home == 1);
+  // North-up heading: due north is straight up from the rider.
+  CHECK(std::abs(state.home_x - MOTO_UI_CANVAS_WIDTH / 2) <= 1);
+  CHECK(state.home_y < MOTO_UI_CANVAS_HEIGHT / 2);
+}
+
 void test_rider_is_anchored_at_the_centre_of_the_full_screen_radar() {
   NavPresenter presenter;
   NavSnapshot snapshot;
@@ -552,6 +574,7 @@ int main() {
   test_metrics_are_rounded_clamped_and_deterministic();
   test_heading_up_route_projection_keeps_rider_fixed();
   test_rider_is_anchored_at_the_centre_of_the_full_screen_radar();
+  test_home_is_placed_from_the_map_window_without_a_route();
   test_non_finite_heading_keeps_map_projection_finite();
   test_real_road_context_uses_the_same_heading_up_transform();
   test_map_scene_classes_buildings_and_capacity_share_route_transform();

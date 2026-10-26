@@ -191,26 +191,53 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             .filter { $0.bounds.intersects(origin: origin, radiusM: radius) }
             .flatMap { indexed in
                 Self.clippedRuns(indexed.value, origin: origin, radiusM: radius).map { run in
-                    (
-                        road: run,
+                    let simplified = OfflineMapRoad(
+                        osmWayID: run.osmWayID,
+                        roadClass: run.roadClass,
+                        points: Self.simplified(run.points, around: origin)
+                    )
+                    return (
+                        road: simplified,
                         importance: Self.roadImportance(run.roadClass),
                         distanceM: Self.minimumDistanceM(run.points, from: origin)
                     )
                 }
             }
             .sorted {
-                if $0.importance != $1.importance { return $0.importance < $1.importance }
                 if $0.distanceM != $1.distanceM { return $0.distanceM < $1.distanceM }
+                if $0.importance != $1.importance { return $0.importance < $1.importance }
                 return ($0.road.osmWayID ?? .max) < ($1.road.osmWayID ?? .max)
             }
 
+        // Two passes over one nearest-first list. Ranking by class first spent
+        // the whole budget on main roads up to 500 m out, so the round screen
+        // showed a few arterials and none of the streets around the rider.
+        // Arterials that can reach the glass still get a reserved share, then
+        // the nearest streets of any class fill the rest.
         var selectedRoads: [OfflineMapRoad] = []
+        var selectedIndices = Set<Int>()
         var roadPointCount = 0
-        for candidate in roadCandidates {
+        func take(_ index: Int) {
+            let road = roadCandidates[index].road
+            guard selectedRoads.count < 24,
+                  roadPointCount + road.points.count <= 192
+            else { return }
+            selectedRoads.append(road)
+            selectedIndices.insert(index)
+            roadPointCount += road.points.count
+        }
+        var arterials = 0
+        for (index, candidate) in roadCandidates.enumerated()
+        where candidate.importance <= Self.arterialImportance &&
+            candidate.distanceM <= Self.visibleRadiusM &&
+            arterials < Self.arterialBudget {
+            let before = selectedRoads.count
+            take(index)
+            if selectedRoads.count > before { arterials += 1 }
+        }
+        for index in roadCandidates.indices where !selectedIndices.contains(index) {
             guard selectedRoads.count < 24 else { break }
-            guard roadPointCount + candidate.road.points.count <= 192 else { continue }
-            selectedRoads.append(candidate.road)
-            roadPointCount += candidate.road.points.count
+            take(index)
         }
 
         let buildingCandidates = buildings
@@ -298,6 +325,59 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             }
         }
         return pointInPolygon(origin, points)
+    }
+
+    /// What the round screen can show before the next scene arrives: about
+    /// 360 m around the rider (0.57 px/m inside the 205 px ring) plus the
+    /// 100 m the rider may travel before the phone refreshes.
+    private static let visibleRadiusM = 460.0
+    /// primary, secondary and motorway.
+    private static let arterialImportance = 2
+    private static let arterialBudget = 8
+    /// 1.5 m is under one pixel on the round screen (0.57 px/m), so a street
+    /// never visibly leaves the route or the rider it runs under; straight
+    /// runs still drop their redundant vertices. The pack itself is already
+    /// simplified at 1.25 m when it is built.
+    private static let simplifyToleranceM = 1.5
+
+    /// Douglas-Peucker in local metres. Endpoints always stay, so clipped
+    /// runs still meet the edge of the window where they did.
+    private static func simplified(
+        _ points: [OfflineMapPointE6],
+        around origin: OfflineMapPointE6
+    ) -> [OfflineMapPointE6] {
+        guard points.count > 2 else { return points }
+        let local = points.map { localMetres($0, around: origin) }
+        var keep = [Bool](repeating: false, count: points.count)
+        keep[0] = true
+        keep[points.count - 1] = true
+        var stack = [(0, points.count - 1)]
+        while let (first, last) = stack.popLast() {
+            guard last > first + 1 else { continue }
+            let (ax, ay) = local[first]
+            let (bx, by) = local[last]
+            let dx = bx - ax
+            let dy = by - ay
+            let length = hypot(dx, dy)
+            var farthest = first
+            var farthestDistance = 0.0
+            for index in (first + 1) ..< last {
+                let (px, py) = local[index]
+                let distance = length == 0
+                    ? hypot(px - ax, py - ay)
+                    : abs(dy * (px - ax) - dx * (py - ay)) / length
+                if distance > farthestDistance {
+                    farthestDistance = distance
+                    farthest = index
+                }
+            }
+            if farthestDistance > simplifyToleranceM {
+                keep[farthest] = true
+                stack.append((first, farthest))
+                stack.append((farthest, last))
+            }
+        }
+        return points.indices.filter { keep[$0] }.map { points[$0] }
     }
 
     private static func roadImportance(_ roadClass: String) -> Int {

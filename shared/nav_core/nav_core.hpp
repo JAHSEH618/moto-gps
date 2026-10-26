@@ -92,6 +92,10 @@ struct NavSnapshot {
   // and of the map window, so a missing offline map still shows home.
   bool has_home = false;
   Gcj02Point home;
+  // Centre of the latest MapScene window. Without a route this is the only
+  // rider-centred origin the device has, so the home blip is placed from it.
+  bool has_map_origin = false;
+  Gcj02Point map_origin;
 
   // Optional, bounded street context for a GTA-style heading-up minimap.
   // Points stay in provider coordinates; NavPresenter applies the exact same

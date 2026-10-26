@@ -186,6 +186,7 @@ void clear_map_context(moto::nav::NavSnapshot& output) {
   clear_road_context(output);
   clear_building_context(output);
   output.map_scene_revision = 0;
+  output.has_map_origin = false;
 }
 
 moto::nav::RoadContextClass map_road_class(
@@ -1017,6 +1018,11 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
     target.building_context_footprint_count =
         static_cast<std::uint8_t>(next_building);
     target.has_building_context = next_building > 0;
+    target.map_origin = {
+        static_cast<double>(input.view_origin.latitude_e6) / 1'000'000.0,
+        static_cast<double>(input.view_origin.longitude_e6) / 1'000'000.0,
+    };
+    target.has_map_origin = true;
     target.map_scene_revision = input.scene_revision;
   }
   ESP_LOGI(kTag,

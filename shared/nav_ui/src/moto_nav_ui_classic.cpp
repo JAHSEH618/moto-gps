@@ -157,6 +157,7 @@ struct Ui {
     std::uint32_t nav_route_generation = 0;
     lv_timer_t *nav_route_motion_timer = nullptr;
     lv_obj_t *nav_marker = nullptr;
+    lv_obj_t *nav_home_blip = nullptr;
     lv_obj_t *nav_status = nullptr;
     lv_obj_t *nav_distance = nullptr;
     lv_obj_t *nav_unit = nullptr;
@@ -315,6 +316,97 @@ void draw_vehicle_marker(lv_event_t *event) {
     triangle.p[2] = {static_cast<lv_value_precise_t>(area.x1 + px(28)),
                      static_cast<lv_value_precise_t>(area.y1 + px(30))};
     lv_draw_triangle(layer, &triangle);
+}
+
+// The same safehouse the GTA tree and the phone radar draw, in this tree's
+// white: a house with eaves and a door on a black casing, the rider arrow's
+// size, so home reads as a house rather than a second marker.
+constexpr int kHomeBlipSizeDesign = 28;
+
+void draw_home_blip(lv_event_t *event) {
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const lv_value_precise_t left = area.x1;
+    const lv_value_precise_t top = area.y1;
+    const lv_value_precise_t right = area.x2;
+    const lv_value_precise_t bottom = area.y2;
+    const lv_value_precise_t size = right - left;
+    const lv_value_precise_t centre = (left + right) / 2;
+    const lv_value_precise_t eaves = top + size * 0.48;
+    const lv_value_precise_t wall = size * 0.16;
+    const int32_t casing = px(3);
+
+    lv_draw_rect_dsc_t body;
+    lv_draw_rect_dsc_init(&body);
+    body.radius = 0;
+    body.bg_opa = LV_OPA_COVER;
+    body.border_width = 0;
+    lv_draw_triangle_dsc_t triangle;
+    lv_draw_triangle_dsc_init(&triangle);
+    triangle.opa = LV_OPA_COVER;
+
+    body.bg_color = kBlack;
+    triangle.color = kBlack;
+    lv_area_t walls{static_cast<int32_t>(left + wall),
+                    static_cast<int32_t>(eaves),
+                    static_cast<int32_t>(right - wall),
+                    static_cast<int32_t>(bottom)};
+    lv_draw_rect(layer, &body, &walls);
+    triangle.p[0] = {centre, top};
+    triangle.p[1] = {left, eaves + casing};
+    triangle.p[2] = {right, eaves + casing};
+    lv_draw_triangle(layer, &triangle);
+
+    body.bg_color = kWhite;
+    triangle.color = kWhite;
+    walls.x1 += casing;
+    walls.x2 -= casing;
+    walls.y1 += 1;
+    walls.y2 -= casing;
+    lv_draw_rect(layer, &body, &walls);
+    triangle.p[0] = {centre, top + casing * 2};
+    triangle.p[1] = {left + casing * 2, eaves};
+    triangle.p[2] = {right - casing * 2, eaves};
+    lv_draw_triangle(layer, &triangle);
+
+    body.bg_color = kBlack;
+    const lv_value_precise_t door = size * 0.12;
+    lv_area_t doorway{static_cast<int32_t>(centre - door),
+                      static_cast<int32_t>(bottom - size * 0.34),
+                      static_cast<int32_t>(centre + door),
+                      walls.y2};
+    lv_draw_rect(layer, &body, &doorway);
+}
+
+void update_home_blip(const moto_ui_state_t *state) {
+    if(ui.nav_home_blip == nullptr) return;
+    // The map strip only exists under a route; without one this tree shows
+    // the connection screen, and a house floating over it would be noise.
+    if(state->has_home == 0 || state->route_point_count < 2) {
+        lv_obj_add_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const int32_t size = px(kHomeBlipSizeDesign);
+    const double centre_x = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double centre_y = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    double dx = state->home_x - centre_x;
+    double dy = state->home_y - centre_y;
+    // A far home keeps its bearing and rides the edge of the visible map: the
+    // glass circle, and the bottom of the strip, whichever comes first.
+    double scale = 1.0;
+    const double distance = std::sqrt(dx * dx + dy * dy);
+    const double ring = MOTO_UI_RADAR_RING_RADIUS_PX - size / 2.0 - px(2);
+    if(distance > ring) scale = ring / distance;
+    const double floor = px(232) - size / 2.0 - px(2) - centre_y;
+    if(dy * scale > floor && dy > 0) scale = floor / dy;
+    dx *= scale;
+    dy *= scale;
+    lv_obj_set_pos(ui.nav_home_blip,
+                   static_cast<int32_t>(std::lround(centre_x + dx - size / 2.0)),
+                   static_cast<int32_t>(std::lround(centre_y + dy - size / 2.0)));
+    lv_obj_remove_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
 }
 
 void update_page_dots() {
@@ -1424,6 +1516,7 @@ void update_navigation(const moto_ui_state_t *state) {
     update_building_geometry(state);
     update_road_geometry(state);
     update_route_geometry(state);
+    update_home_blip(state);
     update_maneuver(state->maneuver);
     update_nav_status(state);
 
@@ -1623,6 +1716,17 @@ void create_navigation_page() {
     ui.nav_route_motion_timer = lv_timer_create(route_motion_tick,
                                                  kRouteMotionFrameMs,
                                                  nullptr);
+
+    // Before the rider marker, so arriving home shows the arrow on top.
+    ui.nav_home_blip = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_home_blip);
+    lv_obj_set_size(ui.nav_home_blip, px(kHomeBlipSizeDesign),
+                    px(kHomeBlipSizeDesign));
+    lv_obj_clear_flag(ui.nav_home_blip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_name_static(ui.nav_home_blip, "moto-home-blip");
+    lv_obj_add_event_cb(ui.nav_home_blip, draw_home_blip,
+                        LV_EVENT_DRAW_MAIN_END, nullptr);
+    lv_obj_add_flag(ui.nav_home_blip, LV_OBJ_FLAG_HIDDEN);
 
     ui.nav_marker = lv_obj_create(ui.nav_map);
     lv_obj_remove_style_all(ui.nav_marker);

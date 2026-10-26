@@ -1,4 +1,5 @@
 import Foundation
+import MotoNavigationCore
 import SQLite3
 import XCTest
 @testable import MOTO_GPS
@@ -193,6 +194,93 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertTrue(window.buildings.contains { $0.osmWayID == 999 })
     }
 
+    func testNearbyStreetsAreNotCrowdedOutByDistantMainRoads() {
+        let origin = OfflineMapPointE6(latitudeE6: 36_680_000, longitudeE6: 117_130_000)
+        // Thirty primaries at the edge of the window, listed first, and ten
+        // residential streets right around the rider.
+        var roads = (0 ..< 30).map { index in
+            OfflineMapRoad(
+                osmWayID: Int64(index),
+                roadClass: "primary",
+                points: [
+                    point(origin, northM: 300 + Double(index) * 5, eastM: -40),
+                    point(origin, northM: 300 + Double(index) * 5, eastM: 40),
+                ]
+            )
+        }
+        roads += (0 ..< 10).map { index in
+            OfflineMapRoad(
+                osmWayID: Int64(100 + index),
+                roadClass: "residential",
+                points: [
+                    point(origin, northM: 20 + Double(index) * 4, eastM: -30),
+                    point(origin, northM: 20 + Double(index) * 4, eastM: 30),
+                ]
+            )
+        }
+        let window = InMemoryOfflineMapSceneIndex(
+            document: makeDocument(origin: origin, roads: roads, buildings: [])
+        ).query(around: origin, radiusM: 500, revision: 1)
+
+        XCTAssertEqual(window.roads.count, 24)
+        let selected = Set(window.roads.compactMap(\.osmWayID))
+        XCTAssertTrue((100 ..< 110).allSatisfy { selected.contains(Int64($0)) })
+        XCTAssertGreaterThanOrEqual(window.roads.filter { $0.roadClass == "primary" }.count, 8)
+    }
+
+    func testStraightRoadsAreSimplifiedBeforeTheyUseThePointBudget() {
+        let origin = OfflineMapPointE6(latitudeE6: 36_680_000, longitudeE6: 117_130_000)
+        let straight = OfflineMapRoad(
+            osmWayID: 1,
+            roadClass: "residential",
+            points: (0 ..< 40).map { point(origin, northM: 10, eastM: Double($0 * 5) - 100) }
+        )
+        let window = InMemoryOfflineMapSceneIndex(
+            document: makeDocument(origin: origin, roads: [straight], buildings: [])
+        ).query(around: origin, radiusM: 500, revision: 1)
+
+        XCTAssertEqual(window.roads.count, 1)
+        XCTAssertEqual(window.roads.first?.points.count, 2)
+    }
+
+    /// The streets the phone sends must sit under the ride, not beside it. The
+    /// fixes are points of the verified OSM demo route (WGS84, as GPS reports
+    /// them); each is converted the way a live fix is and used as the window
+    /// centre. Raw pack geometry is within 1.1 m of the route; after the
+    /// phone's simplification the street under the rider must stay within
+    /// 2 m, which is about one pixel on the round screen.
+    func testSelectedStreetsStayUnderTheRiderOnTheRealCityPack() throws {
+        guard let url = Bundle.main.url(forResource: "jinan-v1", withExtension: "sqlite") else {
+            XCTFail("jinan-v1.sqlite is missing from the application bundle")
+            return
+        }
+        let repository = try SQLiteOfflineMapSceneIndex(url: url)
+        let fixes: [(Double, Double)] = [
+            (36.6743309, 117.1219266), (36.6724025, 117.1215946),
+            (36.6713895, 117.1233231), (36.6693688, 117.1223286),
+            (36.6674164, 117.1213496), (36.6653932, 117.1203991),
+        ]
+        for (latitude, longitude) in fixes {
+            let gcj = ChinaCoordinateTransform.wgs84ToGCJ02(
+                WGS84Point(longitudeDeg: longitude, latitudeDeg: latitude)
+            )
+            let origin = OfflineMapPointE6(
+                latitudeE6: Int32((gcj.latitudeDeg * 1_000_000).rounded()),
+                longitudeE6: Int32((gcj.longitudeDeg * 1_000_000).rounded())
+            )
+            let window = repository.query(around: origin, radiusM: 500, revision: 1)
+            let nearest = window.roads.flatMap { road in
+                zip(road.points, road.points.dropFirst()).map { start, end in
+                    distanceM(from: origin, toSegment: start, end)
+                }
+            }.min() ?? .infinity
+            XCTAssertLessThanOrEqual(
+                nearest, 2.0,
+                "street under the fix at \(latitude),\(longitude) is \(nearest) m away"
+            )
+        }
+    }
+
     func testSQLiteRTreeRepositoryReadsTheSameRealOSMFixtureShape() throws {
         let document = try loadDocument()
         let databaseURL = FileManager.default.temporaryDirectory
@@ -244,6 +332,28 @@ final class OfflineMapSceneTests: XCTestCase {
                 bboxWGS84: nil
             )
         )
+    }
+
+    private func distanceM(
+        from origin: OfflineMapPointE6,
+        toSegment start: OfflineMapPointE6,
+        _ end: OfflineMapPointE6
+    ) -> Double {
+        let latitudeRadians = Double(origin.latitudeE6) / 1_000_000 * .pi / 180
+        func local(_ point: OfflineMapPointE6) -> (Double, Double) {
+            (
+                Double(point.longitudeE6 - origin.longitudeE6) / 1_000_000 *
+                    111_195 * cos(latitudeRadians),
+                Double(point.latitudeE6 - origin.latitudeE6) / 1_000_000 * 111_195
+            )
+        }
+        let (ax, ay) = local(start)
+        let (bx, by) = local(end)
+        let dx = bx - ax
+        let dy = by - ay
+        let lengthSquared = dx * dx + dy * dy
+        let t = lengthSquared == 0 ? 0 : max(0, min(1, -(ax * dx + ay * dy) / lengthSquared))
+        return hypot(ax + t * dx, ay + t * dy)
     }
 
     private func point(

@@ -205,13 +205,23 @@ void project_home(const NavSnapshot& snapshot, const MapTransform& transform,
   output.has_home = 0;
   output.home_x = 0;
   output.home_y = 0;
-  // The transform is anchored on the rider, which only exists once the route
-  // window is built. Without it there is no honest place to put the blip.
-  if (!snapshot.has_home || !snapshot.has_route_view) {
+  // The transform is anchored on the rider: the route window's origin, or,
+  // with no route, the latest map window's centre. Without either there is no
+  // honest place to put the blip.
+  if (!snapshot.has_home ||
+      (!snapshot.has_route_view && !snapshot.has_map_origin)) {
     return;
   }
+  MapTransform anchored = transform;
+  if (!snapshot.has_route_view) {
+    anchored.origin_latitude_deg = snapshot.map_origin.latitude_deg;
+    anchored.origin_longitude_deg = snapshot.map_origin.longitude_deg;
+    anchored.longitude_pixels_per_degree =
+        std::cos(radians(snapshot.map_origin.latitude_deg)) *
+        (kPi / 180.0 * kEarthRadiusM * kMapPixelsPerMeter);
+  }
   const moto_ui_point_t pixel =
-      project_map_point(snapshot.home, transform);
+      project_map_point(snapshot.home, anchored);
   output.home_x = pixel.x;
   output.home_y = pixel.y;
   output.has_home = 1;
