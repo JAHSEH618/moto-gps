@@ -81,79 +81,86 @@ struct MapPalette {
     // residential, service, other). The wire carries all six; collapsing them
     // to three bands threw the hierarchy away.
     lv_color_t road_class[6];
+    // Poster-scale numerals. GTA III prints its HUD readouts in colour (the
+    // clock in gold), never plain white; by day the paper needs black ink.
+    lv_color_t hud;
 };
 
-// Vice City day: the game's map block as the paper. Green ground, cream roads
-// with a black casing, and a magenta rim. Every numeral is ink on cream, which
-// is where daylight contrast comes from.
+// GTA III, Liberty City by day: the cover's white field as the paper and the
+// game's grey radar as the map. Every numeral is black ink on newsprint, which
+// is where daylight contrast comes from. The band is black: the rim reads as
+// one heavy radar ring with the casing.
 constexpr MapPalette kGtaDayPalette = {
-    LV_COLOR_MAKE(0x07, 0x05, 0x0D),  // bezel
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // ROAD CREAM paper
-    LV_COLOR_MAKE(0x1E, 0x7A, 0x46),  // MAP GREEN
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // ROAD CREAM
-    LV_COLOR_MAKE(0xFF, 0xFD, 0xF2),
-    LV_COLOR_MAKE(0xCF, 0xE0, 0xBC),  // secondary roads
-    LV_COLOR_MAKE(0x1A, 0x6B, 0x3D),  // blocks under the roads
-    LV_COLOR_MAKE(0x2A, 0x8B, 0x55),
-    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // HOT PINK route
-    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // OUTLINE BLACK casing
-    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // ink
-    LV_COLOR_MAKE(0x5C, 0x4A, 0x38),  // muted brown
-    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // VICE MAGENTA
-    LV_COLOR_MAKE(0x0E, 0x6F, 0x68),  // deep turquoise: legible on cream
-    LV_COLOR_MAKE(0xD8, 0x45, 0x1A),  // sunset coral
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // type on the map is cream, always
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // halo = paper, the inverse of ink
-    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // ink on a magenta plate
-    LV_COLOR_MAKE(0x17, 0x15, 0x1B),  // counter slab
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
+    LV_COLOR_MAKE(0x00, 0x00, 0x00),  // bezel
+    LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // NEWSPRINT paper
+    LV_COLOR_MAKE(0x4E, 0x4E, 0x4A),  // RADAR GREY map ground
+    LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // roads
+    LV_COLOR_MAKE(0xF7, 0xF5, 0xEF),
+    LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // secondary roads
+    LV_COLOR_MAKE(0x40, 0x40, 0x3C),  // blocks under the roads
+    LV_COLOR_MAKE(0x5C, 0x5C, 0x57),
+    LV_COLOR_MAKE(0xF0, 0x8A, 0x3C),  // HUD ORANGE route (health)
+    LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // casing
+    LV_COLOR_MAKE(0x11, 0x11, 0x11),  // ink
+    LV_COLOR_MAKE(0x4B, 0x46, 0x3E),  // muted
+    LV_COLOR_MAKE(0x11, 0x11, 0x11),  // band: black gutter
+    LV_COLOR_MAKE(0x35, 0x56, 0x7F),  // HUD STEEL BLUE, darkened for paper
+    LV_COLOR_MAKE(0xB0, 0x47, 0x16),  // HUD orange, darkened: the sun
+    LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // type on the map is paper, always
+    LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // halo = paper, the inverse of ink
+    LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // paper on a black plate
+    LV_COLOR_MAKE(0x11, 0x11, 0x11),  // counter slab
+    LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),
     {
-        LV_COLOR_MAKE(0xF7, 0xD9, 0x6B),  // motorway: highway yellow
-        LV_COLOR_MAKE(0xFF, 0xFD, 0xF2),  // primary
-        LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // secondary: road cream
-        LV_COLOR_MAKE(0xE2, 0xE6, 0xC8),  // residential
-        LV_COLOR_MAKE(0xCF, 0xE0, 0xBC),  // service
-        LV_COLOR_MAKE(0xA9, 0xC9, 0x9A),  // other: almost the block
+        LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // motorway: HUD clock gold
+        LV_COLOR_MAKE(0xF7, 0xF5, 0xEF),  // primary
+        LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // secondary
+        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // residential
+        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // service
+        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // other: almost the block
     },
+    LV_COLOR_MAKE(0x11, 0x11, 0x11),  // hud numerals: ink
 };
 
-// Vice City night: midnight purple paper, cream type, the same roads and the
-// same magenta. One structure, inverted paper.
+// GTA III, Liberty City at night: true black, box-art white type, and the
+// HUD's own colours: clock gold, money steel-blue, health orange. The band is
+// white, like the cover's panel gutters.
 constexpr MapPalette kGtaNightPalette = {
-    LV_COLOR_MAKE(0x07, 0x05, 0x0D),
-    LV_COLOR_MAKE(0x14, 0x10, 0x24),  // MIDNIGHT PURPLE paper
-    LV_COLOR_MAKE(0x14, 0x10, 0x24),  // MAP GROUND
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
-    LV_COLOR_MAKE(0xFF, 0xFD, 0xF4),
-    LV_COLOR_MAKE(0xC9, 0xC6, 0xA8),
-    LV_COLOR_MAKE(0x21, 0x18, 0x48),
-    LV_COLOR_MAKE(0x2C, 0x21, 0x60),
-    LV_COLOR_MAKE(0xFF, 0x5A, 0xCD),  // VICE PINK route
-    LV_COLOR_MAKE(0x0A, 0x06, 0x14),
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // SUNSET CREAM
-    LV_COLOR_MAKE(0xB9, 0xB1, 0xC9),
-    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // VICE MAGENTA
-    LV_COLOR_MAKE(0x42, 0xF5, 0xD7),  // MIAMI TURQUOISE
-    LV_COLOR_MAKE(0xFF, 0x8F, 0x5E),  // sunset coral
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // map type
-    LV_COLOR_MAKE(0x07, 0x05, 0x0D),  // halo = bezel, the inverse of ink
-    LV_COLOR_MAKE(0x12, 0x0D, 0x1C),  // ink on a magenta plate
-    LV_COLOR_MAKE(0x07, 0x05, 0x0D),  // counter slab
-    LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),
+    LV_COLOR_MAKE(0x00, 0x00, 0x00),
+    LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // BLACK paper
+    LV_COLOR_MAKE(0x16, 0x16, 0x16),  // RADAR map ground
+    LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),
+    LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),
+    LV_COLOR_MAKE(0x8E, 0x8A, 0x82),
+    LV_COLOR_MAKE(0x24, 0x24, 0x24),
+    LV_COLOR_MAKE(0x2E, 0x2E, 0x2E),
+    LV_COLOR_MAKE(0xF0, 0x8A, 0x3C),  // HUD ORANGE route
+    LV_COLOR_MAKE(0x00, 0x00, 0x00),
+    LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // BOX-ART WHITE
+    LV_COLOR_MAKE(0xA8, 0xA2, 0x94),
+    LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // band: white gutter
+    LV_COLOR_MAKE(0x86, 0xA6, 0xCF),  // HUD STEEL BLUE (money)
+    LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // HUD CLOCK GOLD: the sun
+    LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // map type
+    LV_COLOR_MAKE(0x00, 0x00, 0x00),  // halo = bezel, the inverse of ink
+    LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // black on a white plate
+    LV_COLOR_MAKE(0x00, 0x00, 0x00),  // counter slab
+    LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),
     {
-        LV_COLOR_MAKE(0xFF, 0xC9, 0x5C),  // motorway: sodium-lamp amber
-        LV_COLOR_MAKE(0xFF, 0xFD, 0xF4),  // primary
-        LV_COLOR_MAKE(0xF6, 0xF0, 0xD7),  // secondary: sunset cream
-        LV_COLOR_MAKE(0xD9, 0xD5, 0xBC),  // residential
-        LV_COLOR_MAKE(0xC9, 0xC6, 0xA8),  // service
-        LV_COLOR_MAKE(0x8E, 0x88, 0xA6),  // other: lilac, into the night
+        LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // motorway: HUD clock gold
+        LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // primary
+        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // secondary
+        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // residential
+        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // service
+        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: into the dark
     },
+    LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // hud numerals: clock gold
 };
 
-// Vice City frame colours, shared by both themes: the rim is the brand, not a
-// theme variable.
-constexpr lv_color_t kViceMagenta = LV_COLOR_MAKE(0xF3, 0x4D, 0xAA);
-constexpr lv_color_t kOutlineBlack = LV_COLOR_MAKE(0x17, 0x15, 0x1B);
+// Frame colours shared by both themes. Gold is the HUD clock: the boot card's
+// rules, never a data colour. The casing is the HUD's hard black.
+constexpr lv_color_t kHudGold = LV_COLOR_MAKE(0xD2, 0xAD, 0x6A);
+constexpr lv_color_t kOutlineBlack = LV_COLOR_MAKE(0x0A, 0x0A, 0x0A);
 
 // One resolver for a theme name and the phone's day/night flag. AUTO has no
 // palette of its own; the flag is the only thing that can resolve it.
@@ -220,7 +227,7 @@ constexpr std::uint32_t kPerfRearmStillMs = 1'500;
 // home_shortcut_event().
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
 // Home blip geometry, in design pixels like every other HUD measurement.
-constexpr int kHomeBlipSizeDesign = 14;
+constexpr int kHomeBlipSizeDesign = 28;
 // The panel is round: the ring sits just inside the glass, and a blip further
 // out is clamped to it rather than dropped.
 constexpr std::uint32_t kHomeHintMs = 3'000;
@@ -318,6 +325,9 @@ struct Ui {
     std::uint8_t nav_building_footprint_count = 0;
     std::uint32_t nav_building_scene_revision = 0;
     lv_obj_t *nav_roads[MOTO_UI_ROAD_POLYLINE_CAPACITY]{};
+    // One layer under every road: the radar's dark casing. Drawn as a single
+    // pass so a later road's casing never cuts across an earlier road.
+    lv_obj_t *nav_road_casing = nullptr;
     MapPolyline nav_road_lines[MOTO_UI_ROAD_POLYLINE_CAPACITY]{};
     lv_point_precise_t nav_road_points[MOTO_UI_ROAD_POINT_CAPACITY]{};
     float nav_road_x[MOTO_UI_ROAD_POINT_CAPACITY]{};
@@ -355,6 +365,13 @@ struct Ui {
     lv_obj_t *nav_home = nullptr;
     lv_obj_t *nav_home_hint = nullptr;
     lv_timer_t *nav_home_hint_timer = nullptr;
+    // Boot sequence: hard cuts on a timer, cleaned up by teardown_ui().
+    lv_timer_t *boot_timer = nullptr;
+    std::uint32_t boot_started_ms = 0;
+    lv_obj_t *boot_grid = nullptr;
+    lv_obj_t *boot_logo = nullptr;
+    lv_obj_t *boot_bar = nullptr;
+    lv_obj_t *boot_bar_fill = nullptr;
     std::uint16_t nav_speed_kph = 0;
     // The ring replaces the old 84-degree arc: the whole rim is the gauge now,
     // and the north badge rides it.
@@ -378,7 +395,7 @@ struct Ui {
     ThemedText themed_text[kThemedTextCapacity]{};
     std::uint8_t themed_text_count = 0;
 
-    // Filled plates are themed the same way text is: the magenta brand block
+    // Filled plates are themed the same way text is: the band plate
     // and the ink counter slab are different roles and must not be swapped.
     enum class FillRole : std::uint8_t { Accent = 0, Slab };
     struct ThemedFill {
@@ -396,11 +413,30 @@ struct Ui {
     bool navigation_has_guidance = false;
     bool navigation_route_request_in_flight = false;
 
-    lv_obj_t *speed_gauge = nullptr;
-    lv_obj_t *speed_value = nullptr;
-    lv_obj_t *speed_limit = nullptr;
-    lv_obj_t *speed_limit_value = nullptr;
-    std::uint16_t speed_drawn = 0;
+    // Speed·G: friction circle. Display values are the 4 Hz low-pass, the
+    // envelope is built from 0.2 s means (DESIGN_V2 §3.6).
+    lv_obj_t *gg_plot = nullptr;
+    lv_obj_t *gg_dot = nullptr;
+    lv_obj_t *gg_trail[6]{};
+    lv_obj_t *gg_live = nullptr;
+    lv_obj_t *gg_speed = nullptr;
+    lv_obj_t *gg_state = nullptr;
+    float gg_lat = 0.0F;
+    float gg_lon = 0.0F;
+    float gg_mean_lat = 0.0F;
+    float gg_mean_lon = 0.0F;
+    float gg_envelope[16]{};
+    float gg_trail_lat[6]{};
+    float gg_trail_lon[6]{};
+    std::uint32_t gg_trail_ms[6]{};
+    int gg_trail_head = 0;
+    std::uint32_t gg_trail_last_ms = 0;
+    std::uint32_t gg_last_ms = 0;
+    bool gg_seeded = false;
+    bool gg_has = false;
+    bool gg_envelope_dirty = false;
+    bool gg_press_active = false;
+    std::uint32_t gg_press_start_ms = 0;
 
     lv_obj_t *perf_target = nullptr;
     lv_obj_t *perf_timer = nullptr;
@@ -436,7 +472,10 @@ struct Ui {
     float lean_peak_right = 0.0F;
     bool lean_has = false;
     bool lean_scene_dirty = true;
-    std::uint32_t lean_scene_tick_ms = 0;
+    // The numerals' own clock and value (DESIGN_V2 §2.7: 10 Hz, 0.6 deg
+    // hysteresis). The horizon, sun and blip follow lean_deg every frame.
+    std::uint32_t lean_text_tick_ms = 0;
+    float lean_text_deg = 0.0F;
 
     lv_obj_t *compass_heading = nullptr;
     lv_obj_t *compass_cardinal = nullptr;
@@ -558,6 +597,10 @@ void teardown_ui() {
         lv_timer_delete(ui.nav_home_hint_timer);
         ui.nav_home_hint_timer = nullptr;
     }
+    if(ui.boot_timer != nullptr) {
+        lv_timer_delete(ui.boot_timer);
+        ui.boot_timer = nullptr;
+    }
     reset_ui_state();
     // The active screen itself is never deleted, only its children. Keep it so
     // the boot and power-off screens still have a surface to draw on.
@@ -592,7 +635,7 @@ lv_color_t role_color(TextRole role) {
         case TextRole::MapInk: return ui.palette.map_ink;
         case TextRole::OnAccent: return ui.palette.on_accent;
         case TextRole::OnSlab: return ui.palette.on_slab;
-        case TextRole::Display:
+        case TextRole::Display: return ui.palette.hud;
         case TextRole::Ink:
         default: return ui.palette.ink;
     }
@@ -643,7 +686,7 @@ lv_obj_t *make_text(lv_obj_t *parent, const lv_font_t *font, TextRole role,
 // Instrument chrome
 //
 // Every page is the same physical object: a disc of paper inside a black
-// casing under one magenta band. A page may not invent its own frame, so the
+// casing under one band (the GTA III cover's panel gutter). A page may not invent its own frame, so the
 // six screens read as six readouts of one instrument rather than six screens.
 // ---------------------------------------------------------------------------
 constexpr int kDialRadius = 207;       // paper edge, under the casing
@@ -651,7 +694,7 @@ constexpr int kDialRadius = 207;       // paper edge, under the casing
 // DESIGN.md: casing 197-212, band 212-222, glass edge outside 222. The band
 // used to start at 207, which left a 5 px black moat inside the glass and made
 // every page read as a smaller circle than the poster.
-constexpr int kDialBandOuter = 222;    // magenta band outer edge
+constexpr int kDialBandOuter = 222;    // band outer edge
 constexpr int kDialCasingOuter = 212;  // black casing outer edge
 constexpr int kDialCasingWidth = 15;   // 197..212
 constexpr int kDialBezelOuter = 233;   // glass edge
@@ -683,7 +726,26 @@ void stroke_ring(lv_layer_t *layer, int radius, int width, lv_color_t color) {
     lv_draw_arc(layer, &dsc);
 }
 
-void draw_instrument_frame_layer(lv_layer_t *layer) {
+// True when the area being drawn lies wholly inside a circle of `radius`
+// around the canvas centre, so nothing on or outside that circle can touch it.
+// A moving horizon dirties small strips inside the disc; without this cull each
+// strip re-stroked all six rim arcs, ~21 ms of a 45 ms Lean frame on the board.
+bool clip_inside_radius(const lv_layer_t *layer, int radius) {
+    const lv_area_t &clip = layer->_clip_area;
+    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    const double r2 = static_cast<double>(radius) * radius;
+    const double xs[2] = {clip.x1 - cx, clip.x2 + 1 - cx};
+    const double ys[2] = {clip.y1 - cy, clip.y2 + 1 - cy};
+    for(double x : xs) {
+        for(double y : ys) {
+            if(x * x + y * y >= r2) return false;
+        }
+    }
+    return true;
+}
+
+void draw_instrument_frame_rings(lv_layer_t *layer) {
     // The bezel is painted over the map, so no sliver of map can show between
     // the rim and the glass edge.
     // Bezel 222..233, band 212..222, casing 197..212. The three rings share
@@ -692,6 +754,12 @@ void draw_instrument_frame_layer(lv_layer_t *layer) {
                 ui.palette.frame);
     stroke_ring(layer, kDialBandOuter, kDialBandWidth, ui.palette.accent);
     stroke_ring(layer, kDialCasingOuter, kDialCasingWidth, kOutlineBlack);
+}
+
+void draw_instrument_frame_layer(lv_layer_t *layer) {
+    // Casing inner edge: kDialCasingOuter - kDialCasingWidth.
+    if(clip_inside_radius(layer, kDialCasingOuter - kDialCasingWidth)) return;
+    draw_instrument_frame_rings(layer);
 }
 
 lv_obj_t *register_fill(lv_obj_t *object, Ui::FillRole role) {
@@ -703,17 +771,20 @@ lv_obj_t *register_fill(lv_obj_t *object, Ui::FillRole role) {
     return object;
 }
 
-// The magenta plate: the brand block, the thing that carries a short label.
+// The band plate: the brand block, the thing that carries a short label.
 lv_obj_t *make_plate(lv_obj_t *parent, const char *text, int width,
                      int height, lv_obj_t **label_out = nullptr) {
     lv_obj_t *plate = lv_obj_create(parent);
     lv_obj_remove_style_all(plate);
     lv_obj_clear_flag(plate, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(plate, px(width), px(height));
+    // HUD type, not a tag: GTA III's HUD never boxes a label, it cases the
+    // letters. The cream boxes made every page read as a settings screen.
+    // The object keeps its size so layouts and hit areas do not move.
     lv_obj_set_style_bg_color(plate, ui.palette.accent, 0);
-    lv_obj_set_style_bg_opa(plate, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(plate, LV_OPA_TRANSP, 0);
     lv_obj_t *label = make_text(plate, &moto_font_display_24,
-                                TextRole::OnAccent, text);
+                                TextRole::Ink, text);
     lv_obj_set_style_text_letter_space(label, px(2), 0);
     lv_obj_center(label);
     if(label_out != nullptr) *label_out = label;
@@ -740,7 +811,7 @@ lv_obj_t *make_slab(lv_obj_t *parent, const char *text, int width, int height,
 
 // Traffic-sign face. It is not a themed surface: the sign has to read the same
 // way in daylight and at night, so it keeps its cream face in both palettes.
-constexpr lv_color_t kLimitFace = LV_COLOR_MAKE(0xF6, 0xF0, 0xD7);
+constexpr lv_color_t kLimitFace = LV_COLOR_MAKE(0xF2, 0xEE, 0xE4);
 
 // One speed-limit sign for both pages that show one. The caller owns position
 // and visibility; the face, ring and digit size cannot drift apart again.
@@ -851,9 +922,10 @@ void draw_vehicle_marker(lv_event_t *event) {
 }
 
 void draw_home_blip(lv_event_t *event) {
-    // Same ink-on-white treatment as the rider arrow: the device has no light
-    // map theme, so the blip never has to invert. The black outline keeps it
-    // legible over both cream roads and dark blocks.
+    // HUD orange on a black casing, the phone radar's safehouse: it reads on
+    // the grey map, on the waiting screen's paper and on the rim. It is the
+    // rider arrow's size and has eaves and a door, so it reads as a house at a
+    // glance instead of an orange speck.
     lv_obj_t *object = lv_event_get_target_obj(event);
     lv_area_t area;
     lv_obj_get_coords(object, &area);
@@ -862,49 +934,238 @@ void draw_home_blip(lv_event_t *event) {
     const lv_value_precise_t top = area.y1;
     const lv_value_precise_t right = area.x2;
     const lv_value_precise_t bottom = area.y2;
+    const lv_value_precise_t size = right - left;
     const lv_value_precise_t centre = (left + right) / 2;
-    const lv_value_precise_t roof = top + (bottom - top) * 0.45;
+    const lv_value_precise_t eaves = top + size * 0.48;
+    const lv_value_precise_t wall = size * 0.16;
+    const int32_t casing = px(3);
 
     lv_draw_rect_dsc_t body;
     lv_draw_rect_dsc_init(&body);
     body.radius = 0;
     body.bg_opa = LV_OPA_COVER;
     body.border_width = 0;
-    lv_area_t body_area{static_cast<int32_t>(left),
-                        static_cast<int32_t>(roof),
-                        static_cast<int32_t>(right),
-                        static_cast<int32_t>(bottom)};
-
     lv_draw_triangle_dsc_t triangle;
     lv_draw_triangle_dsc_init(&triangle);
     triangle.opa = LV_OPA_COVER;
 
-    // Outline pass.
+    // Casing pass: roof wider than the walls, so the eaves overhang.
     body.bg_color = kBlack;
-    lv_draw_rect(layer, &body, &body_area);
     triangle.color = kBlack;
+    lv_area_t walls{static_cast<int32_t>(left + wall),
+                    static_cast<int32_t>(eaves),
+                    static_cast<int32_t>(right - wall),
+                    static_cast<int32_t>(bottom)};
+    lv_draw_rect(layer, &body, &walls);
     triangle.p[0] = {centre, top};
-    triangle.p[1] = {left, roof + 1};
-    triangle.p[2] = {right, roof + 1};
+    triangle.p[1] = {left, eaves + casing};
+    triangle.p[2] = {right, eaves + casing};
     lv_draw_triangle(layer, &triangle);
 
-    // Inner pass, inset so a hard 2 px edge remains on every side.
-    body.bg_color = kWhite;
-    body_area.x1 += 2;
-    body_area.x2 -= 2;
-    body_area.y1 += 2;
-    body_area.y2 -= 2;
-    lv_draw_rect(layer, &body, &body_area);
-    triangle.color = kWhite;
-    triangle.p[0] = {centre, top + 4};
-    triangle.p[1] = {left + 3, roof + 1};
-    triangle.p[2] = {right - 3, roof + 1};
+    // Fill pass, inset so the hard casing stays on every side.
+    body.bg_color = ui.palette.route;
+    triangle.color = ui.palette.route;
+    walls.x1 += casing;
+    walls.x2 -= casing;
+    walls.y1 += 1;
+    walls.y2 -= casing;
+    lv_draw_rect(layer, &body, &walls);
+    triangle.p[0] = {centre, top + casing * 2};
+    triangle.p[1] = {left + casing * 2, eaves};
+    triangle.p[2] = {right - casing * 2, eaves};
     lv_draw_triangle(layer, &triangle);
+
+    // Door, cut back to the casing.
+    body.bg_color = kBlack;
+    const lv_value_precise_t door = size * 0.12;
+    lv_area_t doorway{static_cast<int32_t>(centre - door),
+                      static_cast<int32_t>(bottom - size * 0.34),
+                      static_cast<int32_t>(centre + door),
+                      walls.y2};
+    lv_draw_rect(layer, &body, &doorway);
+}
+
+// ---------------------------------------------------------------------------
+// Liberty City at dusk. The tool pages used to be a black disc with one gold
+// number, which read as a sports watch; PRODUCT.md's grammar is radar, HUD
+// band, condensed numerals and dusk silhouettes, and the silhouettes were
+// missing. The skyline is frame, not data: it sits under the casing at the
+// bottom of the disc, below every reading, and is static.
+
+struct Tower {
+    std::int16_t x;      // left edge, px from the centre
+    std::int16_t width;
+    std::int16_t top;    // px below the centre
+    std::int8_t spire;   // spire height above the roof, 0 for none
+};
+
+// Far row: taller, lighter (haze). Near row: lower, darker, in front.
+constexpr Tower kFarTowers[] = {
+    {-150, 22, 140, 0}, {-128, 18, 122, 0}, {-110, 26, 104, 10},
+    {-84, 16, 126, 0},  {-68, 30, 96, 0},   {-38, 16, 118, 0},
+    {-22, 26, 80, 26},  {4, 18, 106, 0},    {22, 30, 94, 12},
+    {52, 16, 120, 0},   {68, 26, 100, 0},   {94, 18, 128, 0},
+    {112, 28, 110, 8},  {140, 20, 136, 0},
+};
+constexpr Tower kNearTowers[] = {
+    {-170, 40, 156, 0}, {-130, 30, 146, 0}, {-100, 44, 160, 0},
+    {-56, 34, 150, 0},  {-22, 48, 162, 0},  {26, 36, 148, 0},
+    {62, 42, 158, 0},   {104, 34, 150, 0},  {138, 40, 160, 0},
+};
+
+void draw_towers(lv_layer_t *layer, const Tower *towers, std::size_t count,
+                 int cx, int cy, lv_color_t body_color, lv_color_t window,
+                 bool lit, int foot_reach) {
+    // On a page the feet stop at r = 210, under the casing (197..212), which
+    // hides the stair steps; past it a tower would paint the bezel. Screens
+    // that clip to the circle themselves pass a reach beyond the glass. Lamps
+    // stop where a casing would start, so none is lit under it.
+    const int kFootReach = foot_reach;
+    constexpr int kLampReach = 194;
+    lv_draw_rect_dsc_t body;
+    lv_draw_rect_dsc_init(&body);
+    body.radius = 0;
+    body.bg_opa = LV_OPA_COVER;
+    body.bg_color = body_color;
+    body.border_width = 0;
+    lv_draw_rect_dsc_t lamp;
+    lv_draw_rect_dsc_init(&lamp);
+    lamp.radius = 0;
+    lamp.bg_color = window;
+    lamp.bg_opa = LV_OPA_70;
+    lamp.border_width = 0;
+    for(std::size_t i = 0; i < count; ++i) {
+        const Tower &tower = towers[i];
+        const int far_x = std::max(std::abs(static_cast<int>(tower.x)),
+                                   std::abs(tower.x + tower.width));
+        if(far_x >= kFootReach) continue;
+        const int foot = static_cast<int>(std::sqrt(static_cast<double>(
+            kFootReach * kFootReach - far_x * far_x)));
+        if(tower.top >= foot) continue;
+        const int bottom =
+            far_x >= kLampReach
+                ? tower.top
+                : static_cast<int>(std::sqrt(static_cast<double>(
+                      kLampReach * kLampReach - far_x * far_x)));
+        lv_area_t area{cx + tower.x, cy + tower.top,
+                       cx + tower.x + tower.width - 1, cy + foot};
+        lv_draw_rect(layer, &body, &area);
+        if(tower.spire > 0) {
+            lv_draw_triangle_dsc_t spire;
+            lv_draw_triangle_dsc_init(&spire);
+            spire.color = body_color;
+            spire.opa = LV_OPA_COVER;
+            const lv_value_precise_t mid =
+                cx + tower.x + tower.width / 2.0F;
+            spire.p[0] = {mid, static_cast<lv_value_precise_t>(
+                                   cy + tower.top - tower.spire)};
+            spire.p[1] = {mid - 4, static_cast<lv_value_precise_t>(
+                                       cy + tower.top)};
+            spire.p[2] = {mid + 4, static_cast<lv_value_precise_t>(
+                                       cy + tower.top)};
+            lv_draw_triangle(layer, &spire);
+        }
+        if(!lit) continue;
+        // A few lit windows, placed by a fixed hash so the city never
+        // flickers between frames.
+        for(int row = cy + tower.top + 6; row + 3 < cy + bottom - 4;
+            row += 9) {
+            for(int col = cx + tower.x + 4; col + 2 < cx + tower.x +
+                                                   tower.width - 3;
+                col += 6) {
+                const unsigned hash =
+                    static_cast<unsigned>(row * 73856093) ^
+                    static_cast<unsigned>(col * 19349663) ^
+                    static_cast<unsigned>(i * 83492791);
+                if(hash % 7U != 0U) continue;
+                lv_area_t pane{col, row, col + 1, row + 2};
+                lv_draw_rect(layer, &lamp, &pane);
+            }
+        }
+    }
+}
+
+void draw_skyline(lv_event_t *event) {
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    const auto *given =
+        static_cast<const MapPalette *>(lv_event_get_user_data(event));
+    const MapPalette &palette = given != nullptr ? *given : ui.palette;
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    const int cx = area.x1 + MOTO_UI_CANVAS_WIDTH / 2;
+    const int cy = area.y1 + MOTO_UI_CANVAS_HEIGHT / 2;
+    lv_layer_t *layer = lv_event_get_layer(event);
+    // A screen that clips to the circle itself (waiting screen, boot) lets
+    // the feet run past the glass; a page relies on its casing.
+    const int reach = lv_obj_has_flag(object, LV_OBJ_FLAG_USER_1) ? 240 : 210;
+    // A caller's own palette (the boot's dusk) is drawn as given: towers in
+    // its building tones, lamps in its sky. Otherwise, by night the city is
+    // lit in clock gold on near-black towers; by day it is a print, two pale
+    // greys on the newsprint with paper windows, so it never outweighs the
+    // ink numerals above it.
+    const bool night = lv_color_luminance(palette.ground) < 128;
+    const bool own = given != nullptr;
+    const lv_color_t window = (night && !own) ? palette.hud : palette.ground;
+    const lv_color_t far = (night || own) ? palette.building_landmark
+                                          : palette.road_class[3];
+    const lv_color_t near = (night || own) ? palette.building
+                                           : palette.road_class[4];
+    draw_towers(layer, kFarTowers, sizeof(kFarTowers) / sizeof(kFarTowers[0]),
+                cx, cy, far, window, night && !own, reach);
+    draw_towers(layer, kNearTowers,
+                sizeof(kNearTowers) / sizeof(kNearTowers[0]), cx, cy, near,
+                window, true, reach);
+}
+
+// Full-canvas skyline layer. `palette` is for screens drawn before the tree
+// has a theme (the boot sequence); pages pass nullptr and follow ui.palette.
+constexpr int kPageSkylineDrop = 22;
+
+lv_obj_t *make_skyline(lv_obj_t *parent, const MapPalette *palette) {
+    lv_obj_t *sky = lv_obj_create(parent);
+    lv_obj_remove_style_all(sky);
+    lv_obj_clear_flag(sky, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(sky, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(sky, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_size(sky, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_pos(sky, 0, 0);
+    lv_obj_set_name_static(sky, "moto-skyline");
+    lv_obj_add_event_cb(sky, draw_skyline, LV_EVENT_DRAW_MAIN,
+                        const_cast<MapPalette *>(palette));
+    return sky;
+}
+
+// A tool page's skyline goes between its paper disc and its casing, so the
+// casing trims the towers' feet to the glass.
+void add_page_skyline(lv_obj_t *page) {
+    lv_obj_t *sky = make_skyline(page, nullptr);
+    // Lowered on the tool pages so the city stays under the secondary row.
+    lv_obj_set_y(sky, kPageSkylineDrop);
+    lv_obj_move_to_index(sky, 1);
+}
+
+// MOTO_UI_PAGE_SPEED is the Speed·G page in this tree (DESIGN_V2 §7): a
+// friction circle with speed small. The old speed-only page duplicated the
+// compass and is gone. Swipe order and dots follow this list; the second slot
+// is where §2.2 puts Speed·G.
+constexpr moto_ui_page_t kPagerOrder[] = {
+    MOTO_UI_PAGE_NAVIGATION, MOTO_UI_PAGE_SPEED, MOTO_UI_PAGE_PERFORMANCE,
+    MOTO_UI_PAGE_LEAN, MOTO_UI_PAGE_COMPASS, MOTO_UI_PAGE_MUSIC};
+constexpr int kPagerCount =
+    static_cast<int>(sizeof(kPagerOrder) / sizeof(kPagerOrder[0]));
+
+moto_ui_page_t resolve_page(moto_ui_page_t page) { return page; }
+
+int pager_slot(moto_ui_page_t page) {
+    for(int slot = 0; slot < kPagerCount; ++slot) {
+        if(kPagerOrder[slot] == page) return slot;
+    }
+    return 0;
 }
 
 void update_page_dots() {
-    for(int i = 0; i < MOTO_UI_PAGE_COUNT; ++i) {
-        const bool active = i == static_cast<int>(ui.page);
+    for(int i = 0; i < kPagerCount; ++i) {
+        const bool active = kPagerOrder[i] == ui.page;
         const int width = px(active ? 16 : 5);
         lv_obj_set_size(ui.page_dots[i], width, px(5));
         lv_obj_set_style_radius(ui.page_dots[i], px(3), 0);
@@ -915,7 +1176,7 @@ void update_page_dots() {
         // The dots ride the casing, not a straight row: at y=+203 the outer
         // ends of a row sit outside the glass (v2 review §4).
         const double radius = 203.0;
-        const double dx = (i - (MOTO_UI_PAGE_COUNT - 1) / 2.0) * px(22);
+        const double dx = (i - (kPagerCount - 1) / 2.0) * px(22);
         const double dy = std::sqrt(radius * radius - dx * dx);
         lv_obj_set_x(ui.page_dots[i],
                      static_cast<int>(std::lround(
@@ -968,6 +1229,7 @@ void install_interaction_wake(lv_obj_t *object) {
 
 void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
     if(page < MOTO_UI_PAGE_NAVIGATION || page >= MOTO_UI_PAGE_COUNT) return;
+    page = resolve_page(page);
     // The boot and power-off screens clean the widget tree and reset the page
     // pointers. A snapshot that arrives during that window (the BLE task can
     // still deliver one before the PMIC cuts power) must not touch LVGL: the
@@ -997,15 +1259,15 @@ void gesture_event(lv_event_t *) {
     lv_indev_t *indev = lv_indev_active();
     if(indev == nullptr) return;
     const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
-    int next = static_cast<int>(ui.page);
+    int slot = pager_slot(ui.page);
     if(direction == LV_DIR_LEFT) {
-        next = (next + 1) % MOTO_UI_PAGE_COUNT;
+        slot = (slot + 1) % kPagerCount;
     } else if(direction == LV_DIR_RIGHT) {
-        next = (next + MOTO_UI_PAGE_COUNT - 1) % MOTO_UI_PAGE_COUNT;
+        slot = (slot + kPagerCount - 1) % kPagerCount;
     } else {
         return;
     }
-    const auto requested = static_cast<moto_ui_page_t>(next);
+    const moto_ui_page_t requested = kPagerOrder[slot];
     if(ui.page_callback != nullptr) {
         ui.page_callback(requested, ui.page_callback_context);
     } else {
@@ -1147,12 +1409,19 @@ void draw_building_fills(lv_event_t *event) {
     }
 }
 
+// Total extra width of a road's casing (one pixel each side at 466 px).
+constexpr int32_t kRoadCasingPx = 3;
+
 void draw_map_polyline(lv_event_t *event) {
     lv_obj_t *object = lv_event_get_target_obj(event);
     const auto code = lv_event_get_code(event);
     if(code == LV_EVENT_REFR_EXT_DRAW_SIZE) {
+        // Plus the casing margin: a road's dirty area must also cover the
+        // casing layer's stroke under it, so that layer never needs its own
+        // full-canvas invalidation.
         auto *size = static_cast<int32_t *>(lv_event_get_param(event));
-        *size = std::max(*size, lv_obj_get_style_line_width(object, LV_PART_MAIN));
+        *size = std::max(*size, lv_obj_get_style_line_width(object, LV_PART_MAIN) +
+                                    kRoadCasingPx);
         return;
     }
     if(code != LV_EVENT_DRAW_MAIN) return;
@@ -1175,6 +1444,38 @@ void draw_map_polyline(lv_event_t *event) {
         line.p2.y += object_area.y1;
         draw_map_line(layer, line);
         line.round_start = 0;
+    }
+}
+
+// GTA III radar grammar: each road is a light stroke on a dark casing. The
+// casing pass draws every visible road wider, in the casing colour, before
+// any road is drawn.
+void draw_road_casings(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.base.layer = layer;
+    line.color = ui.palette.route_shadow;
+    line.opa = LV_OPA_COVER;
+    line.round_start = 1;
+    line.round_end = 1;
+    for(std::uint8_t i = 0; i < ui.nav_road_polyline_count; ++i) {
+        lv_obj_t *road = ui.nav_roads[i];
+        if(road == nullptr || lv_obj_has_flag(road, LV_OBJ_FLAG_HIDDEN)) continue;
+        const MapPolyline &polyline = ui.nav_road_lines[i];
+        if(polyline.points == nullptr || polyline.count < 2) continue;
+        lv_area_t area;
+        lv_obj_get_coords(road, &area);
+        line.width = lv_obj_get_style_line_width(road, LV_PART_MAIN) + kRoadCasingPx;
+        for(std::uint16_t index = 1; index < polyline.count; ++index) {
+            line.p1 = polyline.points[index - 1];
+            line.p2 = polyline.points[index];
+            line.p1.x += area.x1;
+            line.p2.x += area.x1;
+            line.p1.y += area.y1;
+            line.p2.y += area.y1;
+            draw_map_line(layer, line);
+        }
     }
 }
 
@@ -2032,7 +2333,7 @@ void update_navigation(const moto_ui_state_t *state) {
     lv_label_set_text(ui.nav_unit, unit);
     // This number is never the total trip distance. Its physical attachment to
     // the maneuver glyph makes that meaning clear without an explanatory label.
-    lv_obj_align(ui.nav_distance, LV_ALIGN_TOP_LEFT, px(151), px(244));
+    lv_obj_align(ui.nav_distance, LV_ALIGN_TOP_LEFT, px(175), px(212));
     lv_obj_align_to(ui.nav_unit, ui.nav_distance, LV_ALIGN_OUT_RIGHT_BOTTOM,
                     px(6), px(-7));
 
@@ -2046,31 +2347,6 @@ void update_navigation(const moto_ui_state_t *state) {
         lv_obj_remove_flag(ui.nav_limit, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(ui.nav_limit, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-void update_speedometer(const moto_ui_state_t *state) {
-    if(ui.speed_value == nullptr) return;
-    const bool moving = state->speed_kph > 0;
-    char value[8];
-    if(moving) {
-        std::snprintf(value, sizeof(value), "%u",
-                      static_cast<unsigned>(state->speed_kph));
-    } else {
-        std::snprintf(value, sizeof(value), "0");
-    }
-    lv_label_set_text(ui.speed_value, value);
-    if(ui.speed_drawn != state->speed_kph) {
-        ui.speed_drawn = state->speed_kph;
-        lv_obj_invalidate(ui.speed_gauge);
-    }
-    if(state->speed_limit_kph > 0) {
-        std::snprintf(value, sizeof(value), "%u",
-                      static_cast<unsigned>(state->speed_limit_kph));
-        lv_label_set_text(ui.speed_limit_value, value);
-        lv_obj_remove_flag(ui.speed_limit, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(ui.speed_limit, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -2225,11 +2501,19 @@ void update_performance(const moto_ui_state_t *state) {
 
 }
 
-// Four spans along the datum line, each keeping the old and new position of
+// Eight spans along the datum line, each keeping the old and new position of
 // that span. The dirty rectangles stay thin, so the scene's paper fill and the
-// hero are not redrawn across the whole rotated bounding box. The clip stays
-// inside r=196 so the frame rings above the scene are never touched.
-constexpr int kLeanInvalidSegments = 4;
+// hero are not redrawn across the whole rotated bounding box, and all but the
+// two end spans stay inside the casing, where the rim draw is culled
+// (clip_inside_radius). The horizon now moves every frame, so strip area is
+// the page's render cost.
+constexpr int kLeanInvalidSegments = 8;
+constexpr double kLeanHorizonHalfSpan = 176.0;
+// The hero sits above the horizon's resting line instead of on it, and the
+// horizon passes behind a paper window cut around the digits, so the datum
+// can never run through the number at any lean.
+constexpr int kLeanHeroLiftPx = -30;
+constexpr int kLeanHeroWindowPad = 8;
 
 void lean_point(float lean, double along, double &x, double &y) {
     constexpr double kHorizon = 74.0;
@@ -2254,8 +2538,9 @@ void invalidate_lean_change(float old_lean, float new_lean) {
         area.x2 = std::min(area.x2, cx + kInner);
         area.y2 = std::min(area.y2, cy + kInner);
     };
-    constexpr double kSpan = 352.0;
-    constexpr double kPad = 8.0;
+    constexpr double kSpan = kLeanHorizonHalfSpan * 2.0;
+    // Half the 11 px casing stroke plus antialiasing.
+    constexpr double kPad = 7.0;
     for(int i = 0; i < kLeanInvalidSegments; ++i) {
         const double t0 = -kSpan / 2.0 + kSpan * i / kLeanInvalidSegments;
         const double t1 =
@@ -2293,38 +2578,33 @@ void invalidate_lean_change(float old_lean, float new_lean) {
     }
 }
 
-void update_lean(const moto_ui_state_t *state) {
-    if(ui.lean_scene == nullptr) return;
-    const bool has = state->has_attitude != 0;
-    const float lean = has ? static_cast<float>(state->lean_deg) : 0.0F;
+// The hero is painted by the scene, so a new string has to dirty its own box:
+// the horizon strips only cross the bottom of it.
+void invalidate_lean_hero(const char *text) {
+    if(ui.lean_scene == nullptr || text == nullptr || text[0] == '\0') return;
+    lv_point_t size;
+    lv_text_get_size(&size, text, &moto_font_hero_176, 0, 0, LV_COORD_MAX,
+                     LV_TEXT_FLAG_NONE);
+    const int32_t halo = std::max(px(5), kLeanHeroWindowPad) + 2;
+    lv_area_t area;
+    area.x1 = MOTO_UI_CANVAS_WIDTH / 2 - size.x / 2 - halo;
+    area.y1 = MOTO_UI_CANVAS_HEIGHT / 2 + kLeanHeroLiftPx - size.y / 2 - halo;
+    area.x2 = area.x1 + size.x + 2 * halo;
+    area.y2 = area.y1 + size.y + 2 * halo;
+    lv_obj_invalidate_area(ui.lean_scene, &area);
+}
 
-    // Peaks are data, not pixels: keep them at the sample rate so a short
-    // spike cannot fall between two display frames.
-    if(has) {
-        ui.lean_peak_left = std::max(ui.lean_peak_left, -lean);
-        ui.lean_peak_right = std::max(ui.lean_peak_right, lean);
-    }
-
-    // DESIGN_V2 §2.7: lean is a 10 Hz / 1 deg / 0.6 deg-hysteresis display.
-    // The estimator still runs at 112 Hz; only the page is throttled. This is
-    // also what keeps one full-page repaint off the 40 Hz render budget.
-    const std::uint32_t now = lv_tick_get();
-    const bool has_changed = ui.lean_has != has;
-    const bool due = static_cast<std::uint32_t>(now - ui.lean_scene_tick_ms) >=
-                     100U;
-    const bool moved = std::fabs(ui.lean_deg - lean) > 0.6F;
-    if(!(has_changed || ui.lean_scene_dirty || (due && moved))) return;
-
-    const float previous_lean = ui.lean_deg;
-    ui.lean_has = has;
-    ui.lean_deg = lean;
-    ui.lean_scene_dirty = false;
-    ui.lean_scene_tick_ms = now;
-
+void update_lean_text(bool has, float lean) {
     char text[24];
+    invalidate_lean_hero(ui.lean_text);
     if(has) {
-        std::snprintf(ui.lean_text, sizeof(ui.lean_text), "%+0.0f°",
-                      static_cast<double>(lean));
+        // Unsigned (DESIGN_V2 §6): the side is the horizon's tilt, the rim
+        // blip and the L/R plates. The sign glyph made the hero a third wider
+        // and pushed it into the horizon.
+        const double magnitude = std::fabs(static_cast<double>(lean));
+        std::snprintf(ui.lean_text, sizeof(ui.lean_text), "%0.0f°",
+                      magnitude < 1.5 ? 0.0 : magnitude);
+        invalidate_lean_hero(ui.lean_text);
         if(ui.lean_peak_left > 0.5F) {
             std::snprintf(text, sizeof(text), "L %0.0f°",
                           static_cast<double>(ui.lean_peak_left));
@@ -2352,6 +2632,45 @@ void update_lean(const moto_ui_state_t *state) {
         lv_label_set_text(ui.lean_max_r, "R --");
         lv_obj_remove_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void update_lean(const moto_ui_state_t *state) {
+    if(ui.lean_scene == nullptr) return;
+    const bool has = state->has_attitude != 0;
+    const float lean = has ? static_cast<float>(state->lean_deg) : 0.0F;
+
+    // Peaks are data, not pixels: keep them at the sample rate so a short
+    // spike cannot fall between two display frames.
+    if(has) {
+        ui.lean_peak_left = std::max(ui.lean_peak_left, -lean);
+        ui.lean_peak_right = std::max(ui.lean_peak_right, lean);
+    }
+
+    // DESIGN_V2 §2.7: "graphics at frame rate, numbers at the table rate".
+    // The horizon, sun and rim blip follow every sample; only the numerals
+    // are a 10 Hz / 1 deg / 0.6 deg-hysteresis display. Throttling the whole
+    // scene to 10 Hz is what made the horizon step instead of turn.
+    const std::uint32_t now = lv_tick_get();
+    const bool has_changed = ui.lean_has != has;
+    // A quarter degree is under a pixel at the horizon's ends (r=191), so
+    // sensor noise below it never costs a frame.
+    const bool scene_moved = std::fabs(ui.lean_deg - lean) >= 0.25F;
+    const bool text_due =
+        static_cast<std::uint32_t>(now - ui.lean_text_tick_ms) >= 100U &&
+        std::fabs(ui.lean_text_deg - lean) > 0.6F;
+    const bool text_update = has_changed || ui.lean_scene_dirty || text_due;
+    if(!(text_update || (has && scene_moved))) return;
+
+    const float previous_lean = ui.lean_deg;
+    ui.lean_has = has;
+    ui.lean_deg = lean;
+    ui.lean_scene_dirty = false;
+
+    if(text_update) {
+        ui.lean_text_tick_ms = now;
+        ui.lean_text_deg = lean;
+        update_lean_text(has, lean);
     }
 
     invalidate_lean_change(previous_lean, lean);
@@ -2400,7 +2719,7 @@ void music_button_event(lv_event_t *event) {
 }
 
 void create_page_dots() {
-    for(int i = 0; i < MOTO_UI_PAGE_COUNT; ++i) {
+    for(int i = 0; i < kPagerCount; ++i) {
         ui.page_dots[i] = lv_obj_create(ui.screen);
         lv_obj_remove_style_all(ui.page_dots[i]);
         lv_obj_set_size(ui.page_dots[i], px(5), px(5));
@@ -2495,11 +2814,11 @@ void draw_radar_ring(lv_event_t *event) {
     dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
     dsc.radius = kDialBandOuter;
     dsc.width = kDialBandWidth;
-    dsc.color = ui.palette.map_ink;
+    dsc.color = ui.palette.on_accent;
     dsc.opa = LV_OPA_COVER;
     dsc.rounded = 0;
-    // The band is the progress bar: cream replaces magenta clockwise from
-    // twelve o'clock, the same grammar the speed page uses.
+    // The band is the progress bar: the band's own ink fills it clockwise
+    // from twelve o'clock, the same grammar the speed page uses.
     double cursor = 270.0;
     double left = ui.nav_radar_progress * 3.6;
 
@@ -2585,6 +2904,14 @@ void create_navigation_page() {
     // its own LVGL line so disconnected streets are never joined by a fake
     // diagonal. The bundled Jinan fixture uses all eight bounded slots; a
     // future online provider must simplify its response to the same limit.
+    ui.nav_road_casing = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_road_casing);
+    lv_obj_remove_flag(ui.nav_road_casing, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(ui.nav_road_casing, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.nav_road_casing, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_pos(ui.nav_road_casing, 0, 0);
+    lv_obj_add_event_cb(ui.nav_road_casing, draw_road_casings,
+                        LV_EVENT_DRAW_MAIN, nullptr);
     for(std::uint8_t i = 0; i < MOTO_UI_ROAD_POLYLINE_CAPACITY; ++i) {
         ui.nav_roads[i] = create_map_polyline(ui.nav_map, ui.nav_road_lines[i]);
         lv_obj_set_size(ui.nav_roads[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
@@ -2643,7 +2970,10 @@ void create_navigation_page() {
     ui.nav_maneuver = lv_obj_create(page);
     lv_obj_remove_style_all(ui.nav_maneuver);
     lv_obj_set_size(ui.nav_maneuver, px(116), px(108));
-    lv_obj_set_pos(ui.nav_maneuver, px(29), px(220));
+    // Every glyph stays within 143 design px of the centre: inside the ring
+    // the north badge rides, so the two can never meet. At (29,220) a turn's
+    // stem ran out past the glass and under the badge.
+    lv_obj_set_pos(ui.nav_maneuver, px(50), px(172));
     lv_obj_clear_flag(ui.nav_maneuver, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui.nav_maneuver, draw_maneuver_icon,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
@@ -2675,12 +3005,18 @@ void create_navigation_page() {
     lv_obj_set_size(ui.nav_north, px(kNorthBadgeSizeDesign),
                     px(kNorthBadgeSizeDesign));
     lv_obj_set_style_radius(ui.nav_north, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.nav_north, kBlack, 0);
-    lv_obj_set_style_bg_opa(ui.nav_north, LV_OPA_80, 0);
+    // Not themed: the badge rides the black casing in both themes, so a
+    // themed ink letter vanished by day (black on black). Cream face, black
+    // letter and edge, like the speed-limit sign.
+    lv_obj_set_style_bg_color(ui.nav_north, kLimitFace, 0);
+    lv_obj_set_style_bg_opa(ui.nav_north, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ui.nav_north, kOutlineBlack, 0);
+    lv_obj_set_style_border_width(ui.nav_north, px(2), 0);
+    lv_obj_set_style_border_opa(ui.nav_north, LV_OPA_COVER, 0);
     lv_obj_clear_flag(ui.nav_north, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_name_static(ui.nav_north, "moto-compass-north");
     lv_obj_t *north_glyph =
-        make_text(ui.nav_north, &moto_font_display_18, TextRole::Ink, "N");
+        make_label(ui.nav_north, &moto_font_display_18, kOutlineBlack, "N");
     lv_obj_center(north_glyph);
 
     // One line, three seconds, and only when the phone refuses the tap. The
@@ -2738,6 +3074,10 @@ void create_navigation_page() {
     // full-bleed poster furniture (footer bar, corner credits) and pushes the
     // composition the other way - one oversized headline in the widest band of
     // the circle, an accent slash cut by the bezel, and a single status chip.
+    // The waiting screen is a cover: the city sits under its headline. The
+    // layer clips to the circle, so the towers may run past the glass.
+    lv_obj_add_flag(make_skyline(ui.nav_lifecycle, nullptr),
+                    LV_OBJ_FLAG_USER_1);
     lv_obj_t *slash = lv_obj_create(ui.nav_lifecycle);
     lv_obj_remove_style_all(slash);
     lv_obj_clear_flag(slash, LV_OBJ_FLAG_CLICKABLE);
@@ -2792,59 +3132,6 @@ void create_navigation_page() {
     ui.lifecycle_target = LifecycleVisual::PhoneOffline;
 }
 
-void draw_speed_gauge(lv_event_t *event) {
-    const int speed = std::min<int>(160, ui.speed_drawn);
-    if(speed <= 0) return;
-    lv_layer_t *layer = lv_event_get_layer(event);
-    const double sweep = 360.0 * speed / 160.0;
-    lv_draw_arc_dsc_t dsc;
-    lv_draw_arc_dsc_init(&dsc);
-    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
-    dsc.radius = kDialBandOuter;
-    dsc.width = kDialBandWidth;
-    dsc.rounded = 0;
-    dsc.color = ui.palette.map_ink;
-    dsc.opa = LV_OPA_COVER;
-    // The band itself is the speedometer: magenta is the unlit part, cream is
-    // the speed. One gauge, no second ring, no ticks to read.
-    double cursor = 270.0;
-    double left = sweep;
-    while(left > 0.001) {
-        const double step = std::min(90.0, left);
-        dsc.start_angle = static_cast<lv_value_precise_t>(cursor);
-        dsc.end_angle = static_cast<lv_value_precise_t>(cursor + step);
-        lv_draw_arc(layer, &dsc);
-        cursor += step;
-        if(cursor >= 360.0) cursor -= 360.0;
-        left -= step;
-    }
-}
-
-void create_speed_page() {
-    lv_obj_t *page = ui.pages[MOTO_UI_PAGE_SPEED];
-    make_page_surface(page, MOTO_UI_PAGE_SPEED);
-
-    ui.speed_gauge = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.speed_gauge);
-    lv_obj_clear_flag(ui.speed_gauge, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.speed_gauge, MOTO_UI_CANVAS_WIDTH,
-                    MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_add_event_cb(ui.speed_gauge, draw_speed_gauge, LV_EVENT_DRAW_MAIN,
-                        nullptr);
-
-    ui.speed_value = make_text(page, &moto_font_hero_176, TextRole::Display,
-                               "0");
-    lv_obj_align(ui.speed_value, LV_ALIGN_CENTER, 0, -px(34));
-
-    lv_obj_t *unit = make_slab(page, "KM/H", 108, 32);
-    lv_obj_align(unit, LV_ALIGN_CENTER, 0, px(66));
-
-    // Speed-limit sign, the one prop a rider already knows how to read.
-    ui.speed_limit = make_speed_limit_sign(page, 52);
-    lv_obj_align(ui.speed_limit, LV_ALIGN_CENTER, px(96), px(74));
-    ui.speed_limit_value = lv_obj_get_child(ui.speed_limit, 0);
-}
-
 void draw_compass_marks(lv_event_t *event) {
     lv_layer_t *layer = lv_event_get_layer(event);
     const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
@@ -2863,14 +3150,15 @@ void draw_compass_marks(lv_event_t *event) {
             pt(cx + sx * (major ? 223.0 : 218.0),
                cy + sy * (major ? 223.0 : 218.0)),
         };
-        draw_segment(layer, ui.palette.map_ink, major ? 3 : 2, LV_OPA_COVER,
+        draw_segment(layer, ui.palette.on_accent, major ? 3 : 2, LV_OPA_COVER,
                      pts, 2);
     }
-    // Fixed index at twelve o'clock: a cream wedge with an ink casing.
+    // Fixed index at twelve o'clock: a HUD-orange wedge, visible on the band
+    // and on the casing in both themes.
     lv_draw_triangle_dsc_t tri;
     lv_draw_triangle_dsc_init(&tri);
     tri.opa = LV_OPA_COVER;
-    tri.color = kOutlineBlack;
+    tri.color = ui.palette.route;
     tri.p[0] = pt(cx - 9.0, cy - 223.0);
     tri.p[1] = pt(cx + 9.0, cy - 223.0);
     tri.p[2] = pt(cx, cy - 198.0);
@@ -2885,6 +3173,7 @@ void draw_compass_marks(lv_event_t *event) {
 void create_compass_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_COMPASS];
     make_page_surface(page, MOTO_UI_PAGE_COMPASS);
+    add_page_skyline(page);
 
     ui.compass_marks = lv_obj_create(page);
     lv_obj_remove_style_all(ui.compass_marks);
@@ -2911,6 +3200,7 @@ void create_compass_page() {
 void create_performance_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_PERFORMANCE];
     make_page_surface(page, MOTO_UI_PAGE_PERFORMANCE);
+    add_page_skyline(page);
 
     // State first: a drag strip answers "is the clock running" before it
     // answers "how fast".
@@ -2932,7 +3222,7 @@ void create_performance_page() {
     lv_obj_remove_style_all(ui.perf_strip);
     lv_obj_clear_flag(ui.perf_strip, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(ui.perf_strip, px(284), px(16));
-    lv_obj_align(ui.perf_strip, LV_ALIGN_CENTER, 0, px(72));
+    lv_obj_align(ui.perf_strip, LV_ALIGN_CENTER, 0, px(62));
     for(int i = 0; i < kPerfSegmentCount; ++i) {
         lv_obj_t *segment = lv_obj_create(ui.perf_strip);
         lv_obj_remove_style_all(segment);
@@ -2947,10 +3237,13 @@ void create_performance_page() {
     // BEST and the delta are one row of secondary values. The delta label was
     // referenced by the state machine since the page was introduced but never
     // created, so PB/delta feedback never rendered (v2 fixes the dead code).
+    // Offsets are design units like every other HUD measurement: raw pixels
+    // here put the slab on top of the strip. The row sits one gap under the
+    // strip and stays inside the casing at its outer corners.
     lv_obj_t *best = make_slab(page, "BEST --.-", 132, 30, &ui.perf_best);
-    lv_obj_align(best, LV_ALIGN_CENTER, -52, 112);
-    ui.perf_delta = make_text(page, &moto_font_display_40, TextRole::Ink, "");
-    lv_obj_align(ui.perf_delta, LV_ALIGN_CENTER, 92, 112);
+    lv_obj_align(best, LV_ALIGN_CENTER, -px(30), px(98));
+    ui.perf_delta = make_text(page, &moto_font_display_24, TextRole::Ink, "");
+    lv_obj_align_to(ui.perf_delta, best, LV_ALIGN_OUT_RIGHT_MID, px(8), 0);
 
     // The stopwatch runs on its own timer: state snapshots arrive at the BLE
     // cadence, but the clock has to move between them.
@@ -3090,14 +3383,17 @@ void lean_status_tick(lv_timer_t *) {
             std::snprintf(text, sizeof(text), "CAL FAIL\nRANGE");
             break;
         default:
-            if((flags & 8U) != 0U) {
+            // CAL first: until the mount is calibrated the number above is
+            // not the bike's Lean, and a full ride log used to hide that
+            // prompt for good.
+            if((flags & 1U) != 0U) {
+                std::snprintf(text, sizeof(text), "CAL");
+            } else if((flags & 8U) != 0U) {
                 std::snprintf(text, sizeof(text), "LOG DIRTY");
             } else if((flags & 4U) != 0U) {
                 std::snprintf(text, sizeof(text), "LOG FULL");
             } else if((flags & 2U) != 0U) {
                 std::snprintf(text, sizeof(text), "IMU POLL");
-            } else if((flags & 1U) != 0U) {
-                std::snprintf(text, sizeof(text), "CAL");
             } else {
                 visible = false;
                 text[0] = '\0';
@@ -3113,6 +3409,8 @@ void lean_status_tick(lv_timer_t *) {
 }
 
 void draw_lean_marks_layer(lv_layer_t *layer) {
+    // Every mark starts at r >= 198 (the zero bar's inner end, minus its cap).
+    if(clip_inside_radius(layer, 194)) return;
     const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
     const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
     // A protractor printed on the band: every 15 degrees, long marks at the
@@ -3127,12 +3425,12 @@ void draw_lean_marks_layer(lv_layer_t *layer) {
             pt(cx + sx * (major ? 223.0 : 218.0),
                cy + sy * (major ? 223.0 : 218.0)),
         };
-        draw_segment(layer, ui.palette.map_ink, major ? 3 : 2, LV_OPA_COVER,
+        draw_segment(layer, ui.palette.on_accent, major ? 3 : 2, LV_OPA_COVER,
                      pts, 2);
     }
     // The zero reference: the only mark that is a bar rather than a tick.
     lv_point_precise_t zero[2] = {pt(cx, cy - 223.0), pt(cx, cy - 198.0)};
-    draw_segment(layer, ui.palette.map_ink, 5, LV_OPA_COVER, zero, 2);
+    draw_segment(layer, ui.palette.route, 5, LV_OPA_COVER, zero, 2);
 }
 
 // The lean page is an artificial horizon, not a bar graph. The bike is the
@@ -3237,8 +3535,8 @@ void draw_lean_scene(lv_event_t *event) {
         const std::uint64_t started =
             (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
         double hx1, hy1, hx2, hy2;
-        at(-176.0, horizon, hx1, hy1);
-        at(176.0, horizon, hx2, hy2);
+        at(-kLeanHorizonHalfSpan, horizon, hx1, hy1);
+        at(kLeanHorizonHalfSpan, horizon, hx2, hy2);
         lv_point_precise_t line[2] = {pt(hx1, hy1), pt(hx2, hy2)};
         draw_segment(layer, ui.palette.outline, 11, LV_OPA_COVER, line, 2);
         draw_segment(layer, ui.palette.ink, 5, LV_OPA_COVER, line, 2);
@@ -3257,7 +3555,7 @@ void draw_lean_scene(lv_event_t *event) {
         lv_draw_label_dsc_init(&label);
         label.text = ui.lean_text;
         label.font = &moto_font_hero_176;
-        label.color = ui.palette.ink;
+        label.color = ui.palette.hud;
         label.align = LV_TEXT_ALIGN_LEFT;
         label.opa = LV_OPA_COVER;
         const int halo_width =
@@ -3271,9 +3569,25 @@ void draw_lean_scene(lv_event_t *event) {
                         LV_COORD_MAX, LV_TEXT_FLAG_NONE);
         lv_area_t area;
         area.x1 = static_cast<int32_t>(std::lround(cx - size.x / 2.0));
-        area.y1 = static_cast<int32_t>(std::lround(cy - size.y / 2.0));
+        area.y1 = static_cast<int32_t>(
+            std::lround(cy + kLeanHeroLiftPx - size.y / 2.0));
         area.x2 = area.x1 + size.x - 1;
         area.y2 = area.y1 + size.y - 1;
+        // The window covers the drawn digits (cap height above the baseline),
+        // not the font's full line box, so it does not eat the sky above.
+        const lv_font_t *hero = &moto_font_hero_176;
+        lv_draw_rect_dsc_t window;
+        lv_draw_rect_dsc_init(&window);
+        window.bg_color = ui.palette.ground;
+        window.bg_opa = LV_OPA_COVER;
+        window.radius = 0;
+        lv_area_t window_area = area;
+        window_area.x1 -= kLeanHeroWindowPad;
+        window_area.x2 += kLeanHeroWindowPad;
+        window_area.y2 = area.y2 - hero->base_line + kLeanHeroWindowPad;
+        window_area.y1 = window_area.y2 - hero->line_height * 7 / 8 -
+                         2 * kLeanHeroWindowPad;
+        lv_draw_rect(layer, &window, &window_area);
         lv_draw_label(layer, &label, &area);
         if(started != 0) {
             g_debug_stats.hero_us +=
@@ -3345,7 +3659,9 @@ void create_lean_page() {
     lv_obj_clear_flag(ui.lean_blip, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(ui.lean_blip, 14, 14);
     lv_obj_set_style_radius(ui.lean_blip, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.lean_blip, ui.palette.accent, 0);
+    // The rider point is "happening now": HUD orange, which reads on the
+    // black casing and on either band.
+    lv_obj_set_style_bg_color(ui.lean_blip, ui.palette.route, 0);
     lv_obj_set_style_bg_opa(ui.lean_blip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(ui.lean_blip, kOutlineBlack, 0);
     lv_obj_set_style_border_width(ui.lean_blip, 3, 0);
@@ -3391,9 +3707,278 @@ void create_lean_page() {
     ui.lean_status_timer = lv_timer_create(lean_status_tick, 100, nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// Speed·G. The friction circle is the page: lateral G across (right lean to
+// the right), longitudinal G up the middle (accelerating up, braking down),
+// rings at 0.5 / 1.0 / 1.5 g. The live dot is HUD orange like every "rider
+// now" mark; the envelope, the most the ride has asked of the tyres in each of
+// 16 directions, is drawn in HUD gold. Speed is a counter slab, small.
+
+constexpr int kGgCentreDy = 3;             // circle centre below the canvas centre
+constexpr int kGgRadius = 128;             // 1.5 g
+constexpr float kGgFullScale = 1.5F;
+constexpr float kGgPxPerG = kGgRadius / kGgFullScale;
+constexpr int kGgSectors = 16;
+constexpr int kGgTrail = 6;
+constexpr std::uint32_t kGgTrailStepMs = 250;   // 6 x 250 ms = 1.5 s
+constexpr float kGgDisplayTauS = 0.04F;   // 4 Hz display low-pass
+constexpr float kGgPeakTauS = 0.2F;       // peaks from 0.2 s means
+constexpr std::uint32_t kGgResetHoldMs = 2'000;
+constexpr int kGgDotSize = 18;
+
+void gg_point(float lat, float lon, int32_t &x, int32_t &y) {
+    // Clamp to the outer ring so a spike never leaves the instrument.
+    const float magnitude = std::sqrt(lat * lat + lon * lon);
+    if(magnitude > kGgFullScale) {
+        lat *= kGgFullScale / magnitude;
+        lon *= kGgFullScale / magnitude;
+    }
+    x = MOTO_UI_CANVAS_WIDTH / 2 +
+        static_cast<int32_t>(std::lround(lat * kGgPxPerG));
+    y = MOTO_UI_CANVAS_HEIGHT / 2 + kGgCentreDy -
+        static_cast<int32_t>(std::lround(lon * kGgPxPerG));
+}
+
+void clear_gg_envelope() {
+    for(float &sector : ui.gg_envelope) sector = 0.0F;
+    for(std::uint32_t &stamp : ui.gg_trail_ms) stamp = 0;
+    ui.gg_envelope_dirty = true;
+    if(ui.gg_plot != nullptr) lv_obj_invalidate(ui.gg_plot);
+}
+
+void accumulate_gg(const moto_ui_state_t *state) {
+    const bool has = state->has_attitude != 0 &&
+                     std::isfinite(state->lateral_g) &&
+                     std::isfinite(state->longitudinal_g);
+    ui.gg_has = has;
+    if(!has) {
+        ui.gg_seeded = false;
+        return;
+    }
+    const std::uint32_t now = lv_tick_get();
+    const float lat = std::clamp(state->lateral_g, -4.0F, 4.0F);
+    const float lon = std::clamp(state->longitudinal_g, -4.0F, 4.0F);
+    if(!ui.gg_seeded) {
+        ui.gg_lat = ui.gg_mean_lat = lat;
+        ui.gg_lon = ui.gg_mean_lon = lon;
+        ui.gg_last_ms = now;
+        ui.gg_seeded = true;
+    }
+    const float dt = std::clamp(
+        static_cast<float>(lv_tick_elaps(ui.gg_last_ms)) / 1000.0F, 0.0F,
+        0.25F);
+    ui.gg_last_ms = now;
+    const float k_display = 1.0F - std::exp(-dt / kGgDisplayTauS);
+    const float k_peak = 1.0F - std::exp(-dt / kGgPeakTauS);
+    ui.gg_lat += (lat - ui.gg_lat) * k_display;
+    ui.gg_lon += (lon - ui.gg_lon) * k_display;
+    ui.gg_mean_lat += (lat - ui.gg_mean_lat) * k_peak;
+    ui.gg_mean_lon += (lon - ui.gg_mean_lon) * k_peak;
+
+    const float peak = std::sqrt(ui.gg_mean_lat * ui.gg_mean_lat +
+                                 ui.gg_mean_lon * ui.gg_mean_lon);
+    if(peak > 0.05F) {
+        const float angle = std::atan2(ui.gg_mean_lon, ui.gg_mean_lat);
+        const float turn = angle < 0.0F ? angle + 2.0F * static_cast<float>(kPi)
+                                        : angle;
+        const int sector =
+            static_cast<int>(std::lround(turn / (2.0F * static_cast<float>(kPi)) *
+                                         kGgSectors)) % kGgSectors;
+        const float capped = std::min(peak, kGgFullScale);
+        if(capped > ui.gg_envelope[sector] + 0.01F) {
+            ui.gg_envelope[sector] = capped;
+            ui.gg_envelope_dirty = true;
+        }
+    }
+    if(lv_tick_elaps(ui.gg_trail_last_ms) >= kGgTrailStepMs) {
+        ui.gg_trail_last_ms = now;
+        ui.gg_trail_head = (ui.gg_trail_head + 1) % kGgTrail;
+        ui.gg_trail_lat[ui.gg_trail_head] = ui.gg_lat;
+        ui.gg_trail_lon[ui.gg_trail_head] = ui.gg_lon;
+        ui.gg_trail_ms[ui.gg_trail_head] = now | 1U;
+    }
+}
+
+void draw_gg_plot(lv_event_t *event) {
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const int32_t cx = MOTO_UI_CANVAS_WIDTH / 2;
+    const int32_t cy = MOTO_UI_CANVAS_HEIGHT / 2 + kGgCentreDy;
+
+    lv_draw_arc_dsc_t ring;
+    lv_draw_arc_dsc_init(&ring);
+    ring.center = {cx, cy};
+    ring.start_angle = 0;
+    ring.end_angle = 360;
+    ring.rounded = 0;
+    // Inner rings are scale, not content: thin and muted. The outer ring is
+    // the instrument's edge.
+    ring.color = ui.palette.muted;
+    ring.opa = LV_OPA_60;
+    ring.width = 2;
+    for(const float g : {0.5F, 1.0F}) {
+        ring.radius = static_cast<uint16_t>(std::lround(g * kGgPxPerG));
+        lv_draw_arc(layer, &ring);
+    }
+    ring.color = ui.palette.ink;
+    ring.opa = LV_OPA_COVER;
+    ring.width = 3;
+    ring.radius = kGgRadius;
+    lv_draw_arc(layer, &ring);
+
+    const lv_point_precise_t across[2] = {pt(cx - kGgRadius, cy),
+                                          pt(cx + kGgRadius, cy)};
+    const lv_point_precise_t up[2] = {pt(cx, cy - kGgRadius),
+                                      pt(cx, cy + kGgRadius)};
+    draw_segment(layer, ui.palette.muted, 1, LV_OPA_60, across, 2);
+    draw_segment(layer, ui.palette.muted, 1, LV_OPA_60, up, 2);
+
+    // Envelope: join neighbouring sectors the ride has reached; an unvisited
+    // direction is left open rather than drawn as a spike to the centre.
+    lv_point_precise_t corner[kGgSectors];
+    for(int i = 0; i < kGgSectors; ++i) {
+        const double angle = 2.0 * kPi * i / kGgSectors;
+        const double r = ui.gg_envelope[i] * kGgPxPerG;
+        corner[i] = pt(cx + std::cos(angle) * r, cy - std::sin(angle) * r);
+    }
+    // Casing first, all of it, then the gold: interleaving the two let each
+    // edge's casing cut the end of the one before, and the line read dashed.
+    for(int pass = 0; pass < 2; ++pass) {
+        for(int i = 0; i < kGgSectors; ++i) {
+            const int next = (i + 1) % kGgSectors;
+            if(ui.gg_envelope[i] <= 0.0F || ui.gg_envelope[next] <= 0.0F) {
+                continue;
+            }
+            const lv_point_precise_t edge[2] = {corner[i], corner[next]};
+            if(pass == 0) {
+                draw_segment(layer, ui.palette.outline, 7, LV_OPA_COVER, edge,
+                             2);
+            } else {
+                draw_segment(layer, ui.palette.hud, 3, LV_OPA_COVER, edge, 2);
+            }
+        }
+    }
+    ui.gg_envelope_dirty = false;
+}
+
+void gg_press_event(lv_event_t *) {
+    ui.gg_press_active = true;
+    ui.gg_press_start_ms = lv_tick_get();
+}
+
+void gg_release_event(lv_event_t *event) {
+    if(!ui.gg_press_active) return;
+    ui.gg_press_active = false;
+    if(lv_event_get_code(event) == LV_EVENT_PRESS_LOST) return;
+    // Same gesture as the Lean page's peak reset: hold two seconds.
+    if(lv_tick_elaps(ui.gg_press_start_ms) >= kGgResetHoldMs) {
+        clear_gg_envelope();
+    }
+}
+
+lv_obj_t *make_gg_mark(lv_obj_t *parent, int size, lv_opa_t opa) {
+    lv_obj_t *mark = lv_obj_create(parent);
+    lv_obj_remove_style_all(mark);
+    lv_obj_clear_flag(mark, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(mark, size, size);
+    lv_obj_set_style_radius(mark, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(mark, ui.palette.route, 0);
+    lv_obj_set_style_bg_opa(mark, opa, 0);
+    lv_obj_set_style_border_color(mark, kOutlineBlack, 0);
+    lv_obj_set_style_border_width(mark, size > 10 ? 3 : 0, 0);
+    lv_obj_set_style_border_opa(mark, LV_OPA_COVER, 0);
+    lv_obj_add_flag(mark, LV_OBJ_FLAG_HIDDEN);
+    return mark;
+}
+
+void create_gg_page() {
+    lv_obj_t *page = ui.pages[MOTO_UI_PAGE_SPEED];
+    make_page_surface(page, MOTO_UI_PAGE_SPEED);
+    lv_obj_set_name_static(page, "moto-gg-page");
+    lv_obj_add_event_cb(page, gg_press_event, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(page, gg_release_event, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(page, gg_release_event, LV_EVENT_PRESS_LOST, nullptr);
+
+    ui.gg_plot = make_draw_canvas(page, draw_gg_plot);
+    lv_obj_set_name_static(ui.gg_plot, "moto-gg-plot");
+
+    // Axis words, tiny and muted, at the ends of the cross.
+    const struct {
+        const char *text;
+        int dx;
+        int dy;
+    } axes[] = {{"ACC", 0, -kGgRadius + 16},
+                {"BRK", 0, kGgRadius - 16},
+                {"L", -kGgRadius + 14, -12},
+                {"R", kGgRadius - 14, -12}};
+    for(const auto &axis : axes) {
+        lv_obj_t *label = make_text(page, &moto_font_display_18,
+                                    TextRole::Muted, axis.text);
+        lv_obj_set_style_text_letter_space(label, px(2), 0);
+        lv_obj_align(label, LV_ALIGN_CENTER, axis.dx, axis.dy + kGgCentreDy);
+    }
+
+    for(int i = 0; i < kGgTrail; ++i) {
+        ui.gg_trail[i] = make_gg_mark(page, 8, LV_OPA_50);
+    }
+    ui.gg_dot = make_gg_mark(page, kGgDotSize, LV_OPA_COVER);
+    lv_obj_set_name_static(ui.gg_dot, "moto-gg-dot");
+
+    // Combined G, live: the one number on the page, but not a poster one.
+    ui.gg_live = make_text(page, &moto_font_display_40, TextRole::Display,
+                           "0.00 G");
+    lv_obj_set_name_static(ui.gg_live, "moto-gg-live");
+    lv_obj_align(ui.gg_live, LV_ALIGN_TOP_MID, 0, px(34));
+
+    lv_obj_t *speed = make_slab(page, "0 KM/H", 130, 30);
+    lv_obj_align(speed, LV_ALIGN_CENTER, 0, px(122));
+    ui.gg_speed = lv_obj_get_child(speed, 0);
+
+    ui.gg_state = make_plate(page, "NO IMU", 120, 30);
+    lv_obj_align(ui.gg_state, LV_ALIGN_CENTER, 0, kGgCentreDy);
+}
+
+void update_gg_view(const moto_ui_state_t *state) {
+    if(ui.gg_plot == nullptr) return;
+    char text[20];
+    std::snprintf(text, sizeof(text), "%u KM/H",
+                  static_cast<unsigned>(state->speed_kph));
+    lv_label_set_text(ui.gg_speed, text);
+    if(!ui.gg_has) {
+        lv_obj_add_flag(ui.gg_dot, LV_OBJ_FLAG_HIDDEN);
+        for(lv_obj_t *mark : ui.gg_trail) lv_obj_add_flag(mark, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(ui.gg_state, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(ui.gg_live, "-.-- G");
+        return;
+    }
+    lv_obj_add_flag(ui.gg_state, LV_OBJ_FLAG_HIDDEN);
+    int32_t x = 0;
+    int32_t y = 0;
+    gg_point(ui.gg_lat, ui.gg_lon, x, y);
+    lv_obj_set_pos(ui.gg_dot, x - kGgDotSize / 2, y - kGgDotSize / 2);
+    lv_obj_remove_flag(ui.gg_dot, LV_OBJ_FLAG_HIDDEN);
+    const std::uint32_t now = lv_tick_get();
+    for(int i = 0; i < kGgTrail; ++i) {
+        lv_obj_t *mark = ui.gg_trail[i];
+        const std::uint32_t stamp = ui.gg_trail_ms[i];
+        if(stamp == 0 || now - stamp > kGgTrailStepMs * kGgTrail) {
+            lv_obj_add_flag(mark, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        gg_point(ui.gg_trail_lat[i], ui.gg_trail_lon[i], x, y);
+        lv_obj_set_pos(mark, x - 4, y - 4);
+        lv_obj_remove_flag(mark, LV_OBJ_FLAG_HIDDEN);
+    }
+    const float combined =
+        std::sqrt(ui.gg_lat * ui.gg_lat + ui.gg_lon * ui.gg_lon);
+    std::snprintf(text, sizeof(text), "%.2f G", static_cast<double>(combined));
+    lv_label_set_text(ui.gg_live, text);
+    if(ui.gg_envelope_dirty) lv_obj_invalidate(ui.gg_plot);
+}
+
 void create_music_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_MUSIC];
     make_page_surface(page, MOTO_UI_PAGE_MUSIC);
+    add_page_skyline(page);
 
     // A car radio faceplate, not a media app: source on a plate, the track
     // printed like a station ident, and three physical keys.
@@ -3490,8 +4075,33 @@ void create_music_page() {
     lv_obj_center(ui.music_button_labels[3]);
 }
 
-void set_boot_content_opacity(void *object, int32_t opacity) {
-    lv_obj_set_style_opa(static_cast<lv_obj_t *>(object), opacity, 0);
+// Hard cuts at fixed times; the bar steps eight times. Ends before app_main's
+// 1.25 s boot hold, so the last frame is complete when the UI replaces it.
+constexpr std::uint32_t kBootGridMs = 80;
+constexpr std::uint32_t kBootLogoMs = 380;
+constexpr std::uint32_t kBootBarMs = 520;
+constexpr std::uint32_t kBootBarStepMs = 75;
+constexpr int kBootBarSteps = 8;
+
+void boot_tick(lv_timer_t *) {
+    const std::uint32_t elapsed = lv_tick_elaps(ui.boot_started_ms);
+    if(elapsed >= kBootGridMs && ui.boot_grid != nullptr) {
+        lv_obj_remove_flag(ui.boot_grid, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(elapsed >= kBootLogoMs && ui.boot_logo != nullptr) {
+        lv_obj_remove_flag(ui.boot_logo, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(elapsed >= kBootBarMs && ui.boot_bar != nullptr) {
+        lv_obj_remove_flag(ui.boot_bar, LV_OBJ_FLAG_HIDDEN);
+        const int steps = std::min<int>(
+            kBootBarSteps,
+            1 + static_cast<int>((elapsed - kBootBarMs) / kBootBarStepMs));
+        const int inner = lv_obj_get_width(ui.boot_bar) - 6;
+        lv_obj_set_width(ui.boot_bar_fill, inner * steps / kBootBarSteps);
+        if(steps >= kBootBarSteps && ui.boot_timer != nullptr) {
+            lv_timer_pause(ui.boot_timer);
+        }
+    }
 }
 
 }  // namespace
@@ -3516,70 +4126,162 @@ void moto_ui_gta::show_boot_screen(void) {
     teardown_ui();
     if(ui.screen == nullptr) return;
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
-    // The boot frame belongs to the same paper system as the instrument. It
-    // used to take kGtaDayPalette.background, which is MAP GREEN; the boot was
-    // the one screen still showing the old map field instead of the poster.
-    const MapPalette &palette = palette_for_theme(g_boot_theme, false);
-    const lv_color_t poster = palette.ground;
-    const lv_color_t ink = palette.ink;
-    const lv_color_t accent = palette.accent;
-    lv_obj_set_style_bg_color(ui.screen, poster, 0);
+    // GTA III's loading screens cut, they never fade: black, then the box
+    // art's framed panels, then the logo stamped over them, then the loading
+    // bar stepping along the bottom. The old 1.1 s opacity fade of one card
+    // was the least GTA transition there is, and a full-screen blend is also
+    // the most expensive thing this panel can draw.
+    //
+    // The palette is the boot theme's, chosen from persisted settings before
+    // the tree (and ui.palette) exists.
+    static MapPalette palette;
+    palette = palette_for_theme(g_boot_theme, false);
+    // The shared glyph painters (rider arrow, safehouse) read ui.palette.
+    ui.palette = palette;
+    const lv_color_t gutter = palette.accent;  // white by night, black by day
+    lv_obj_set_style_bg_color(ui.screen, palette.frame, 0);
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
 
-    lv_obj_t *content = make_layer(ui.screen);
-    lv_obj_set_style_opa(content, LV_OPA_TRANSP, 0);
-
-    // The slash goes down first so the wordmark sits on top of it. Rotating a
-    // plain rectangle is cheaper than a canvas and needs no asset.
-    lv_obj_t *slash = lv_obj_create(content);
-    lv_obj_remove_style_all(slash);
-    lv_obj_set_size(slash, px(420), px(20));
-    lv_obj_set_pos(slash, px(-31), px(246));
-    lv_obj_set_style_bg_color(slash, accent, 0);
-    lv_obj_set_style_bg_opa(slash, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_rotation(slash, -120, 0);
-
-    // Poster rules: heavy ink bars above and below the wordmark, the grammar
-    // the GTA cover art and loading cards use.
-    for(int i = 0; i < 2; ++i) {
-        lv_obj_t *rule = lv_obj_create(content);
-        lv_obj_remove_style_all(rule);
-        lv_obj_set_size(rule, px(360), px(6));
-        lv_obj_set_pos(rule, 0, px(i == 0 ? 96 : 352));
-        lv_obj_set_style_bg_color(rule, kViceMagenta, 0);
-        lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
+    // Panels inside the glass, separated by box-art gutters.
+    lv_obj_t *grid = lv_obj_create(ui.screen);
+    lv_obj_remove_style_all(grid);
+    lv_obj_clear_flag(grid, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(grid, kDialRadius * 2, kDialRadius * 2);
+    lv_obj_center(grid);
+    lv_obj_set_style_radius(grid, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(grid, true, 0);
+    lv_obj_set_style_bg_color(grid, gutter, 0);
+    lv_obj_set_style_bg_opa(grid, LV_OPA_COVER, 0);
+    lv_obj_set_name_static(grid, "moto-boot-grid");
+    struct Panel {
+        int x, y, w, h;
+        lv_color_t color;
+    };
+    const int side = kDialRadius * 2;
+    const int gap = 6;
+    const int split_x = side / 2 - 40;
+    const int split_y = side / 2 + 18;
+    // Dusk over the city: the cover's art panel is a poster, so it may be
+    // loud. HUD orange sky, black towers lit in the same orange.
+    static MapPalette dusk;
+    dusk = palette;
+    dusk.ground = palette.route;
+    dusk.building = kOutlineBlack;
+    dusk.building_landmark = LV_COLOR_MAKE(0x6A, 0x30, 0x10);
+    const Panel panels[] = {
+        {0, 0, split_x, split_y, palette.background},
+        {split_x + gap, 0, side - split_x - gap, split_y, palette.slab},
+        {0, split_y + gap, side, side - split_y - gap, dusk.ground},
+    };
+    for(const Panel &panel : panels) {
+        lv_obj_t *box = lv_obj_create(grid);
+        lv_obj_remove_style_all(box);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_pos(box, panel.x, panel.y);
+        lv_obj_set_size(box, panel.w, panel.h);
+        lv_obj_set_style_bg_color(box, panel.color, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     }
+    // The radar panel: the HUD's ring with a route and the rider in it.
+    lv_obj_t *radar = lv_arc_create(grid);
+    lv_obj_remove_style_all(radar);
+    lv_obj_clear_flag(radar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(radar, 116, 116);
+    lv_obj_set_pos(radar, split_x - 132, split_y - 140);
+    lv_arc_set_bg_angles(radar, 0, 360);
+    lv_arc_set_value(radar, 0);
+    lv_obj_set_style_arc_color(radar, palette.road_major, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(radar, 5, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(radar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(radar, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    // A route that turns, and the rider on it.
+    static const lv_point_precise_t route_points[] = {
+        {58, 104}, {58, 58}, {62, 50}, {104, 50}};
+    lv_obj_t *route = lv_line_create(grid);
+    lv_line_set_points(route, route_points, 4);
+    lv_obj_set_pos(route, split_x - 132, split_y - 140);
+    lv_obj_set_style_line_color(route, palette.route, 0);
+    lv_obj_set_style_line_width(route, 7, 0);
+    lv_obj_set_style_line_rounded(route, true, 0);
+    lv_obj_t *rider = lv_obj_create(grid);
+    lv_obj_remove_style_all(rider);
+    lv_obj_clear_flag(rider, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(rider, px(34), px(36));
+    lv_obj_set_pos(rider, split_x - 132 + 58 - px(17), split_y - 140 + 74);
+    lv_obj_add_event_cb(rider, draw_vehicle_marker, LV_EVENT_DRAW_MAIN_END,
+                        nullptr);
+    // The safehouse panel.
+    lv_obj_t *house = lv_obj_create(grid);
+    lv_obj_remove_style_all(house);
+    lv_obj_clear_flag(house, LV_OBJ_FLAG_CLICKABLE);
+    // Right of the logo's last letter, so the stamp never half-covers it.
+    lv_obj_set_size(house, 44, 44);
+    lv_obj_set_pos(house, 348, 116);
+    lv_obj_add_event_cb(house, draw_home_blip, LV_EVENT_DRAW_MAIN_END,
+                        nullptr);
+    // The city panel along the bottom: the same skyline the pages carry,
+    // lifted so it stands on the panel's floor.
+    lv_obj_t *city = make_skyline(grid, &dusk);
+    lv_obj_add_flag(city, LV_OBJ_FLAG_USER_1);
+    lv_obj_set_pos(city, -(MOTO_UI_CANVAS_WIDTH / 2 - kDialRadius),
+                   -(MOTO_UI_CANVAS_HEIGHT / 2 - kDialRadius) - 6);
+    lv_obj_add_flag(grid, LV_OBJ_FLAG_HIDDEN);
+    ui.boot_grid = grid;
 
-    lv_obj_t *moto = make_label(content, &moto_font_wordmark_132, ink, "MOTO");
-    lv_obj_set_style_text_outline_stroke_color(moto, kOutlineBlack, 0);
-    lv_obj_set_style_text_outline_stroke_width(moto, px(3), 0);
-    lv_obj_set_style_text_outline_stroke_opa(moto, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_letter_space(moto, px(2), 0);
-    lv_obj_align(moto, LV_ALIGN_CENTER, 0, px(-56));
+    // The logo, stamped over the panels: cased letters with a hard drop.
+    lv_obj_t *logo = make_layer(ui.screen);
+    // A poster in both themes: GTA III's cream logo cased in black. Ink
+    // letters by day disappeared into the dark panels.
+    const lv_color_t letter = kLimitFace;
+    const lv_color_t casing = kOutlineBlack;
+    const struct {
+        const char *text;
+        int y;
+        int spacing;
+    } words[] = {{"MOTO", -px(50), px(2)}, {"GPS", px(58), px(6)}};
+    for(const auto &word : words) {
+        lv_obj_t *drop = make_label(logo, &moto_font_wordmark_132,
+                                    kOutlineBlack, word.text);
+        lv_obj_set_style_text_letter_space(drop, word.spacing, 0);
+        lv_obj_align(drop, LV_ALIGN_CENTER, px(5), word.y + px(5));
+        lv_obj_t *face = make_label(logo, &moto_font_wordmark_132, letter,
+                                    word.text);
+        lv_obj_set_style_text_outline_stroke_color(face, casing, 0);
+        lv_obj_set_style_text_outline_stroke_width(face, px(3), 0);
+        lv_obj_set_style_text_outline_stroke_opa(face, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_letter_space(face, word.spacing, 0);
+        lv_obj_align(face, LV_ALIGN_CENTER, 0, word.y);
+    }
+    lv_obj_add_flag(logo, LV_OBJ_FLAG_HIDDEN);
+    ui.boot_logo = logo;
 
-    lv_obj_t *gps = make_label(content, &moto_font_wordmark_132, ink, "GPS");
-    lv_obj_set_style_text_outline_stroke_color(gps, kOutlineBlack, 0);
-    lv_obj_set_style_text_outline_stroke_width(gps, px(3), 0);
-    lv_obj_set_style_text_outline_stroke_opa(gps, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_letter_space(gps, px(6), 0);
-    lv_obj_align(gps, LV_ALIGN_CENTER, 0, px(56));
+    // The loading bar: a cased track that fills in hard steps. It measures
+    // the boot hold itself (app_main waits 1.25 s before building the UI);
+    // nothing else is loading, so it claims nothing else.
+    lv_obj_t *bar = lv_obj_create(ui.screen);
+    lv_obj_remove_style_all(bar);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(bar, px(140), px(12));
+    lv_obj_align(bar, LV_ALIGN_CENTER, 0, px(136));
+    lv_obj_set_style_bg_color(bar, kOutlineBlack, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(bar, kLimitFace, 0);
+    lv_obj_set_style_border_width(bar, 2, 0);
+    lv_obj_set_style_border_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_name_static(bar, "moto-boot-bar");
+    lv_obj_t *fill = lv_obj_create(bar);
+    lv_obj_remove_style_all(fill);
+    lv_obj_set_pos(fill, 3, 3);
+    lv_obj_set_size(fill, 0, px(12) - 6);
+    lv_obj_set_style_bg_color(fill, kHudGold, 0);
+    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+    lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+    ui.boot_bar = bar;
+    ui.boot_bar_fill = fill;
 
-    lv_obj_t *credit = make_label(content, &moto_font_display_18, ink,
-                                  "NAVIGATION");
-    lv_obj_set_style_text_letter_space(credit, px(6), 0);
-    lv_obj_align(credit, LV_ALIGN_CENTER, 0, px(150));
-
-    lv_anim_t fade;
-    lv_anim_init(&fade);
-    lv_anim_set_var(&fade, content);
-    lv_anim_set_exec_cb(&fade, set_boot_content_opacity);
-    lv_anim_set_values(&fade, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_delay(&fade, 30);
-    lv_anim_set_duration(&fade, 230);
-    lv_anim_set_reverse_delay(&fade, 650);
-    lv_anim_set_reverse_duration(&fade, 260);
-    lv_anim_set_path_cb(&fade, lv_anim_path_ease_in_out);
-    lv_anim_start(&fade);
+    ui.boot_started_ms = lv_tick_get();
+    ui.boot_timer = lv_timer_create(boot_tick, 40, nullptr);
 }
 
 void moto_ui_gta::show_power_off_screen(void) {
@@ -3635,9 +4337,16 @@ void moto_ui_gta::create(void) {
         lv_obj_add_flag(ui.pages[i], LV_OBJ_FLAG_GESTURE_BUBBLE);
     }
     create_navigation_page();
+    // The safehouse rides above the waiting screen too: with no route the
+    // rider still sees which way home is, pinned to the rim. Both layers are
+    // full-canvas at (0,0), so the blip keeps its coordinates.
+    if(ui.nav_home_blip != nullptr) {
+        lv_obj_set_parent(ui.nav_home_blip, ui.pages[MOTO_UI_PAGE_NAVIGATION]);
+        lv_obj_move_foreground(ui.nav_home_blip);
+    }
     create_performance_page();
     create_lean_page();
-    create_speed_page();
+    create_gg_page();
     create_compass_page();
     create_music_page();
     create_page_dots();
@@ -3759,6 +4468,8 @@ void moto_ui_gta::set_ambient_night(uint8_t is_night) {
 void moto_ui_gta::set_state(const moto_ui_state_t *state) {
     if(state == nullptr || !ui.live) return;
     ui.nav_speed_kph = state->speed_kph;
+    // The envelope is a record of the ride, not of the time spent looking.
+    accumulate_gg(state);
     show_page(state->page);
     // Hidden pages do not need to be invalidated. Page changes immediately
     // apply a fresh snapshot through PhoneNavBridge, so this keeps every page
@@ -3767,8 +4478,8 @@ void moto_ui_gta::set_state(const moto_ui_state_t *state) {
         case MOTO_UI_PAGE_NAVIGATION: update_navigation(state); break;
         case MOTO_UI_PAGE_PERFORMANCE: update_performance(state); break;
         case MOTO_UI_PAGE_LEAN: update_lean(state); break;
-        case MOTO_UI_PAGE_SPEED: update_speedometer(state); break;
         case MOTO_UI_PAGE_COMPASS: update_compass(state); break;
+        case MOTO_UI_PAGE_SPEED: update_gg_view(state); break;
         case MOTO_UI_PAGE_MUSIC:
         case MOTO_UI_PAGE_COUNT: break;
     }
@@ -3786,9 +4497,11 @@ void moto_ui_gta::show_home_error(void) {
 
 void moto_ui_gta::set_motion_state(const moto_ui_state_t *state) {
     if(state == nullptr || !ui.live ||
-       ui.pages[MOTO_UI_PAGE_NAVIGATION] == nullptr || state->page != ui.page) {
+       ui.pages[MOTO_UI_PAGE_NAVIGATION] == nullptr) {
         return;
     }
+    accumulate_gg(state);
+    if(state->page != ui.page) return;
     // QMI8658 samples arrive at high frequency. Only the route polyline or
     // compass rose actually changes with yaw; labels, arcs and hidden pages
     // remain untouched so LVGL submits a small, bounded dirty region.
@@ -3803,6 +4516,8 @@ void moto_ui_gta::set_motion_state(const moto_ui_state_t *state) {
         update_lean(state);
     } else if(ui.page == MOTO_UI_PAGE_PERFORMANCE) {
         update_performance(state);
+    } else if(ui.page == MOTO_UI_PAGE_SPEED) {
+        update_gg_view(state);
     }
 }
 

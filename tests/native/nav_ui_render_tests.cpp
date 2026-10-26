@@ -120,8 +120,8 @@ std::uint16_t rgb565(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
 }
 
 // GTA night paper: the block fill and the map ground the building tests sample.
-const std::uint16_t kNightBlock = rgb565(0x21, 0x18, 0x48);
-const std::uint16_t kNightGround = rgb565(0x14, 0x10, 0x24);
+const std::uint16_t kNightBlock = rgb565(0x24, 0x24, 0x24);
+const std::uint16_t kNightGround = rgb565(0x16, 0x16, 0x16);
 
 std::uint16_t pixel_at(int x, int y) {
   const std::size_t offset =
@@ -193,6 +193,63 @@ void fill_streets(moto_ui_state_t& state) {
   }
   state.building_footprint_count = 1;
   state.building_footprints[0] = {0, 6, 1};
+}
+
+// A believable block for the review frames: a right turn 120 m ahead (68 px
+// at 0.57 px/m), a street grid of mixed classes and a few footprints. The
+// zigzag in fill_route() is a hash fixture; it read as a wavy route in review.
+void fill_review_city(moto_ui_state_t& state) {
+  const moto_ui_point_t route[] = {
+      {233, 340}, {233, 233}, {233, 175}, {241, 165}, {330, 165}, {440, 165}};
+  state.route_point_count = 6;
+  for (int i = 0; i < 6; ++i) state.route_points[i] = route[i];
+
+  struct Street {
+    moto_ui_point_t a;
+    moto_ui_point_t b;
+    std::uint8_t road_class;
+  };
+  const Street streets[] = {
+      {{233, -20}, {233, 486}, 0},  {{-20, 165}, {486, 165}, 1},
+      {{113, -20}, {113, 486}, 3},  {{353, -20}, {353, 486}, 3},
+      {{-20, 55}, {486, 55}, 3},    {{-20, 285}, {486, 285}, 2},
+      {{-20, 395}, {486, 395}, 3},  {{173, 165}, {173, 285}, 4},
+      {{293, 55}, {293, 165}, 4},   {{293, 285}, {293, 395}, 5},
+      {{40, 470}, {470, 20}, 4},
+  };
+  int point = 0;
+  int line = 0;
+  for (const Street& street : streets) {
+    state.road_points[point] = street.a;
+    state.road_points[point + 1] = street.b;
+    state.road_polylines[line] = {static_cast<std::uint8_t>(point), 2,
+                                  street.road_class};
+    point += 2;
+    ++line;
+  }
+  state.road_point_count = static_cast<std::uint8_t>(point);
+  state.road_polyline_count = static_cast<std::uint8_t>(line);
+
+  const moto_ui_point_t blocks[][2] = {
+      {{125, 67}, {221, 153}}, {{245, 67}, {281, 153}},
+      {{125, 177}, {161, 273}}, {{305, 297}, {341, 383}},
+      {{245, 297}, {281, 383}}};
+  int corner = 0;
+  int footprint = 0;
+  for (const auto& block : blocks) {
+    const moto_ui_point_t lo = block[0];
+    const moto_ui_point_t hi = block[1];
+    state.building_points[corner] = lo;
+    state.building_points[corner + 1] = {hi.x, lo.y};
+    state.building_points[corner + 2] = hi;
+    state.building_points[corner + 3] = {lo.x, hi.y};
+    state.building_footprints[footprint] = {static_cast<std::uint8_t>(corner),
+                                            4, 0};
+    corner += 4;
+    ++footprint;
+  }
+  state.building_point_count = static_cast<std::uint8_t>(corner);
+  state.building_footprint_count = static_cast<std::uint8_t>(footprint);
 }
 
 void test_frames_are_deterministic() {
@@ -487,17 +544,17 @@ void test_day_and_night_themes_render_different_map_colors() {
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_set_state(&state);
   capture();
-  // Vice City day: a green map block with blocks a shade darker, exactly the
-  // relationship the original minimap uses. Roads and numerals are cream on a
+  // Liberty City day: a grey radar ground with blocks a shade darker, the
+  // relationship GTA III's radar uses. Roads and numerals are paper on a
   // black casing, which is where the daylight contrast comes from.
-  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x6B, 0x3D));
-  CHECK(pixel_at(300, 150) == rgb565(0x1E, 0x7A, 0x46));
+  CHECK(pixel_at(150, 150) == rgb565(0x40, 0x40, 0x3C));
+  CHECK(pixel_at(300, 150) == rgb565(0x4E, 0x4E, 0x4A));
 
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   capture();
-  // Vice City night: midnight purple ground with a raised panel block.
-  CHECK(pixel_at(150, 150) == rgb565(0x21, 0x18, 0x48));
-  CHECK(pixel_at(300, 150) == rgb565(0x14, 0x10, 0x24));
+  // Liberty City night: near-black ground with a raised grey block.
+  CHECK(pixel_at(150, 150) == kNightBlock);
+  CHECK(pixel_at(300, 150) == kNightGround);
 
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
 }
@@ -527,8 +584,8 @@ void test_auto_theme_follows_the_ambient_night_flag() {
   moto_nav_ui_set_theme(MOTO_UI_THEME_AUTO);
   moto_nav_ui_set_ambient_night(1);
   capture();
-  CHECK(pixel_at(150, 150) == rgb565(0x21, 0x18, 0x48));
-  CHECK(pixel_at(300, 150) == rgb565(0x14, 0x10, 0x24));
+  CHECK(pixel_at(150, 150) == kNightBlock);
+  CHECK(pixel_at(300, 150) == kNightGround);
   const Frame night = capture();
 
   // The flag is expected to repeat; a repeat must not restyle or repaint.
@@ -537,8 +594,8 @@ void test_auto_theme_follows_the_ambient_night_flag() {
 
   moto_nav_ui_set_ambient_night(0);
   capture();
-  CHECK(pixel_at(150, 150) == rgb565(0x1A, 0x6B, 0x3D));
-  CHECK(pixel_at(300, 150) == rgb565(0x1E, 0x7A, 0x46));
+  CHECK(pixel_at(150, 150) == rgb565(0x40, 0x40, 0x3C));
+  CHECK(pixel_at(300, 150) == rgb565(0x4E, 0x4E, 0x4A));
 
   // An explicit theme is authoritative: the flag is stored but not applied.
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
@@ -677,9 +734,9 @@ void test_lean_page_without_attitude_keeps_the_poster() {
   capture();
   // The sun is still on the world line: an absent attitude is "--", not an
   // empty page with a NO IMU plate where the instrument should be.
-  CHECK(has_color_within(111, 295, rgb565(0xFF, 0x8F, 0x5E), 10));
+  CHECK(has_color_within(111, 295, rgb565(0xD2, 0xAD, 0x6A), 10));
   CHECK(pixel_at(kWidth / 2, kHeight / 2) !=
-        rgb565(0x07, 0x05, 0x0D));
+        rgb565(0x00, 0x00, 0x00));
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
@@ -829,8 +886,8 @@ void test_home_blip_is_clamped_to_the_ring() {
   CHECK(!lv_obj_has_flag(blip, LV_OBJ_FLAG_HIDDEN));
   const int32_t blip_x = lv_obj_get_x(blip) + lv_obj_get_width(blip) / 2;
   const int32_t blip_y = lv_obj_get_y(blip) + lv_obj_get_height(blip) / 2;
-  // The glyph's ink is kWhite (a warm near-white), and the day map is cream,
-  // so the property worth asserting is "still light", not an exact constant.
+  // The glyph's ink is the HUD orange route colour on a black casing, the
+  // same safehouse as the phone radar; assert "orange", not an exact value.
   bool blip_is_light = false;
   for (int yy = blip_y - 5; yy <= blip_y + 5; ++yy) {
     for (int xx = blip_x - 5; xx <= blip_x + 5; ++xx) {
@@ -839,10 +896,10 @@ void test_home_blip_is_clamped_to_the_ring() {
       const int green = ((pixel >> 5) & 0x3F) * 255 / 63;
       const int blue = (pixel & 0x1F) * 255 / 31;
       blip_is_light = blip_is_light ||
-                      (red > 200 && green > 200 && blue > 200);
+                      (red > 200 && green > 100 && green < 180 && blue < 110);
     }
   }
-  CHECK(blip_is_light);
+  CHECK(blip_is_light);  // orange
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
 
   state.has_home = 0;
@@ -1079,7 +1136,7 @@ void dump_review_frames(const char *dir) {
       {"vice-day", MOTO_UI_THEME_GTA_DAY},
       {"vice-night", MOTO_UI_THEME_GTA_NIGHT},
   };
-  const char *page_names[] = {"nav", "perf", "lean", "speed", "compass", "music"};
+  const char *page_names[] = {"nav", "perf", "lean", "speedg", "compass", "music"};
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
   pump(300);
@@ -1095,8 +1152,11 @@ void dump_review_frames(const char *dir) {
   state.remaining_time_s = 305;
   state.speed_kph = 78;
   state.heading_deg = 128;
-  fill_route(state, 14);
-  fill_streets(state);
+  fill_review_city(state);
+  // A saved home inside the radar, so the safehouse blip is reviewed too.
+  state.has_home = 1;
+  state.home_x = 150;
+  state.home_y = 150;
 
   moto_music_state_t music{};
   music.connected = 1;
@@ -1112,6 +1172,23 @@ void dump_review_frames(const char *dir) {
     for (int page = 0; page < MOTO_UI_PAGE_COUNT; ++page) {
       state.page = static_cast<moto_ui_page_t>(page);
       moto_nav_ui_set_page(static_cast<moto_ui_page_t>(page));
+      if (page == MOTO_UI_PAGE_SPEED && theme.theme != MOTO_UI_THEME_OFFICIAL) {
+        // Speed·G: a short synthetic ride so the envelope has a shape —
+        // braking, a left and a right corner, then the review sample.
+        moto_ui_state_t ride = state;
+        const float samples[][2] = {{0.0F, -0.9F}, {-0.8F, -0.3F},
+                                    {-1.0F, 0.0F}, {-0.6F, 0.3F},
+                                    {0.0F, 0.45F}, {0.7F, 0.25F},
+                                    {1.05F, 0.0F}, {0.8F, -0.4F}};
+        for (const auto &sample : samples) {
+          ride.lateral_g = sample[0];
+          ride.longitudinal_g = sample[1];
+          for (int i = 0; i < 40; ++i) {
+            moto_nav_ui_set_state(&ride);
+            pump(2);
+          }
+        }
+      }
       moto_nav_ui_set_state(&state);
       pump(80);
       char path[512];
@@ -1146,6 +1223,10 @@ void dump_review_frames(const char *dir) {
   empty.road_polyline_count = 0;
   empty.building_point_count = 0;
   empty.building_footprint_count = 0;
+  // Home far beyond the radar: the blip must ride the rim at its bearing.
+  empty.has_home = 1;
+  empty.home_x = 233 - 900;
+  empty.home_y = 233 + 500;
   moto_nav_ui_set_state(&empty);
   const struct {
     const char *name;
@@ -1163,6 +1244,31 @@ void dump_review_frames(const char *dir) {
     std::snprintf(path, sizeof(path), "%s/%s.ppm", dir, step.name);
     write_ppm_to(path);
   }
+
+  // The boot sequence is a timed series of cuts: dump each stage.
+  const struct {
+    const char *name;
+    moto_ui_theme_t theme;
+  } boot_themes[] = {{"night", MOTO_UI_THEME_GTA_NIGHT},
+                     {"day", MOTO_UI_THEME_GTA_DAY}};
+  const int boot_marks_ms[] = {40, 200, 450, 700, 1200};
+  for (const auto &boot : boot_themes) {
+    moto_nav_ui_set_boot_theme(boot.theme);
+    moto_nav_ui_show_boot_screen();
+    int elapsed = 0;
+    for (int mark : boot_marks_ms) {
+      pump((mark - elapsed) / 5);
+      elapsed = mark;
+      char path[512];
+      std::snprintf(path, sizeof(path), "%s/boot-%s-%04d.ppm", dir,
+                    boot.name, mark);
+      write_ppm_to(path);
+    }
+  }
+  moto_nav_ui_set_boot_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
 
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
@@ -1219,7 +1325,7 @@ void test_every_page_paints_its_own_surface() {
   fill_streets(state);
   pump(300);
 
-  const std::uint16_t bezel = rgb565(0x07, 0x05, 0x0D);
+  const std::uint16_t bezel = rgb565(0x00, 0x00, 0x00);
   const moto_ui_theme_t themes[] = {MOTO_UI_THEME_GTA_DAY,
                                     MOTO_UI_THEME_GTA_NIGHT};
   for(const moto_ui_theme_t theme : themes) {
@@ -1387,7 +1493,8 @@ void test_one_swipe_moves_one_page_even_after_a_rebuild() {
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
   capture();
   swipe(320, 180);
-  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_PERFORMANCE);
+  // Speed·G follows navigation (DESIGN_V2 §2.2).
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_SPEED);
 
   // create() re-adds the screen callbacks on every call. A stacked handler
   // would move two pages here while every object-level assertion stayed green.
@@ -1395,7 +1502,7 @@ void test_one_swipe_moves_one_page_even_after_a_rebuild() {
   CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
   capture();
   swipe(320, 180);
-  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_PERFORMANCE);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_SPEED);
 
   // And the reverse direction still moves exactly one page back.
   swipe(180, 320);
@@ -1423,7 +1530,9 @@ void test_every_road_class_has_its_own_stroke() {
   state.road_point_count = 12;
   state.road_polyline_count = 6;
   for (int i = 0; i < 6; ++i) {
-    const std::int16_t y = static_cast<std::int16_t>(140 + i * 36);
+    // Rows stay in the map above the rider: the turn glyph and distance own
+    // the band below it.
+    const std::int16_t y = static_cast<std::int16_t>(104 + i * 24);
     state.road_points[i * 2] = {150, y};
     state.road_points[i * 2 + 1] = {320, y};
     state.road_polylines[i] = {static_cast<std::uint8_t>(i * 2), 2,
@@ -1437,13 +1546,13 @@ void test_every_road_class_has_its_own_stroke() {
   };
   const Paper papers[] = {
       {MOTO_UI_THEME_GTA_DAY,
-       {rgb565(0xF7, 0xD9, 0x6B), rgb565(0xFF, 0xFD, 0xF2),
-        rgb565(0xF6, 0xF0, 0xD7), rgb565(0xE2, 0xE6, 0xC8),
-        rgb565(0xCF, 0xE0, 0xBC), rgb565(0xA9, 0xC9, 0x9A)}},
+       {rgb565(0xD2, 0xAD, 0x6A), rgb565(0xF7, 0xF5, 0xEF),
+        rgb565(0xEF, 0xEC, 0xE4), rgb565(0xD6, 0xD2, 0xC8),
+        rgb565(0xB4, 0xB0, 0xA6), rgb565(0x8E, 0x8A, 0x82)}},
       {MOTO_UI_THEME_GTA_NIGHT,
-       {rgb565(0xFF, 0xC9, 0x5C), rgb565(0xFF, 0xFD, 0xF4),
-        rgb565(0xF6, 0xF0, 0xD7), rgb565(0xD9, 0xD5, 0xBC),
-        rgb565(0xC9, 0xC6, 0xA8), rgb565(0x8E, 0x88, 0xA6)}},
+       {rgb565(0xD2, 0xAD, 0x6A), rgb565(0xF2, 0xEE, 0xE4),
+        rgb565(0xD6, 0xD2, 0xC8), rgb565(0xB4, 0xB0, 0xA6),
+        rgb565(0x8E, 0x8A, 0x82), rgb565(0x5E, 0x5B, 0x55)}},
   };
   for (const Paper &paper : papers) {
     moto_nav_ui_set_theme(paper.theme);
@@ -1451,7 +1560,7 @@ void test_every_road_class_has_its_own_stroke() {
     capture();
     for (int i = 0; i < 6; ++i) {
       // x=170 stays clear of the rider marker and the HUD numerals.
-      CHECK(pixel_at(170, 140 + i * 36) == paper.colors[i]);
+      CHECK(pixel_at(170, 104 + i * 24) == paper.colors[i]);
     }
   }
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
@@ -1465,6 +1574,91 @@ int count_pixels(std::uint16_t color) {
     }
   }
   return count;
+}
+
+// Speed·G: the live dot follows the horizontal G, the envelope keeps the most
+// the ride reached after the dot has gone back to the middle, a two-second
+// hold clears it, and without attitude the dot is not drawn at all.
+void ride_gg(moto_ui_state_t &state, float lateral, float longitudinal,
+             int samples) {
+  state.lateral_g = lateral;
+  state.longitudinal_g = longitudinal;
+  for (int i = 0; i < samples; ++i) {
+    moto_nav_ui_set_state(&state);
+    pump(2);
+  }
+}
+
+// Gold inside the friction circle only: the live "x.xx G" label above it is
+// gold too, and its pixel count changes with the digits.
+int count_gold_in_plot() {
+  const std::uint16_t gold = rgb565(0xD2, 0xAD, 0x6A);
+  const int cx = kWidth / 2;
+  const int cy = kHeight / 2 + 3;
+  int count = 0;
+  for (int y = cy - 132; y <= cy + 132; ++y) {
+    for (int x = cx - 132; x <= cx + 132; ++x) {
+      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > 132 * 132) continue;
+      if (pixel_at(x, y) == gold) ++count;
+    }
+  }
+  return count;
+}
+
+void test_speed_g_page_plots_g_and_keeps_the_envelope() {
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_SPEED;
+  state.has_attitude = 1;
+  moto_nav_ui_set_page(MOTO_UI_PAGE_SPEED);
+  ride_gg(state, 0.0F, 0.0F, 20);
+  lv_obj_t *dot = lv_obj_find_by_name(lv_screen_active(), "moto-gg-dot");
+  CHECK(dot != nullptr);
+  if (dot == nullptr) return;
+  capture();
+  const int gold_at_rest = count_gold_in_plot();
+  CHECK(gold_at_rest == 0);
+
+  // A right-hand sweeper: lateral G to the right, a little drive and brake.
+  ride_gg(state, 1.0F, 0.45F, 60);
+  ride_gg(state, 1.0F, 0.0F, 60);
+  ride_gg(state, 1.0F, -0.45F, 60);
+  capture();
+  CHECK(!lv_obj_has_flag(dot, LV_OBJ_FLAG_HIDDEN));
+  const int32_t dot_x = lv_obj_get_x(dot) + lv_obj_get_width(dot) / 2;
+  CHECK(dot_x > kWidth / 2 + 60);  // 1 g is 85 px right of centre
+  CHECK(count_gold_in_plot() > 40);
+
+  // Back upright: the dot returns, the envelope stays.
+  ride_gg(state, 0.0F, 0.0F, 120);
+  capture();
+  const int32_t settled_x = lv_obj_get_x(dot) + lv_obj_get_width(dot) / 2;
+  CHECK(std::abs(settled_x - kWidth / 2) < 6);
+  CHECK(count_gold_in_plot() > 40);
+
+  // A two-second hold clears the envelope.
+  lv_obj_t *page = lv_obj_find_by_name(lv_screen_active(), "moto-gg-page");
+  CHECK(page != nullptr);
+  if (page != nullptr) {
+    lv_obj_send_event(page, LV_EVENT_PRESSED, nullptr);
+    pump(420);
+    lv_obj_send_event(page, LV_EVENT_RELEASED, nullptr);
+    ride_gg(state, 0.0F, 0.0F, 10);
+    capture();
+    CHECK(count_gold_in_plot() == 0);
+  }
+
+  // No IMU: no dot, the NO IMU plate instead.
+  state.has_attitude = 0;
+  ride_gg(state, 0.0F, 0.0F, 10);
+  capture();
+  CHECK(lv_obj_has_flag(dot, LV_OBJ_FLAG_HIDDEN));
+  // Leave a fresh default tree: the tests after this one compare frames
+  // across a rebuild, and create() resets the theme this test chose.
+  moto_nav_ui_create();
 }
 
 int g_page_requests = 0;
@@ -1554,25 +1748,32 @@ int main(int argc, char **argv) {
   // persisted theme's paper, not the navigation map's green field.
   moto_nav_ui_set_boot_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_show_boot_screen();
-  pump(260);
+  // First frame: nothing but the bezel, committed before the panel lights.
+  pump(4);
+  CHECK(pixel_at(233, 233) == rgb565(0x00, 0x00, 0x00));
+  pump(256);
   const Frame settled_boot = capture();
-  // The boot frame is the day poster: paper everywhere the wordmark is not.
-  CHECK(pixel_at(4, 4) == rgb565(0xF6, 0xF0, 0xD7));
-  // The composition itself is animated, and the harness does not run the
-  // animation clock, so what is pinned here is the poster stock the boot
-  // frame paints before any content fades in. The wordmark is verified on the
-  // device, where the animation actually runs.
-  CHECK(pixel_at(2, 2) == rgb565(0xF6, 0xF0, 0xD7));
-  CHECK(pixel_at(kWidth - 3, 2) == rgb565(0xF6, 0xF0, 0xD7));
-  CHECK(pixel_at(2, kHeight - 3) == rgb565(0xF6, 0xF0, 0xD7));
-  // The same API must be able to boot the night paper; a green frame here was
-  // the regression that put the old map field under the wordmark.
+  // The GTA III loading screen, fully cut in: panel grid, logo, full bar.
+  lv_obj_t *grid = lv_obj_find_by_name(lv_screen_active(), "moto-boot-grid");
+  lv_obj_t *bar = lv_obj_find_by_name(lv_screen_active(), "moto-boot-bar");
+  CHECK(grid != nullptr && !lv_obj_has_flag(grid, LV_OBJ_FLAG_HIDDEN));
+  CHECK(bar != nullptr && !lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN));
+  if (bar != nullptr) {
+    CHECK(lv_obj_get_width(lv_obj_get_child(bar, 0)) ==
+          lv_obj_get_width(bar) - 6);
+  }
+  // Outside the glass is bezel; by day the box-art gutter is black ink.
+  CHECK(pixel_at(2, 2) == rgb565(0x00, 0x00, 0x00));
+  CHECK(pixel_at(60, 254) == rgb565(0x11, 0x11, 0x11));
+  // By night the gutter is the cover's white. A green field here was the
+  // regression that put the old map under the wordmark.
   moto_nav_ui_set_boot_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_nav_ui_show_boot_screen();
   pump(260);
-  CHECK(pixel_at(4, 4) == rgb565(0x14, 0x10, 0x24));
+  CHECK(pixel_at(60, 254) == rgb565(0xF2, 0xEE, 0xE4));
 
   test_frames_are_deterministic();
+  test_speed_g_page_plots_g_and_keeps_the_envelope();
   test_rebuilding_the_ui_is_idempotent();
   test_buildings_are_opt_in();
   test_a_building_footprint_interior_is_filled();
