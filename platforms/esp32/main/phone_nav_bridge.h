@@ -47,6 +47,13 @@ class PhoneNavBridge {
   using SettingsStoreCallback =
       bool (*)(const moto::device::DeviceSettings& settings);
   void set_settings_store(SettingsStoreCallback callback);
+  // Apple Media Service: the iPhone's own Now Playing service, read by the
+  // device over the same BLE link. While it is available the music page shows
+  // its state and the keys go to `MusicKeyHandler` first; it returns false
+  // to let a key take the phone-relayed DeviceCommand path instead.
+  using MusicKeyHandler = bool (*)(moto_music_command_t key, void* context);
+  void set_music_key_handler(MusicKeyHandler handler, void* context);
+  void on_system_media(const moto::ble::MediaState& state, bool available);
   // Applies settings the device already owns (boot replay). Must run on the
   // task that holds the LVGL lock, after moto_nav_ui_create(), because a tree
   // reset clears the theme and the building visibility.
@@ -160,6 +167,12 @@ class PhoneNavBridge {
   bool link_active_ = false;
   moto_ui_phone_connection_t ui_phone_connection_ = MOTO_UI_PHONE_OFFLINE;
   moto::ble::MediaState media_state_{};
+  // AMS state, preferred over media_state_ (the phone app's Apple Music
+  // relay) while system_media_available_.
+  moto::ble::MediaState system_media_state_{};
+  bool system_media_available_ = false;
+  MusicKeyHandler music_key_handler_ = nullptr;
+  void* music_key_context_ = nullptr;
   moto::ble::MediaState render_media_state_{};
   moto_ui_phone_connection_t render_phone_connection_ =
       MOTO_UI_PHONE_OFFLINE;

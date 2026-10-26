@@ -21,7 +21,7 @@
 **作者：Maler X · 署名 / 非商业使用 · 实验性样机**
 
 一块装在车把上的圆屏，一个放在包里的 iPhone。手机负责定位、搜索与路线计算，
-圆屏通过蓝牙显示简洁导航、速度、相对航向，并遥控 Apple Music。
+圆屏通过蓝牙显示简洁导航、速度、相对航向，并遥控 iPhone 正在播放的音乐。
 
 项目基于 **Waveshare ESP32-S3-Touch-AMOLED-1.75C**，
 包含圆屏固件、iOS App、路线网关和网页调试工具。
@@ -33,7 +33,7 @@ B1 手机配套主板与 V3 外壳目前暂停推进，现阶段集中完善微�
 
 出发前在手机上搜索目的地、比较路线；开始导航后，车把上的圆屏显示眼前路口、
 转向动作和距离。地图围绕固定的车头箭头移动，灰色道路和建筑提供周围环境参照。
-滑动屏幕，还可以查看速度、航向，或操作 Apple Music。
+滑动屏幕，还可以查看速度、航向，或操作正在播放的音乐。
 
 [功能详解](#功能详解) · [使用流程](#使用流程) · [硬件与开发环境](#硬件与开发环境) ·
 [安装与配置](#安装与配置) · [开发与测试](#开发与测试) · [使用许可](#使用许可与署名)
@@ -70,7 +70,7 @@ B1 手机配套主板与 V3 外壳目前暂停推进，现阶段集中完善微�
 | 导航逻辑 | 共享 C++ 核心，路线进度、偏航检测、联网重算与周期路线/路况刷新 |
 | 灰色道路 / 建筑 | 默认在线加载周边 OSM / Protomaps 底图；支持城市、区县与沿途下载，保留内置济南地图兜底 |
 | 马表 / 航向 | 手机定位提供速度与行驶方向，板载 QMI8658 辅助相对转向 |
-| 音乐 | Apple Music 上一首、播放/暂停、下一首 |
+| 音乐 | 正在播放的 App（网易云音乐、QQ 音乐、Spotify、Apple Music 等）上一首、播放/暂停、下一首 |
 | 动效 / 触摸 | 黑白 Logo 淡入淡出、连接状态过渡、滑动切页、指示点自动隐藏、PWR 长按关机 |
 | 演示 | 济南大数据产业基地 D 栋附近 → 浪潮总部附近；在线请求与 OSM 离线回退明确区分 |
 
@@ -185,14 +185,19 @@ iPhone App 使用高德地点搜索与普通驾车路线服务。搜索时会带
 圆屏的相对转角取自设备自身陀螺仪。低速或静止时冻结不可靠的航向变化并抑制残余速度，
 恢复行驶后再由定位航向逐渐校正。静止绝对北向属于后续磁力计扩展的范围。
 
-### Apple Music 控制
+### 音乐控制
 
-音乐页通过 iPhone 的系统音乐播放器控制 Apple Music，显示音乐来源、曲目标题、
-歌手和播放状态。圆屏提供上一首、播放/暂停、下一首三个操作按钮。
+音乐页跟随 iPhone 上正在播放的 App，不限于 Apple Music：网易云音乐、QQ 音乐、
+Spotify、播客等都可以。圆屏显示播放来源、曲目标题、歌手和播放状态，并提供
+上一首、播放/暂停、下一首三个操作按钮；播放器支持时还可以“喜欢”。
 
-首次使用时，在 iPhone 上授权媒体资料库访问，并在 Apple Music 中准备好播放队列。
-触摸圆屏按钮后，命令经 BLE 发送到手机；播放器处理动作后，最新曲目与状态再回传圆屏。
-手机授权状态和播放器状态决定音乐功能的可用情况。
+圆屏直接作为 iPhone Apple 媒体服务（AMS）的 GATT 客户端，复用与手机 App 之间
+已加密、已绑定的同一条 BLE 连接：曲目信息由系统推送，按钮作为 AMS 远程命令发给
+系统的“正在播放”。这一路不经过手机 App，也不需要媒体资料库权限；播放器自身的能力
+决定哪些按钮生效（例如播客的上一首/下一首改为后退/前进 15 秒）。
+
+若圆屏连不上 AMS，会退回旧路径：按钮经 BLE 发给手机 App，由它遥控 Apple Music。
+这一路只能控制 Apple Music，第一次从圆屏操作时才请求媒体资料库权限。
 
 声音继续沿用 iPhone 当前的音频输出，例如头盔蓝牙耳机。圆屏承担显示与遥控，
 适合与手机现有的音乐播放方式搭配使用。
@@ -501,7 +506,8 @@ node scripts/offline_map/validate_jinan_sqlite.mjs
 | 全程路线地图与候选展示 | `platforms/ios/App/RouteOverviewMap.swift` |
 | BLE 握手、发送调度与恢复连接 | iOS 的 `ESP32BLECentral.swift` 与 ESP32 的 `ble_nav_transport_nimble.cpp` |
 | 当前窗口道路与建筑筛选 | `platforms/ios/App/Adapters/OfflineMap/` |
-| Apple Music 遥控 | `platforms/ios/App/Adapters/Media/AppleMusicRemoteController.swift` |
+| 音乐：AMS 客户端（主路径） | `platforms/esp32/main/ams_client_nimble.cpp`、`ams_codec.cpp` |
+| 音乐：Apple Music 遥控（后备） | `platforms/ios/App/Adapters/Media/AppleMusicRemoteController.swift` |
 | CO5300 显示、TE 同步与电源 | `platforms/esp32/main/board_port_waveshare_1_75c.cpp` |
 | 地图数据重建 | `scripts/offline_map/` |
 

@@ -21,6 +21,10 @@ class BleNavTransport {
   using MessageCallback = moto::ble::AckStatus (*)(
       const moto::ble::ReassembledMessage& message, void* context);
   using LinkCallback = void (*)(bool active, void* context);
+  // Sees every GAP event of the phone's connection before the transport
+  // handles it, on the NimBLE host task. The AMS client uses it to follow
+  // encryption, disconnects and the iPhone's GATT notifications.
+  using GapObserver = void (*)(const ble_gap_event& event, void* context);
 
   BleNavTransport();
   BleNavTransport(const BleNavTransport&) = delete;
@@ -29,6 +33,8 @@ class BleNavTransport {
   void set_callbacks(MessageCallback message_callback,
                      LinkCallback link_callback,
                      void* context) noexcept;
+  // Must be set before start().
+  void set_gap_observer(GapObserver observer, void* context) noexcept;
   esp_err_t start();
   bool send_message(const moto::ble::Message& message,
                     std::uint8_t frame_flags = 0);
@@ -99,6 +105,8 @@ class BleNavTransport {
   MessageCallback message_callback_ = nullptr;
   LinkCallback link_callback_ = nullptr;
   void* callback_context_ = nullptr;
+  GapObserver gap_observer_ = nullptr;
+  void* gap_observer_context_ = nullptr;
   QueueHandle_t rx_queue_ = nullptr;
   SemaphoreHandle_t tx_mutex_ = nullptr;
   TaskHandle_t rx_task_handle_ = nullptr;

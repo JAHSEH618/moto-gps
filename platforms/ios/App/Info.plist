@@ -25,7 +25,7 @@
 	<key>MOTOGPSGatewayBaseURL</key>
 	<string>https://example.invalid/moto-gps/api/</string>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>MOTO GPS 需要读取并控制 Apple Music 播放，以便在车把圆屏上切歌和暂停。</string>
+	<string>圆屏无法直接控制正在播放的 App 时，MOTO GPS 改为读取并控制 Apple Music 播放，以便在车把圆屏上切歌和暂停。</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>MOTO GPS 使用蓝牙连接车把上的 ESP32-S3 圆屏设备。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

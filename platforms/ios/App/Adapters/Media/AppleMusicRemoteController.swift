@@ -19,12 +19,16 @@ struct PhoneMediaState: Equatable, Sendable {
     var liked = false
 }
 
-/// Controls only the built-in Music app through
+/// Fallback music remote: controls only the built-in Music app through
 /// MPMusicPlayerController.systemMusicPlayer.
 ///
-/// This is deliberately not presented as a global iOS media remote:
-/// MPRemoteCommandCenter receives commands for an app's own player; it cannot
-/// inject commands into NetEase Cloud Music or another third-party player.
+/// The round display normally reads and drives whichever app owns Now Playing
+/// (NetEase Cloud Music, QQ Music, Spotify, Apple Music...) itself, through the
+/// iPhone's Apple Media Service over the bonded BLE link; it then ignores this
+/// projection and never sends the music DeviceCommands here. An iOS app has no
+/// public API to control another app's playback (MPRemoteCommandCenter only
+/// receives commands for the app's own player), so this path stays Apple
+/// Music only and is used just while the device cannot reach AMS.
 @MainActor
 final class AppleMusicRemoteController: NSObject {
     var onStateChange: ((PhoneMediaState) -> Void)?
@@ -45,7 +49,9 @@ final class AppleMusicRemoteController: NSObject {
         }
     }
 
-    /// Begins observing Apple Music and requests media-library access once.
+    /// Begins observing Apple Music. Media-library access is requested only
+    /// when the display first sends a music key over this fallback path, so a
+    /// rider whose display uses AMS is never asked for it.
     /// The required explanation is supplied by NSAppleMusicUsageDescription.
     func start() {
         guard !started else {
@@ -67,34 +73,25 @@ final class AppleMusicRemoteController: NSObject {
             object: player
         )
 
-        // Screenshot / UI-automation runs cannot answer the system prompt, and the
-        // simulator has no Music library to authorize. Skip the request; the
-        // controller still publishes its state and stays read-only.
-        if ProcessInfo.processInfo.arguments.contains("--moto-no-media-auth") {
-            publishCurrentState()
-            return
-        }
-
-        switch MPMediaLibrary.authorizationStatus() {
-        case .authorized:
-            publishCurrentState()
-        case .notDetermined:
-            MPMediaLibrary.requestAuthorization { [weak self] _ in
-                Task { @MainActor in
-                    self?.publishCurrentState()
-                }
-            }
-        case .denied, .restricted:
-            publishCurrentState()
-        @unknown default:
-            publishCurrentState()
-        }
+        publishCurrentState()
     }
 
     /// Handles the DeviceCommand raw kinds defined by BLE protocol v1.
     /// Like is intentionally unsupported rather than showing a false success.
     func handleDeviceCommand(kind: UInt8) -> BLECommandDisposition {
-        guard MPMediaLibrary.authorizationStatus() == .authorized else {
+        let status = MPMediaLibrary.authorizationStatus()
+        // Screenshot / UI-automation runs cannot answer the system prompt, and
+        // the simulator has no Music library to authorize.
+        if status == .notDetermined,
+           !ProcessInfo.processInfo.arguments.contains("--moto-no-media-auth")
+        {
+            MPMediaLibrary.requestAuthorization { [weak self] _ in
+                Task { @MainActor in
+                    self?.publishCurrentState()
+                }
+            }
+        }
+        guard status == .authorized else {
             publishCurrentState()
             return .invalidState
         }
@@ -128,14 +125,15 @@ final class AppleMusicRemoteController: NSObject {
     }
 
     func publishCurrentState() {
-        let authorized = MPMediaLibrary.authorizationStatus() == .authorized
-        guard authorized else {
+        let status = MPMediaLibrary.authorizationStatus()
+        guard status == .authorized else {
             progressTask?.cancel()
             progressTask = nil
+            // Not yet asked: stay neutral; the first key press asks.
             onStateChange?(PhoneMediaState(
-                connected: false,
+                connected: status == .notDetermined,
                 sourceName: "APPLE MUSIC",
-                trackTitle: "需要媒体资料库权限"
+                trackTitle: status == .notDetermined ? "尚未播放" : "需要媒体资料库权限"
             ))
             return
         }

@@ -5,8 +5,10 @@
 
 #include "ble_event_filter.hpp"
 #include "connection_epoch_gate.hpp"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/idf_additions.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
@@ -57,6 +59,12 @@ void BleNavTransport::set_callbacks(MessageCallback message_callback,
   callback_context_ = context;
 }
 
+void BleNavTransport::set_gap_observer(GapObserver observer,
+                                       void* context) noexcept {
+  gap_observer_ = observer;
+  gap_observer_context_ = context;
+}
+
 esp_err_t BleNavTransport::start() {
   if (started_) {
     return ESP_OK;
@@ -80,7 +88,11 @@ esp_err_t BleNavTransport::start() {
     return result;
   }
 
-  rx_queue_ = xQueueCreate(kRxQueueDepth, sizeof(RxPacket));
+  // About 5 KiB of frames: one maximum message plus a few control frames.
+  // Only the NimBLE host task and the RX worker touch it, never an ISR, so
+  // PSRAM is safe and keeps the internal heap for DMA and task stacks.
+  rx_queue_ = xQueueCreateWithCaps(kRxQueueDepth, sizeof(RxPacket),
+                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   tx_mutex_ = xSemaphoreCreateMutex();
   if (rx_queue_ == nullptr || tx_mutex_ == nullptr) {
     ESP_LOGE(kTag, "could not allocate BLE queues");
@@ -206,6 +218,9 @@ int BleNavTransport::gap_event(ble_gap_event* event, void* argument) {
   auto* self = static_cast<BleNavTransport*>(argument);
   if (self == nullptr || event == nullptr) {
     return 0;
+  }
+  if (self->gap_observer_ != nullptr) {
+    self->gap_observer_(*event, self->gap_observer_context_);
   }
 
   switch (event->type) {

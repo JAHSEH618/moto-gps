@@ -22,6 +22,8 @@ set(MOTO_SHARED_BLE_PROTOCOL_SOURCE
 # copy it into platforms/esp32: Web and firmware must execute the same code.
 idf_component_register(
     SRCS
+        "ams_client_nimble.cpp"
+        "ams_codec.cpp"
         "app_main.cpp"
         "attitude_estimator.cpp"
         "ble_nav_transport_nimble.cpp"

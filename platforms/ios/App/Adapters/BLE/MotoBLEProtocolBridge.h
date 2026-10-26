@@ -35,7 +35,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *instructionText;
 @end
 
-/// Phone-side projection of the active Apple Music player.  The Objective-C++
+/// Phone-side projection of the Apple Music fallback player.  The device shows
+/// it only while it cannot read Apple Media Service itself.  The Objective-C++
 /// bridge owns the binary layout so Swift never duplicates the shared v1 wire
 /// protocol.
 @interface MotoBLEMediaStateInput : NSObject

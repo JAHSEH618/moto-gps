@@ -371,6 +371,23 @@ void PhoneNavBridge::render_pending_for_test() {
 }
 #endif
 
+void PhoneNavBridge::set_music_key_handler(MusicKeyHandler handler,
+                                           void* context) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  music_key_handler_ = handler;
+  music_key_context_ = context;
+}
+
+void PhoneNavBridge::on_system_media(const moto::ble::MediaState& state,
+                                     bool available) {
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    system_media_state_ = state;
+    system_media_available_ = available;
+  }
+  request_render(RenderMedia);
+}
+
 void PhoneNavBridge::on_link_state(bool active) {
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
@@ -895,6 +912,8 @@ void PhoneNavBridge::consume_media(const moto::ble::MediaState& input) {
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     media_state_ = input;
+    // AMS owns the page; the relay is kept for when AMS goes away.
+    if (system_media_available_) return;
   }
   request_render(RenderMedia);
 }
@@ -1150,7 +1169,8 @@ void PhoneNavBridge::render_pending() {
       render_demo_active_ = demo_active_;
     }
     if (media) {
-      render_media_state_ = media_state_;
+      render_media_state_ =
+          system_media_available_ ? system_media_state_ : media_state_;
     }
     if ((requested & RenderDisplay) != 0U) {
       render_settings_ = settings_;
@@ -1273,6 +1293,17 @@ void PhoneNavBridge::home_command() {
 }
 
 void PhoneNavBridge::send_music_command(moto_music_command_t command) {
+  MusicKeyHandler handler = nullptr;
+  void* handler_context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    handler = music_key_handler_;
+    handler_context = music_key_context_;
+  }
+  // Outside the lock: the handler writes to the iPhone's GATT server.
+  if (handler != nullptr && handler(command, handler_context)) {
+    return;
+  }
   moto::ble::DeviceCommand output;
   switch (command) {
     case MOTO_MUSIC_PREVIOUS:

@@ -504,6 +504,90 @@ void test_music_capability_state_and_touch_commands() {
   }
 }
 
+struct MusicKeyRecorder {
+  bool owns_keys = true;
+  std::vector<moto_music_command_t> keys;
+};
+
+bool record_music_key(moto_music_command_t key, void* context) {
+  auto* recorder = static_cast<MusicKeyRecorder*>(context);
+  recorder->keys.push_back(key);
+  return recorder->owns_keys;
+}
+
+// AMS (the iPhone's Now Playing, any app) replaces the phone app's Apple Music
+// relay while it is available, and the relay comes back when it is not.
+void test_system_media_takes_over_the_music_page_and_falls_back() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  MusicSenderContext sender;
+  MusicKeyRecorder keys;
+  bridge.set_sender(record_music_sender, &sender);
+  bridge.set_music_key_handler(record_music_key, &keys);
+  bridge.install_ui_callbacks();
+  bridge.on_link_state(true);
+
+  moto::ble::MediaState relay;
+  relay.flags = moto::ble::MediaConnected;
+  relay.source_name = "APPLE MUSIC";
+  relay.track_title = "尚未播放";
+  CHECK(bridge.on_message(make_message(relay, 30)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_media_source() == "APPLE MUSIC");
+
+  moto::ble::MediaState system;
+  system.flags = moto::ble::MediaConnected | moto::ble::MediaPlaying;
+  system.source_name = "NETEASE";
+  system.track_title = "晴天";
+  system.artist_name = "周杰伦";
+  bridge.on_system_media(system, true);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_media_source() == "NETEASE");
+  CHECK(moto::test::phone_nav_bridge_media_title() == "晴天");
+  CHECK(moto::test::phone_nav_bridge_media_artist() == "周杰伦");
+  CHECK(moto::test::phone_nav_bridge_media_playing());
+
+  // A relay update must not repaint the page over the Now Playing app.
+  CHECK(bridge.on_message(make_message(relay, 31)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_media_source() == "NETEASE");
+
+  moto::test::emit_music_command(MOTO_MUSIC_NEXT);
+  moto::test::emit_music_command(MOTO_MUSIC_TOGGLE_PLAYBACK);
+  CHECK(keys.keys.size() == 2);
+  CHECK(keys.keys[0] == MOTO_MUSIC_NEXT);
+  CHECK(keys.keys[1] == MOTO_MUSIC_TOGGLE_PLAYBACK);
+  CHECK(sender.commands.empty());
+
+  // The protocol link goes stale while BLE (and so AMS) stays up: the page
+  // keeps following the phone's Now Playing.
+  bridge.on_link_state(false);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_media_source() == "NETEASE");
+  bridge.on_link_state(true);
+
+  // A key AMS cannot carry goes over the relay.
+  keys.owns_keys = false;
+  moto::test::emit_music_command(MOTO_MUSIC_PREVIOUS);
+  CHECK(keys.keys.size() == 3);
+  CHECK(sender.commands.size() == 1);
+  if (!sender.commands.empty()) {
+    CHECK(sender.commands[0].kind ==
+          moto::ble::DeviceCommandKind::MusicPrevious);
+  }
+
+  // AMS gone: the relay's newest state is shown again.
+  CHECK(bridge.on_message(make_message(relay, 32)) ==
+        moto::ble::AckStatus::Ok);
+  bridge.on_system_media(system, false);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_media_source() == "APPLE MUSIC");
+  CHECK(moto::test::phone_nav_bridge_media_title() == "尚未播放");
+}
+
 void test_demo_uses_the_production_presenter_path() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
@@ -990,6 +1074,7 @@ int main() {
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();
   test_phone_connection_lifecycle_reaches_the_ui();
   test_music_capability_state_and_touch_commands();
+  test_system_media_takes_over_the_music_page_and_falls_back();
   test_demo_uses_the_production_presenter_path();
   test_ios_demo_token_attaches_context_and_live_route_clears_it();
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();

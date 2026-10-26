@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "ams_client_nimble.h"
 #include "ble_nav_transport_nimble.h"
 #include "bsp/esp-bsp.h"
 #include "board_port.h"
@@ -758,6 +759,18 @@ extern "C" void app_main(void) {
   phone_bridge.set_sender(BleNavTransport::send_from_bridge, &transport);
   transport.set_callbacks(receive_phone_message, update_phone_link,
                           &phone_bridge);
+  // The music page follows whichever app owns the iPhone's Now Playing,
+  // through Apple Media Service on the same bonded link. The phone app's
+  // Apple Music relay remains the fallback while AMS is not available.
+  static AmsClient ams_client;
+  ams_client.set_listener(
+      [](const moto::ble::MediaState& state, bool available, void* context) {
+        static_cast<PhoneNavBridge*>(context)->on_system_media(state,
+                                                               available);
+      },
+      &phone_bridge);
+  phone_bridge.set_music_key_handler(AmsClient::key_handler, &ams_client);
+  transport.set_gap_observer(AmsClient::gap_observer, &ams_client);
   const esp_err_t ble_result = transport.start();
   if (ble_result != ESP_OK) {
     ESP_LOGE(kTag, "BLE startup failed; display remains in offline mode: %s",

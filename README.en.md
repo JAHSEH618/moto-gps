@@ -31,7 +31,7 @@ frequently asked questions.
 
 A round display on the handlebar, an iPhone in your bag. The phone handles positioning, search and
 route calculation, while the round display shows terse navigation, speed and relative heading over
-Bluetooth and controls Apple Music.
+Bluetooth and controls whatever music the iPhone is playing.
 
 The project is built on the **Waveshare ESP32-S3-Touch-AMOLED-1.75C** and includes round-display
 firmware, an iOS app, a route gateway and a web debugging tool.
@@ -49,7 +49,7 @@ Before setting off you search for a destination on the phone and compare routes;
 starts, the round display on the handlebar shows the junction ahead, the turn action and the
 distance. The map moves around a fixed heading arrow, with grey roads and buildings for surrounding
 context.
-Swipe the screen to view speed, heading, or to control Apple Music.
+Swipe the screen to view speed, heading, or to control the music that is playing.
 
 [Feature details](#feature-details) · [Using it](#using-it) · [Hardware and development environment](#hardware-and-development-environment) ·
 [Installation and configuration](#installation-and-configuration) · [Development and testing](#development-and-testing) · [License and attribution](#license-and-attribution)
@@ -89,7 +89,7 @@ prototyping has resumed or production acceptance has been completed.
 | Navigation logic | Shared C++ core: route progress, off-route detection, online rerouting and periodic route / traffic refresh |
 | Grey roads / buildings | Surrounding OSM / Protomaps maps load online by default; city, district and route-corridor downloads, with the bundled Jinan map retained as a fallback |
 | Speedometer / heading | Phone positioning provides speed and direction of travel; the on-board QMI8658 assists with relative turning |
-| Music | Apple Music previous track, play/pause, next track |
+| Music | Previous track, play/pause, next track for the Now Playing app (NetEase Cloud Music, QQ Music, Spotify, Apple Music…) |
 | Animation / touch | Black-and-white logo fade in and out, connection-state transitions, swipe page changes, auto-hiding page dots, long-press PWR to power off |
 | Demo | Near Building D of the Jinan Big Data Industry Base → near Inspur headquarters; online requests and the OSM offline fallback are explicitly distinguished |
 
@@ -233,16 +233,22 @@ speed or at rest, unreliable heading changes are frozen and residual speed is su
 positioning heading gradually corrects it once you are moving again. An absolute north reference at rest is part of a
 later magnetometer extension.
 
-### Apple Music control
+### Music control
 
-The music page controls Apple Music through the iPhone's system music player, showing the music
-source, the track title, the artist and the playback state. The round display offers three buttons:
-previous track, play/pause and next track.
+The music page follows whichever app is playing on the iPhone, not only Apple Music: NetEase Cloud
+Music, QQ Music, Spotify, Podcasts and so on. The round display shows the source, the track title,
+the artist and the playback state, with previous track, play/pause and next track buttons, plus
+like when the player supports it.
 
-On first use, grant media library access on the iPhone and prepare a playback queue in Apple Music.
-Touching a button on the round display sends the command to the phone over BLE; after the player
-handles the action, the latest track and state are sent back to the round display. The phone's
-authorisation state and the player state determine whether the music feature is available.
+The round display is a GATT client of the iPhone's Apple Media Service (AMS) on the same encrypted,
+bonded BLE link the phone app already uses: iOS pushes the track details, and the buttons are sent
+as AMS remote commands to the system Now Playing. This path does not go through the phone app and
+needs no media library access; the player decides which buttons work (a podcast, for example,
+turns previous/next into 15-second skips).
+
+If the round display cannot reach AMS it falls back to the old path: the buttons go to the phone
+app over BLE, which controls Apple Music. That path can only control Apple Music, and it asks for
+media library access the first time the round display uses it.
 
 Audio keeps using the iPhone's current output, for example a helmet Bluetooth headset. The round
 display takes on display and remote control, which suits it to working alongside however you
@@ -600,7 +606,8 @@ checks after submission are on
 | Whole-route map and candidate display | `platforms/ios/App/RouteOverviewMap.swift` |
 | BLE handshake, send scheduling and reconnection | `ESP32BLECentral.swift` on iOS and `ble_nav_transport_nimble.cpp` on ESP32 |
 | Road and building filtering for the current window | `platforms/ios/App/Adapters/OfflineMap/` |
-| Apple Music remote control | `platforms/ios/App/Adapters/Media/AppleMusicRemoteController.swift` |
+| Music: AMS client (main path) | `platforms/esp32/main/ams_client_nimble.cpp`, `ams_codec.cpp` |
+| Music: Apple Music remote (fallback) | `platforms/ios/App/Adapters/Media/AppleMusicRemoteController.swift` |
 | CO5300 display, TE synchronisation and power | `platforms/esp32/main/board_port_waveshare_1_75c.cpp` |
 | Map data rebuild | `scripts/offline_map/` |
 

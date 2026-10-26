@@ -323,7 +323,8 @@ final class ESP32BLECentral: NSObject {
         scheduleNavigationTransmit()
     }
 
-    /// Retains the newest Apple Music projection while disconnected and sends
+    /// Retains the newest Apple Music fallback projection while disconnected
+    /// (the device prefers its own Apple Media Service reading) and sends
     /// it as soon as the encrypted v1 session becomes ready.
     func sendMediaState(_ state: PhoneMediaState) {
         pendingMediaState = state
