@@ -312,11 +312,12 @@ struct MotoRadar: View {
             // Park and water: the two colours that make a minimap read as GTA.
             context.fill(
                 Path(CGRect(x: w * 0.05, y: h * 0.60, width: w * 0.30, height: h * 0.26)),
-                with: .color(palette.ok.opacity(parkOpacity))
+                // Original has no GTA colour code: parks read as grey blocks.
+                with: .color((theme == .original ? palette.inkMuted : palette.ok).opacity(parkOpacity))
             )
             context.fill(
                 Path(CGRect(x: w * 0.68, y: h * 0.02, width: w * 0.34, height: h * 0.22)),
-                with: .color(palette.link.opacity(waterOpacity))
+                with: .color((theme == .original ? palette.inkMuted : palette.link).opacity(waterOpacity))
             )
             for block in blocks {
                 context.fill(Path(block), with: .color(palette.ink.opacity(blockOpacity)))
@@ -628,6 +629,9 @@ struct MotoScreenBackground: View {
                         endPoint: .bottom
                     )
                 )
+            case .original:
+                // The upstream look is flat black: no grid, no dot screen.
+                EmptyView()
             }
         }
         .ignoresSafeArea()
@@ -790,10 +794,11 @@ struct MotoWordmark: View {
     var fill: Color
     var outline: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motoTheme) private var theme
 
     var body: some View {
         Text(text.uppercased())
-            .font(.custom("Anton-Regular", size: size, relativeTo: .largeTitle))
+            .font(theme.wordmarkFont(size: size, relativeTo: .largeTitle))
             .tracking(-0.5)
             .foregroundStyle(fill)
             // A wordmark never wraps: at 132pt "GO" would break into two lines

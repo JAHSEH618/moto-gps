@@ -287,7 +287,10 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                         moto::ble::CapabilityTouchCommands |
                         moto::ble::CapabilityMusicCommands |
                         moto::ble::CapabilityCommandAck |
-                        moto::ble::CapabilityMapScene;
+                        moto::ble::CapabilityMapScene |
+                        // Asks the device for AttitudeSample (0x15) at 10 Hz;
+                        // ESP32BLECentral already decodes and expires it.
+                        moto::ble::CapabilityAttitudeTelemetry;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(storage->maximum_frame_size);

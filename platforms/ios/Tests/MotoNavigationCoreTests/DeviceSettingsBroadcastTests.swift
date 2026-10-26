@@ -118,4 +118,16 @@ final class DeviceSettingsBroadcastTests: XCTestCase {
         XCTAssertFalse(settings().supports(capabilities: 1 << 9))
         XCTAssertFalse(settings().supports(capabilities: 0))
     }
+
+    /// One theme, two surfaces: the phone resolves `auto` from the same flag
+    /// the device does, so the two can never disagree about day and night.
+    func testPhoneLookFollowsTheRoundScreenTheme() {
+        for night in [false, true] {
+            XCTAssertEqual(DeviceSettingsTheme.official.phoneLook(ambientNight: night), .original)
+            XCTAssertEqual(DeviceSettingsTheme.day.phoneLook(ambientNight: night), .gtaDay)
+            XCTAssertEqual(DeviceSettingsTheme.night.phoneLook(ambientNight: night), .gtaNight)
+        }
+        XCTAssertEqual(DeviceSettingsTheme.auto.phoneLook(ambientNight: false), .gtaDay)
+        XCTAssertEqual(DeviceSettingsTheme.auto.phoneLook(ambientNight: true), .gtaNight)
+    }
 }

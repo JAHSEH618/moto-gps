@@ -1,6 +1,6 @@
 # v2 r1 上板测试清单
 
-按顺序执行。每一步给出：操作/命令、串口关键字、通过标准。串口为 USB-Serial/JTAG（115200）。
+按顺序执行。每一步给出：操作/命令、串口关键字、通过标准。串口为 USB-Serial/JTAG（115200）。命令从同一个口输入：固件同时读 UART0 和 USB-Serial/JTAG（后者在 sdkconfig 里只是输出用的副控制台，2026-10-26 之前的固件收不到从 USB 口输入的命令）。打开串口会让芯片复位，开机约 10 s 后再发命令。
 
 前置：`cd` 到仓库根，已 `. ~/esp/esp-idf/export.sh`。分区表已换，**首次刷必须 USB**：
 
@@ -150,6 +150,17 @@ imu stats        -> imu mode=fifo
 python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
   read_partition --partition-name tlog --output /tmp/tlog.bin
 ./build/native/tests/native/moto_replay /tmp/tlog.bin > /tmp/ride.csv
+```
+
+**擦除 tlog 分区。** 固件运行时不再擦扇区，所以这是硬性前置条件。以下三种情况必须由主机擦一次（先 `read_partition` 备份，擦除不可恢复）：
+
+- 首次刷入这版分区表之后；
+- 一次中断的写之后（倾角页状态槽显示 `LOG DIRTY`，录制保持关闭）；
+- 分区写满之后（开机日志 `tlog partition is full`，状态槽 `LOG FULL`）。
+
+```bash
+python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
+  erase_partition --partition-name tlog
 ```
 
 | 抓 | 期望 |

@@ -17,16 +17,15 @@ struct ContentView: View {
     @State private var showsMapDownloads = false
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
-    @Environment(\.colorScheme) private var systemColorScheme
+    /// The last GTA mode the rider used, so leaving Original and coming back
+    /// to GTA restores day / night / auto instead of resetting it.
+    @State private var lastGtaTheme: DeviceSettingsTheme = .auto
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
 
-    /// Vice at night, Heat in daylight. The device owns the choice once the BLE
-    /// theme lands; until then the system appearance is the truthful signal.
-    private var theme: MotoThemeName {
-        systemColorScheme == .dark ? .vice : .heat
-    }
+    /// The rider's theme, worn by the phone and the round screen alike.
+    private var theme: MotoThemeName { model.phoneTheme }
 
     var body: some View {
         NavigationStack(path: navigationPath) {
@@ -676,10 +675,36 @@ struct ContentView: View {
 
     // MARK: - Device sheet
 
-    private var displayThemeBinding: Binding<DeviceSettingsTheme> {
+    /// Original or GTA. Picking GTA restores the GTA mode used last.
+    private var themeFamilyBinding: Binding<Bool> {
         Binding(
-            get: { model.displayTheme },
-            set: { model.setDisplayTheme($0) }
+            get: { model.displayTheme == .official },
+            set: { original in
+                if original {
+                    if model.displayTheme != .official { lastGtaTheme = model.displayTheme }
+                    model.setDisplayTheme(.official)
+                } else if model.displayTheme == .official {
+                    model.setDisplayTheme(lastGtaTheme)
+                }
+            }
+        )
+    }
+
+    private var themeFootnote: String {
+        let theme = model.displayTheme == .official
+            ? "原版是项目最初的黑白界面。"
+            : "GTA 自动跟随手机所在地的日出与日落。"
+        return theme + "手机和圆屏使用同一个主题；圆屏未连接时，会在下次连接后同步。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。"
+    }
+
+    /// Day, night or auto inside GTA.
+    private var gtaModeBinding: Binding<DeviceSettingsTheme> {
+        Binding(
+            get: { model.displayTheme == .official ? lastGtaTheme : model.displayTheme },
+            set: { mode in
+                lastGtaTheme = mode
+                model.setDisplayTheme(mode)
+            }
         )
     }
 
@@ -793,19 +818,31 @@ struct ContentView: View {
             }
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "02", text: "圆屏显示")
+                MotoSectionTitle(index: "02", text: "主题")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoSegment(
                             options: [
-                                (DeviceSettingsTheme.auto, "自动"),
-                                (DeviceSettingsTheme.day, "白天"),
-                                (DeviceSettingsTheme.night, "夜间"),
+                                (true, "原版"),
+                                (false, "GTA"),
                             ],
-                            selection: displayThemeBinding,
-                            identifierPrefix: "device-theme"
+                            selection: themeFamilyBinding,
+                            identifierPrefix: "device-theme-family"
                         )
                         .padding(MotoMetrics.s3)
+                        if model.displayTheme != .official {
+                            MotoRule()
+                            MotoSegment(
+                                options: [
+                                    (DeviceSettingsTheme.auto, "自动"),
+                                    (DeviceSettingsTheme.day, "白天"),
+                                    (DeviceSettingsTheme.night, "夜间"),
+                                ],
+                                selection: gtaModeBinding,
+                                identifierPrefix: "device-theme"
+                            )
+                            .padding(MotoMetrics.s3)
+                        }
                         MotoRule()
                         MotoToggleRow(
                             title: "显示建筑轮廓",
@@ -814,7 +851,7 @@ struct ContentView: View {
                         )
                     }
                 }
-                Text("自动跟随手机所在地的日出与日落。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。")
+                Text(themeFootnote)
                     .font(.system(.footnote))
                     .foregroundStyle(palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)

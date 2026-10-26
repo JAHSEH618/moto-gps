@@ -13,10 +13,13 @@ endif()
 # display faces), so the directory is globbed here and in the ESP-IDF
 # component. Re-run cmake after generating a new face.
 file(GLOB MOTO_NAV_UI_FONT_SOURCES "${CMAKE_CURRENT_LIST_DIR}/assets/*.c")
+# The dispatcher and both interfaces (GTA, classic) are globbed for the same
+# reason.
+file(GLOB MOTO_NAV_UI_SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp")
 
 add_library(moto_nav_ui STATIC
     ${MOTO_NAV_UI_FONT_SOURCES}
-    src/moto_nav_ui.cpp
+    ${MOTO_NAV_UI_SOURCES}
 )
 
 target_include_directories(moto_nav_ui PUBLIC include)

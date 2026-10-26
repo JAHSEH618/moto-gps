@@ -10,6 +10,8 @@
 # Usage:
 #   scripts/verify.sh                 run everything
 #   scripts/verify.sh --no-ios        skip the iOS app build (native + Swift only)
+#   scripts/verify.sh --esp32         also build the firmware with ESP-IDF
+#                                     (IDF_PATH, ~/esp/esp-idf, or ../esp/esp-idf)
 #   scripts/verify.sh --install-hook  install .git/hooks/pre-push, then verify
 #   scripts/verify.sh --help
 #
@@ -23,13 +25,15 @@ log_dir="$repo_root/build/verify"
 mkdir -p "$log_dir"
 
 run_ios=1
+run_esp32=0
 install_hook=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-ios) run_ios=0; shift ;;
+    --esp32) run_esp32=1; shift ;;
     --install-hook) install_hook=1; shift ;;
     --help|-h)
-      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -95,6 +99,11 @@ test_swift() {
 }
 
 build_ios() {
+  # Command Line Tools cannot build an app; use the installed Xcode if the
+  # active developer directory is the CLT instance.
+  if ! xcodebuild -version >/dev/null 2>&1 && [[ -d /Applications/Xcode.app ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+  fi
   if ! command -v xcodegen >/dev/null 2>&1; then
     echo "xcodegen is not installed; skipping the app build"
     echo "(install it with 'brew install xcodegen' to cover the one surface"
@@ -108,6 +117,25 @@ build_ios() {
     CODE_SIGNING_ALLOWED=NO build
 }
 
+# The only check that compiles the firmware at all. A shared source missing
+# from the ESP-IDF component, or an xtensa-only warning promoted to an error,
+# is invisible to the native build.
+build_esp32() {
+  local idf=""
+  for candidate in "${IDF_PATH:-}" "$HOME/esp/esp-idf" "$repo_root/../esp/esp-idf"; do
+    if [[ -n "$candidate" && -f "$candidate/export.sh" ]]; then
+      idf="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$idf" ]]; then
+    echo "ESP-IDF not found (set IDF_PATH or install it with scripts/setup_esp_idf.sh)"
+    return 1
+  fi
+  # export.sh is written for bash; sourcing it from zsh leaves idf.py off PATH.
+  bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 build"
+}
+
 verify_app_size() {
   scripts/check_app_size.sh
 }
@@ -118,6 +146,9 @@ step_run "Swift package tests" test_swift
 step_run "app size gate" verify_app_size
 if [[ "$run_ios" == "1" ]]; then
   step_run "iOS app build" build_ios
+fi
+if [[ "$run_esp32" == "1" ]]; then
+  step_run "ESP32 firmware build" build_esp32
 fi
 
 printf '\n==> summary\n'

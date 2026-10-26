@@ -9,10 +9,10 @@ import SwiftUI
 /// different product dropped in.
 struct SurroundingMapStatusRow: View {
     @ObservedObject var store: SurroundingMapStore
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var appearance = MotoAppearance.shared
 
     private var palette: MotoPalette {
-        (colorScheme == .dark ? MotoThemeName.vice : .heat).palette
+        appearance.theme.palette
     }
 
     var body: some View {
@@ -110,13 +110,13 @@ struct MapDownloadsView: View {
     let route: [GCJ02Point]
     let destinationName: String?
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var systemColorScheme
+    @ObservedObject private var appearance = MotoAppearance.shared
     @State private var planningRoute = false
     @State private var planningError: String?
     @State private var showsCitySearch = false
 
     private var theme: MotoThemeName {
-        systemColorScheme == .dark ? .vice : .heat
+        appearance.theme
     }
 
     var body: some View {
@@ -387,9 +387,9 @@ private struct MapCitySearchPage: View {
     @ObservedObject var store: SurroundingMapStore
     @StateObject private var search: MapCitySearch
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var appearance = MotoAppearance.shared
     private var palette: MotoPalette {
-        (colorScheme == .dark ? MotoThemeName.vice : .heat).palette
+        appearance.theme.palette
     }
 
     init(store: SurroundingMapStore, baseURL: URL) {
@@ -401,7 +401,7 @@ private struct MapCitySearchPage: View {
         NavigationStack {
             page
         }
-        .motoTheme(colorScheme == .dark ? .vice : .heat)
+        .motoTheme(appearance.theme)
     }
 
     private var page: some View {
@@ -491,12 +491,12 @@ private struct MapCityDownloadPage: View {
     @State private var tiles: [MapTileID] = []
     @State private var errorMessage: String?
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var appearance = MotoAppearance.shared
     private var palette: MotoPalette {
-        (colorScheme == .dark ? MotoThemeName.vice : .heat).palette
+        appearance.theme.palette
     }
     private var type: MotoTypography {
-        MotoTypography(theme: colorScheme == .dark ? .vice : .heat)
+        MotoTypography(theme: appearance.theme)
     }
 
     var body: some View {

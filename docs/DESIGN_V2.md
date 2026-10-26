@@ -160,18 +160,20 @@ QMI8658 FIFO(水位4) → imu_task（4 帧平均 ≈112 Hz，时间戳重建，�
 
 ### 3.2 IMU 采集
 
+生产链路是**锁存轮询**（latch）。FIFO 窗口只留作 A/B 对照，见附录 D。
+
 | 参数 | 值 |
 |---|---|
 | 加计 | ±8 g，ODR 448.4 Hz（code 0100，6DOF） |
 | 陀螺 | ±512 dps，同 ODR（必须同频） |
-| LPF | CTRL5 = 0x99（两路 EN + mode 10，约 5.4% ODR；**上板读回确认位布局**） |
-| FIFO | Stream/128（`0x0E`），水位 4，CTRL1=0x70（AI + BE + INT2），CTRL8=0x80（STATUSINT 握手） |
-| 读取 | REQ_FIFO(0x05) → STATUSINT.bit7 → ACK(0x00) → FIFO_DATA → 恢复 FIFO_CTRL；整窗 ≤2.23 ms，实测最大值记录 |
-| 抽取 | **4 帧平均**（临时；H2 后决定是否 FIR） |
-| 丢样 | TIMESTAMP(0x30–32) 增量 vs 收到帧数；FIFO_OVFLOW 单独计数 |
-| 回退 | 字节序校验失败 / 握手超时 / 连续 3 批丢样 / 降水位后窗口仍 >2.0 ms |
-| 开关 | NVS `imu.fifo`，默认开；串口 `imu fifo on|off`、`imu stats` |
-| 预热 | 使能后 200 ms 丢弃样本 |
+| 寄存器 | CTRL1=0x40（地址自增 + 小端）、CTRL2=0x24、CTRL3=0x54、CTRL5=0x55（两路 LPF，约 5.39% ODR）、CTRL7=0x83、CTRL8=0x80 |
+| AHB | CTRL9 命令 0x12 关闭 AHB 时钟门控。**这一步失败时不会报错，只会落到回退**：先看开机日志 `latch ready:` 一行和 `CTRL7=0x83`，再信任后面的数字 |
+| 读取 | 定时器每 4464 µs（两个 ODR 周期）读一次锁存的最新样本，两次相邻样本取平均 |
+| 预热 | 使能后 200 ms 丢弃样本（`after warmup:` 一行） |
+| 计数 | `imu stats`：`samples`、`cycles`、`avail0`（读到时没有新样本）、`lockwait` / `lockto`（I²C 锁等待 / 超时）、`i2c`、`missed`、`flash` / `flashgaps`（超时的间隔里有多少被 flash 写解释）、`dt_max_us` / `dt_avg_us` |
+| 开关 | NVS `imu.fifo`，**默认关**（即锁存）；串口 `imu fifo on|off` 只为 A/B |
+
+**验收**（静置 10 分钟，每 60 s 一次 `imu stats`）：`avail0` 接近 0；`missed` 为 0，每个超时间隔都能被 `flashgaps` 解释；`lockto`、`i2c` 为 0；flash 写之外 `dt_max_us` < 8928（两个周期）；`samples` 约每秒 224 个。
 
 ### 3.3 安装校准
 
@@ -254,7 +256,7 @@ GNSS 航迹校正；**静止冻结，不积分**。HOLD 只计"行驶中无 GNSS
 
 ## 6. 倾角页
 
-人工地平线：盘固定、世界倾斜、太阳骑地平线、轮缘 blip。中心无符号数字（10 Hz、0.6° 滞回、<1.5° 显示 `0°`）、左右 `L/R` 40 px（±150,−8）、刻度 −60…+60 每 10°，峰值三角 + plate、最近三弯、个人极限斜纹。状态槽 `(0,+130)`：`CAL` 常驻（未校准时）、`CAL 3/2/1`、`CAL...`、`CAL OK`、`CAL FAIL MOVING/RANGE`、`IMU POLL`、`LOG FULL`。长按 2 s 清峰值、3 s 校准；环 300 ms 后出现。
+人工地平线：盘固定、世界倾斜、太阳骑地平线、轮缘 blip。中心无符号数字（10 Hz、0.6° 滞回、<1.5° 显示 `0°`）、左右 `L/R` 40 px（±150,−8）、刻度 −60…+60 每 10°，峰值三角 + plate、最近三弯、个人极限斜纹。状态槽 `(0,+130)`：`CAL` 常驻（未校准时）、`CAL 3/2/1`、`CAL...`、`CAL OK`、`CAL FAIL MOVING/RANGE`、`IMU POLL`、`LOG FULL`、`LOG DIRTY`。长按 2 s 清峰值、3 s 校准；环 300 ms 后出现。
 
 ## 7. 速度·G
 
@@ -278,7 +280,7 @@ band 速度表（12 点顺时针，v_max 可配）+ 刻度、限速标记、超�
 
 **分区（32 MB）**：nvs 0x9000/0x6000（24 KB，**保持**，`att.rmount` 存活）、otadata 0xf000/8 KB、phy_init 0x11000/4 KB、app0 0x20000/6 MB、app1 0x620000/6 MB、assets 0xc20000/3 MB、coredump 0xf20000/64 KB、tlog 0x1000000/16 MB。换表必须 USB 全片烧写；CI 门槛 6 MiB×90%。
 
-**tlog 自描述**：4 KB 块（magic MTLG、版本、块序号、boot id、首样本序号、payload_len、CRC32）。块先写 payload、最后写头；崩溃最多丢一块，读时跳过坏块。每 boot 首块带 SessionMeta（固件 hash、模式/ODR、h、估算器 τ/门限、MountRecord）。**不使用 NVS 记追加位置**：开机二分查找第一个全 0xFF 扇区。写满即停，倾角页显示 `LOG FULL`。导出 `parttool.py read_partition --name tlog` → `moto_replay`（跳过 0xFF 扇区、逐块 CRC、按会话输出）。
+**tlog 自描述**：4 KB 块（magic MTLG、版本、块序号、boot id、首样本序号、payload_len、CRC32）。块先写 payload、最后写头；崩溃最多丢一块，读时跳过坏块。每 boot 首块带 SessionMeta（固件 hash、模式/ODR、h、估算器 τ/门限、MountRecord）。**不使用 NVS 记追加位置**：开机二分查找第一个全 0xFF 扇区。写满即停，倾角页显示 `LOG FULL`。运行时不再擦除扇区（擦除会关缓存几十毫秒、卡住 IMU 总线）：一次中断的写会留下 `LOG DIRTY`，录制保持关闭，直到主机擦除分区（台架计划 §5）。导出 `parttool.py read_partition --name tlog` → `moto_replay`（跳过 0xFF 扇区、逐块 CRC、按会话输出）。
 
 ## 12. BLE
 
@@ -347,3 +349,15 @@ QMI8658 ODR/LPF 位布局与 CTRL5 读回；CO5300 对齐；FIFO 丢样/窗口�
 ## 附录 C 参考
 
 Waveshare 1.75C 仓库与 HARDWARE_REFERENCE；Mimmo & Zanzi, arXiv:2302.06265；Bosch US8260505 / US8155798 / US8919197；Garmin Lean Angle；RaceBox Mini S；SpeedAngle。
+
+## 附录 D FIFO 窗口（A/B 对照，非生产）
+
+| 参数 | 值 |
+|---|---|
+| LPF | CTRL5 = 0x99 |
+| FIFO | Stream/128（`0x0E`），水位 4，CTRL1=0x70（AI + BE + INT2），CTRL8=0x80（STATUSINT 握手） |
+| 读取 | REQ_FIFO(0x05) → STATUSINT.bit7 → ACK(0x00) → FIFO_DATA → 恢复 FIFO_CTRL；整窗 ≤2.23 ms |
+| 抽取 | 4 帧平均 |
+| 丢样 | TIMESTAMP(0x30–32) 增量 vs 收到帧数；FIFO_OVFLOW 单独计数 |
+| 回退 | 字节序校验失败 / 握手超时 / 连续 3 批丢样 / 降水位后窗口仍 >2.0 ms |
+| 实测 | 丢样 10–12%，这是改用锁存的原因 |

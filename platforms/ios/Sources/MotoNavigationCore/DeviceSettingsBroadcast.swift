@@ -1,13 +1,33 @@
 import Foundation
 
-/// Theme as the rider picks it. Deliberately not the phone's Vice / Heat
-/// palette: this is the device's own Auto / Day / Night, and Vice is what the
-/// device shows at night while Heat is what it shows by day.
+/// Theme as the rider picks it, for both surfaces. `official` is the
+/// interface this project was forked from (black and white); the other three
+/// are the GTA poster: by day, at night, or following `ambientNight`.
 public enum DeviceSettingsTheme: UInt8, CaseIterable, Sendable {
     case official = 0
     case auto = 1
     case day = 2
     case night = 3
+}
+
+/// What the phone wears for a theme. The rider picks one theme and both the
+/// phone and the round screen follow it, so this is the single place the
+/// phone resolves `auto`, exactly as the device does from the same flag.
+public enum PhoneThemeLook: Equatable, Sendable {
+    case original
+    case gtaDay
+    case gtaNight
+}
+
+extension DeviceSettingsTheme {
+    public func phoneLook(ambientNight: Bool) -> PhoneThemeLook {
+        switch self {
+        case .official: return .original
+        case .day: return .gtaDay
+        case .night: return .gtaNight
+        case .auto: return ambientNight ? .gtaNight : .gtaDay
+        }
+    }
 }
 
 public enum DeviceSettingsUnits: UInt8, CaseIterable, Sendable {

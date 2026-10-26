@@ -106,6 +106,9 @@ class PhoneNavBridge {
   void run_renderer();
 #endif
   void send_page_command(moto_ui_page_t page);
+  // Sends pending_attitude_ if one is waiting. Never holds state_mutex_ across
+  // the sender.
+  void send_pending_attitude();
   void send_music_command(moto_music_command_t command);
   // Returns the command id written to the wire, or 0 when nothing was sent.
   std::uint16_t send_device_command(moto::ble::DeviceCommand command);
@@ -146,6 +149,13 @@ class PhoneNavBridge {
   // state, and release this mutex before calling LVGL or the BLE sender.
   mutable std::mutex state_mutex_;
   std::uint32_t phone_session_id_ = 0;
+  // Capabilities from the phone's ConnectionStatus. Bit 8 (attitude
+  // telemetry) is the phone saying it wants AttitudeSample.
+  std::uint32_t phone_capabilities_ = 0;
+  // Newest valid sample waiting for the render task, and the 10 Hz clock.
+  moto::ble::AttitudeSample pending_attitude_{};
+  bool attitude_pending_ = false;
+  std::uint64_t last_attitude_queued_ms_ = 0;
   std::uint16_t next_command_id_ = 1;
   bool link_active_ = false;
   moto_ui_phone_connection_t ui_phone_connection_ = MOTO_UI_PHONE_OFFLINE;
@@ -162,6 +172,10 @@ class PhoneNavBridge {
     RenderMedia = 1U << 2U,
     RenderHomeError = 1U << 3U,
     RenderDisplay = 1U << 4U,
+    // Send the newest AttitudeSample (ADR 0001). Raised by the sensor task and
+    // sent by the render task, because the BLE sender may block and the
+    // sensor task reads the IMU every 4.4 ms.
+    RenderAttitude = 1U << 5U,
   };
   std::atomic<std::uint32_t> pending_render_flags_{0};
 #ifdef ESP_PLATFORM

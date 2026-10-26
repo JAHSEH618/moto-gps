@@ -8,10 +8,10 @@ import SwiftUI
 /// arrow. Nothing here is data, so nothing is set in monospace.
 struct DataUseView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var systemColorScheme
+    @ObservedObject private var appearance = MotoAppearance.shared
 
     private var theme: MotoThemeName {
-        systemColorScheme == .dark ? .vice : .heat
+        appearance.theme
     }
 
     var body: some View {

@@ -8,6 +8,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -130,14 +131,34 @@ void ui_flags_task(void*) {
   }
 }
 
+// One byte from whichever console has input. UART0 is the primary console
+// (stdin), but the Waveshare board's only USB-C port is the S3's USB-Serial/
+// JTAG, which is a secondary, output-only console: without reading it here a
+// bench command typed into that port never arrives.
+int read_console_byte() {
+  std::uint8_t byte = 0;
+  if (usb_serial_jtag_is_driver_installed() &&
+      usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(20)) == 1) {
+    return byte;
+  }
+  return std::fgetc(stdin);
+}
+
 void serial_command_task(void* context) {
   auto* sensor = static_cast<MotionHeadingSensor*>(context);
+  if (!usb_serial_jtag_is_driver_installed()) {
+    usb_serial_jtag_driver_config_t config =
+        USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    if (usb_serial_jtag_driver_install(&config) != ESP_OK) {
+      ESP_LOGW(kTag, "USB-Serial/JTAG input unavailable; UART0 only");
+    }
+  }
   char line[64];
   std::size_t used = 0;
   while (true) {
-    const int c = std::fgetc(stdin);
+    const int c = read_console_byte();
     if (c == EOF) {
-      vTaskDelay(pdMS_TO_TICKS(50));
+      vTaskDelay(pdMS_TO_TICKS(30));
       continue;
     }
     if (c == '\r') continue;
@@ -231,6 +252,30 @@ void serial_command_task(void* context) {
         ESP_LOGI(kTag, "ui page=%d", page);
       } else {
         ESP_LOGW(kTag, "ui page: LVGL lock timeout");
+      }
+    } else if (std::strncmp(line, "ui theme ", 9) == 0) {
+      // Bench-only theme switch, for checking the classic <-> GTA tree swap on
+      // the panel without a phone. The phone's SettingsState stays the
+      // rider's path and overrides this on the next settings change.
+      const char* name = line + 9;
+      int theme = -1;
+      if (std::strcmp(name, "official") == 0) theme = MOTO_UI_THEME_OFFICIAL;
+      else if (std::strcmp(name, "day") == 0) theme = MOTO_UI_THEME_GTA_DAY;
+      else if (std::strcmp(name, "night") == 0) theme = MOTO_UI_THEME_GTA_NIGHT;
+      else if (std::strcmp(name, "auto") == 0) theme = MOTO_UI_THEME_AUTO;
+      if (theme < 0) {
+        ESP_LOGW(kTag, "ui theme: unknown theme '%s'", name);
+      } else if (board_port_lock(1'000)) {
+        const std::int64_t started = esp_timer_get_time();
+        moto_nav_ui_set_theme(static_cast<moto_ui_theme_t>(theme));
+        const std::int64_t elapsed_us = esp_timer_get_time() - started;
+        board_port_unlock();
+        ESP_LOGI(kTag, "ui theme=%d applied in %lld us; internal heap %u B free",
+                 theme, static_cast<long long>(elapsed_us),
+                 static_cast<unsigned>(
+                     heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+      } else {
+        ESP_LOGW(kTag, "ui theme: LVGL lock timeout");
       }
     } else if (std::strncmp(line, "ui bench lean", 13) == 0) {
       const int seconds = std::atoi(line + 13);

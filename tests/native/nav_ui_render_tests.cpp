@@ -119,6 +119,10 @@ std::uint16_t rgb565(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
                                     (b >> 3U));
 }
 
+// GTA night paper: the block fill and the map ground the building tests sample.
+const std::uint16_t kNightBlock = rgb565(0x21, 0x18, 0x48);
+const std::uint16_t kNightGround = rgb565(0x14, 0x10, 0x24);
+
 std::uint16_t pixel_at(int x, int y) {
   const std::size_t offset =
       (static_cast<std::size_t>(y) * kWidth + static_cast<std::size_t>(x)) *
@@ -275,12 +279,12 @@ void test_a_building_footprint_interior_is_filled() {
   capture();
 
   // The footprint interior must be a filled surface, not just an outline.
-  CHECK(pixel_at(150, 150) == rgb565(0x24, 0x29, 0x2C));
+  CHECK(pixel_at(150, 150) == kNightBlock);
   // The old fan-spoke seams must be covered as well, not just the centre.
-  CHECK(pixel_at(125, 125) == rgb565(0x24, 0x29, 0x2C));
-  CHECK(pixel_at(175, 175) == rgb565(0x24, 0x29, 0x2C));
+  CHECK(pixel_at(125, 125) == kNightBlock);
+  CHECK(pixel_at(175, 175) == kNightBlock);
   // The rest of the map must remain the page background.
-  CHECK(pixel_at(300, 150) == rgb565(0x05, 0x06, 0x07));
+  CHECK(pixel_at(300, 150) == kNightGround);
 }
 
 void test_the_map_covers_the_bottom_of_the_round_canvas() {
@@ -307,7 +311,7 @@ void test_the_map_covers_the_bottom_of_the_round_canvas() {
 
   // The old 232-design-pixel map strip ended around y=300; this row must be
   // inside the full-screen Radar, not the page background.
-  CHECK(pixel_at(120, 380) == rgb565(0x24, 0x29, 0x2C));
+  CHECK(pixel_at(120, 380) == kNightBlock);
 }
 
 void test_the_ring_carries_progress_and_a_north_badge() {
@@ -417,7 +421,9 @@ void test_buildings_are_opt_in() {
   moto_nav_ui_create();
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
-  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  // Night paper: the building tests below sample its block and ground colours.
+  // OFFICIAL is the classic interface now, not a palette of this tree.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_ui_state_t state = base_state();
   // Keep a route so the lifecycle overlay stays hidden; the route is drawn
   // below the building and never crosses its interior.
@@ -442,12 +448,12 @@ void test_buildings_are_opt_in() {
 
   // Default after create(): the footprint interior is bare land and the
   // outline is gone too, so a hidden layer cannot leave a hollow ghost.
-  CHECK(pixel_at(150, 150) == rgb565(0x05, 0x06, 0x07));
-  CHECK(pixel_at(100, 100) == rgb565(0x05, 0x06, 0x07));
+  CHECK(pixel_at(150, 150) == kNightGround);
+  CHECK(pixel_at(100, 100) == kNightGround);
 
   moto_nav_ui_set_show_buildings(1);
   capture();
-  CHECK(pixel_at(150, 150) == rgb565(0x24, 0x29, 0x2C));
+  CHECK(pixel_at(150, 150) == kNightBlock);
 
   // The phone repeats its settings after every handshake and every echo; a
   // repeat must not invalidate the map layer.
@@ -457,7 +463,7 @@ void test_buildings_are_opt_in() {
 
   moto_nav_ui_set_show_buildings(0);
   capture();
-  CHECK(pixel_at(150, 150) == rgb565(0x05, 0x06, 0x07));
+  CHECK(pixel_at(150, 150) == kNightGround);
 }
 
 void test_day_and_night_themes_render_different_map_colors() {
@@ -493,7 +499,7 @@ void test_day_and_night_themes_render_different_map_colors() {
   CHECK(pixel_at(150, 150) == rgb565(0x21, 0x18, 0x48));
   CHECK(pixel_at(300, 150) == rgb565(0x14, 0x10, 0x24));
 
-  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
 }
 
 void test_auto_theme_follows_the_ambient_night_flag() {
@@ -540,7 +546,7 @@ void test_auto_theme_follows_the_ambient_night_flag() {
   moto_nav_ui_set_ambient_night(1);
   CHECK(explicit_night.hash == capture().hash);
 
-  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_nav_ui_set_ambient_night(0);
 }
 
@@ -837,7 +843,7 @@ void test_home_blip_is_clamped_to_the_ring() {
     }
   }
   CHECK(blip_is_light);
-  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
 
   state.has_home = 0;
   state.home_x = 300;
@@ -1158,14 +1164,14 @@ void dump_review_frames(const char *dir) {
     write_ppm_to(path);
   }
 
-  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
 
 void render_demo_frame() {
   // Do not inherit the previous test's theme or page: the dump is a review
   // artefact, and a silent dependency on test order would make it lie.
-  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
@@ -1401,6 +1407,136 @@ void test_one_swipe_moves_one_page_even_after_a_rebuild() {
   pump(1100);
 }
 
+
+// Six MapRoadClass values cross the wire; each must keep its own stroke. One
+// horizontal road per class, sampled on its centre line, in both GTA papers.
+void test_every_road_class_has_its_own_stroke() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  moto_ui_state_t state = base_state();
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 440};
+  state.route_points[1] = {60, 440};
+  state.building_point_count = 0;
+  state.building_footprint_count = 0;
+  state.road_point_count = 12;
+  state.road_polyline_count = 6;
+  for (int i = 0; i < 6; ++i) {
+    const std::int16_t y = static_cast<std::int16_t>(140 + i * 36);
+    state.road_points[i * 2] = {150, y};
+    state.road_points[i * 2 + 1] = {320, y};
+    state.road_polylines[i] = {static_cast<std::uint8_t>(i * 2), 2,
+                               static_cast<std::uint8_t>(i)};
+  }
+  state.map_scene_revision = 91;
+
+  struct Paper {
+    moto_ui_theme_t theme;
+    std::uint16_t colors[6];
+  };
+  const Paper papers[] = {
+      {MOTO_UI_THEME_GTA_DAY,
+       {rgb565(0xF7, 0xD9, 0x6B), rgb565(0xFF, 0xFD, 0xF2),
+        rgb565(0xF6, 0xF0, 0xD7), rgb565(0xE2, 0xE6, 0xC8),
+        rgb565(0xCF, 0xE0, 0xBC), rgb565(0xA9, 0xC9, 0x9A)}},
+      {MOTO_UI_THEME_GTA_NIGHT,
+       {rgb565(0xFF, 0xC9, 0x5C), rgb565(0xFF, 0xFD, 0xF4),
+        rgb565(0xF6, 0xF0, 0xD7), rgb565(0xD9, 0xD5, 0xBC),
+        rgb565(0xC9, 0xC6, 0xA8), rgb565(0x8E, 0x88, 0xA6)}},
+  };
+  for (const Paper &paper : papers) {
+    moto_nav_ui_set_theme(paper.theme);
+    moto_nav_ui_set_state(&state);
+    capture();
+    for (int i = 0; i < 6; ++i) {
+      // x=170 stays clear of the rider marker and the HUD numerals.
+      CHECK(pixel_at(170, 140 + i * 36) == paper.colors[i]);
+    }
+  }
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+}
+
+int count_pixels(std::uint16_t color) {
+  int count = 0;
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      if (pixel_at(x, y) == color) ++count;
+    }
+  }
+  return count;
+}
+
+int g_page_requests = 0;
+void count_page_request(moto_ui_page_t page, void *) {
+  ++g_page_requests;
+  moto_nav_ui_set_page(page);
+}
+
+// OFFICIAL is the interface the fork started from, not a palette: a different
+// tree, four pages, white route on true black. Switching to it and back must
+// keep the rider where they were and keep every callback, because the phone
+// can change the theme mid-ride.
+void test_official_theme_swaps_in_the_classic_interface() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  moto_ui_state_t state = base_state();
+  fill_route(state, 12);
+  fill_streets(state);
+  moto_nav_ui_set_state(&state);
+  pump(1100);
+  const Frame gta = capture();
+  CHECK(lv_obj_find_by_name(lv_screen_active(), "moto-compass-north") !=
+        nullptr);
+
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  pump(1100);
+  const Frame classic = capture();
+  CHECK(classic.hash != gta.hash);
+  // The GTA furniture left with its tree; the corner is the upstream black,
+  // not the GTA bezel.
+  CHECK(lv_obj_find_by_name(lv_screen_active(), "moto-compass-north") ==
+        nullptr);
+  CHECK(pixel_at(4, 4) == rgb565(0x05, 0x06, 0x07));
+  // The snapshot was replayed into the new tree: the white route is on screen
+  // and the "connected" flash did not fire for a link that never dropped.
+  CHECK(count_pixels(rgb565(0xF3, 0xF4, 0xEF)) > 200);
+  moto_nav_ui_set_state(&state);
+  CHECK(capture().hash == classic.hash);
+
+  // Four pages. The two GTA-only pages fall back to navigation.
+  moto_nav_ui_set_page(MOTO_UI_PAGE_PERFORMANCE);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_LEAN);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+
+  // A swipe walks the classic order, and the page callback registered before
+  // the switch still receives it.
+  g_page_requests = 0;
+  moto_nav_ui_set_page_change_callback(count_page_request, nullptr);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  lv_test_indev_create_all();
+  capture();
+  swipe(320, 180);
+  CHECK(g_page_requests == 1);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_SPEED);
+  swipe(180, 320);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+  swipe(180, 320);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
+  swipe(320, 180);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+  lv_test_indev_delete_all();
+  moto_nav_ui_set_page_change_callback(nullptr, nullptr);
+
+  // Back to GTA: the same poster frame, rebuilt from the replayed state.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  pump(1100);
+  CHECK(capture().hash == gta.hash);
+}
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -1462,6 +1598,8 @@ int main(int argc, char **argv) {
   test_visible_objects_are_registered();
   test_lean_page_survives_twenty_swipes();
   test_every_page_paints_its_own_surface();
+  test_official_theme_swaps_in_the_classic_interface();
+  test_every_road_class_has_its_own_stroke();
 
   // Visual check runs while the instrument is still alive; the terminal
   // screens below delete the whole widget tree.

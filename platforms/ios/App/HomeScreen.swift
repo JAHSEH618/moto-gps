@@ -406,7 +406,7 @@ struct HomeScreen: View {
                     .fill(palette.accent)
                     .frame(width: 14, height: 3)
                 Text(text.uppercased())
-                    .font(.custom("Anton-Regular", size: 20, relativeTo: .title3))
+                    .font(theme.wordmarkFont(size: 20, relativeTo: .title3))
                     .tracking(0.6)
                     .foregroundStyle(palette.ink)
             }

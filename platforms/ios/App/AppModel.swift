@@ -23,6 +23,10 @@ final class AppModel: ObservableObject {
     /// after every handshake.
     let deviceSettings = DeviceSettingsStore()
     @Published private(set) var displayTheme: DeviceSettingsTheme = .auto
+    /// What the phone wears. Derived from `displayTheme` and the ambient flag,
+    /// the same inputs the round screen resolves, so the two surfaces always
+    /// show the same theme.
+    @Published private(set) var phoneTheme: MotoThemeName = .vice
     @Published private(set) var showBuildings = false
     @Published private(set) var selectedPlace: PlaceSearchResult?
     @Published private(set) var recentPlaces: [PlaceSearchResult] = []
@@ -131,6 +135,7 @@ final class AppModel: ObservableObject {
         }
 
         displayTheme = deviceSettings.theme
+        refreshPhoneTheme()
         showBuildings = deviceSettings.showBuildings
         broadcastHomeLocation()
         broadcastDeviceSettings()
@@ -319,13 +324,21 @@ final class AppModel: ObservableObject {
         )
     }
 
-    /// Theme the rider picked for the round screen. Deliberately not the
-    /// phone's Vice / Heat palette: the device shows Vice at night and Heat by
-    /// day, and `auto` is its own decision.
+    /// Theme the rider picked. It is one choice for both surfaces: the phone
+    /// changes its own look at once and the round screen follows over BLE (or
+    /// on the next handshake, if it is not connected now).
     func setDisplayTheme(_ theme: DeviceSettingsTheme) {
         guard deviceSettings.apply(theme: theme) else { return }
         displayTheme = theme
+        refreshPhoneTheme()
         broadcastDeviceSettings()
+    }
+
+    private func refreshPhoneTheme() {
+        let look = deviceSettings.theme.phoneLook(ambientNight: deviceSettings.ambientNight)
+        let theme = MotoThemeName(look: look)
+        if phoneTheme != theme { phoneTheme = theme }
+        MotoAppearance.shared.apply(theme)
     }
 
     func setShowBuildings(_ visible: Bool) {
@@ -340,6 +353,7 @@ final class AppModel: ObservableObject {
         guard deviceSettings.apply(ambientNight: AmbientNight.isNight(at: point)) else {
             return
         }
+        refreshPhoneTheme()
         broadcastDeviceSettings()
     }
 

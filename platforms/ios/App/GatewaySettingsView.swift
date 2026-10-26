@@ -4,11 +4,11 @@ import SwiftUI
 struct GatewaySettingsView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var appearance = MotoAppearance.shared
     /// Read off the theme: this view applies `.motoTheme` itself, so an
     /// environment palette here would be the default one.
     private var palette: MotoPalette {
-        (colorScheme == .dark ? MotoThemeName.vice : .heat).palette
+        appearance.theme.palette
     }
     @State private var address = ""
     @State private var message: String?
@@ -16,7 +16,7 @@ struct GatewaySettingsView: View {
     @State private var checkTask: Task<Void, Never>?
 
     private var theme: MotoThemeName {
-        colorScheme == .dark ? .vice : .heat
+        appearance.theme
     }
 
     var body: some View {

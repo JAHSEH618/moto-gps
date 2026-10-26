@@ -163,7 +163,7 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x12` | TrafficDeviation | 手机→设备 | 交通或偏航变化时 |
 | `0x13` | MediaState | 手机→设备 | 曲目/播放变化，进度最高 1 Hz |
 | `0x14` | MapScene | 手机→设备 | 前进约 100 m、跨离线分块或路线改变时 |
-| `0x15` | AttitudeSample | 设备→手机 | Ride / Performance Run 记录期间 10 Hz，无 ACK |
+| `0x15` | AttitudeSample | 设备→手机 | 手机声明 bit8 时 10 Hz，无 ACK |
 | `0x16` | HomeLocation | 手机→设备 | 家地址变化时，以及每次握手后 |
 | `0x17` | SettingsState | 双向 | 设置或主题变化时，以及每次握手后 |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
@@ -409,8 +409,9 @@ kind：0 PageSelected、1 Tap、2 LongPress、3 SwipeLeft、4 SwipeRight、5 Swi
 
 ### 6.10 AttitudeSample (`0x15`, 固定 13 字节)
 
-设备→手机的低频姿态遥测。只在 Ride 或 Performance Run 记录期间发送，不带
-ACK；只发送 `valid=true` 的估计值。
+设备→手机的低频姿态遥测。手机在 ConnectionStatus 里声明 bit8 后，设备以 10 Hz
+发送，不带 ACK；只发送 `valid=true` 的估计值。没有声明 bit8 的手机永远收不到这个
+类型；断线后重新以下一次握手为准。
 
 ```text
 u8  revision
@@ -481,13 +482,13 @@ u32 settings_revision    非零，单调
 
 | SettingsState.theme | 设备行为 | `moto_ui_theme_t` |
 | --- | --- | --- |
-| 0 Official | 厂商主题，不覆盖 | `MOTO_UI_THEME_OFFICIAL` |
+| 0 Official | 原版界面：fork 前的黑白圆屏（独立的界面树，四页） | `MOTO_UI_THEME_OFFICIAL` |
 | 1 Auto | 按环境光选择 | 由设备决定 DAY / NIGHT |
 | 2 Day | 强制日光 | `MOTO_UI_THEME_GTA_DAY` |
 | 3 Night | 强制夜间 | `MOTO_UI_THEME_GTA_NIGHT` |
 
-手机端的 Vice / Heat 分别对应 Night / Day；Auto 是设备自己的能力，手机不参与
-判光。
+手机端跟随同一个主题：Official 对应原版黑白，Night / Day 分别对应 Vice / Heat；
+Auto 由手机按同一个 `ambient_night` 标志解析，和设备的结果一致。
 
 ## 7. Display Snapshot 到共享 NavSnapshot
 

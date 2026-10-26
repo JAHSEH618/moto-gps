@@ -305,6 +305,28 @@ std::uint64_t monotonic_ms() {
 bool has_flag(std::uint16_t flags, moto::ble::NavigationFlag flag) {
   return (flags & static_cast<std::uint16_t>(flag)) != 0U;
 }
+
+constexpr std::uint64_t kAttitudeIntervalMs = 100;
+
+std::int16_t clamp_i16(float value) {
+  const float rounded = std::round(value);
+  if (rounded > 32'767.0F) return 32'767;
+  if (rounded < -32'768.0F) return -32'768;
+  return static_cast<std::int16_t>(rounded);
+}
+
+// Wire units per protocol §6.10: centidegrees and milli-g, right and nose-up
+// positive. The estimator already uses that sign convention (ADR 0003).
+moto::ble::AttitudeSample to_attitude_sample(
+    const moto::motion::AttitudeEstimate& attitude, std::uint64_t sample_ms) {
+  moto::ble::AttitudeSample sample;
+  sample.monotonic_ms = static_cast<std::uint32_t>(sample_ms);
+  sample.lean_cdeg = clamp_i16(attitude.lean_deg * 100.0F);
+  sample.pitch_cdeg = clamp_i16(attitude.pitch_deg * 100.0F);
+  sample.longitudinal_mg = clamp_i16(attitude.longitudinal_g * 1'000.0F);
+  sample.lateral_mg = clamp_i16(attitude.lateral_g * 1'000.0F);
+  return sample;
+}
 }  // namespace
 
 PhoneNavBridge::PhoneNavBridge(moto::nav::NavPresenter& presenter)
@@ -363,6 +385,8 @@ void PhoneNavBridge::on_link_state(bool active) {
       phone_snapshot.network = moto::nav::NetworkState::Connecting;
     } else {
       phone_session_id_ = 0;
+      phone_capabilities_ = 0;
+      attitude_pending_ = false;
       phone_snapshot.network = moto::nav::NetworkState::Offline;
       phone_snapshot.gnss_stale = true;
       phone_snapshot.has_usable_fix = false;
@@ -389,8 +413,18 @@ void PhoneNavBridge::on_imu_sample(
     const moto::motion::AttitudeEstimate& attitude,
     std::uint64_t sample_ms) {
   bool should_present = false;
+  bool should_send_attitude = false;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
+    // ADR 0001: 10 Hz to a phone that asked for it, valid estimates only.
+    if (attitude.valid && link_active_ &&
+        (phone_capabilities_ & moto::ble::CapabilityAttitudeTelemetry) != 0U &&
+        sample_ms - last_attitude_queued_ms_ >= kAttitudeIntervalMs) {
+      last_attitude_queued_ms_ = sample_ms;
+      pending_attitude_ = to_attitude_sample(attitude, sample_ms);
+      attitude_pending_ = true;
+      should_send_attitude = true;
+    }
     snapshot_.has_attitude = attitude.valid;
     if (attitude.valid) {
       snapshot_.lean_deg = attitude.lean_deg;
@@ -425,6 +459,25 @@ void PhoneNavBridge::on_imu_sample(
     }
   }
   if (should_present) present_motion();
+  if (should_send_attitude) request_render(RenderAttitude);
+}
+
+void PhoneNavBridge::send_pending_attitude() {
+  moto::ble::AttitudeSample sample;
+  SendCallback sender = nullptr;
+  void* sender_context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!attitude_pending_ || sender_ == nullptr || !link_active_) return;
+    attitude_pending_ = false;
+    sample = pending_attitude_;
+    sender = sender_;
+    sender_context = sender_context_;
+  }
+  const moto::ble::Message message = sample;
+  // Fire-and-forget telemetry: no Ack, never urgent. A dropped sample is
+  // replaced 100 ms later.
+  sender(message, 0, sender_context);
 }
 
 void PhoneNavBridge::fill_demo_snapshot(moto::nav::NavSnapshot& output,
@@ -571,6 +624,7 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           {
             const std::lock_guard<std::mutex> lock(state_mutex_);
             phone_session_id_ = value.session_id;
+            phone_capabilities_ = value.capabilities;
             home_revision_ = 0;
             switch (value.state) {
               case moto::ble::ConnectionState::Ready:
@@ -1101,6 +1155,13 @@ void PhoneNavBridge::render_pending() {
     if ((requested & RenderDisplay) != 0U) {
       render_settings_ = settings_;
       render_ambient_night_ = ambient_night_;
+    }
+  }
+
+  if ((requested & RenderAttitude) != 0U) {
+    send_pending_attitude();
+    if ((requested & ~static_cast<std::uint32_t>(RenderAttitude)) == 0U) {
+      return;
     }
   }
 

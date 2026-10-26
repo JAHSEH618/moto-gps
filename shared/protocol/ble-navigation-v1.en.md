@@ -191,7 +191,7 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x12` | TrafficDeviation | phone→device | when traffic or off-route state changes |
 | `0x13` | MediaState | phone→device | track / playback change, progress at most 1 Hz |
 | `0x14` | MapScene | phone→device | after about 100 m of travel, on crossing an offline tile, or on a route change |
-| `0x15` | AttitudeSample | device→phone | 10 Hz during Ride / Performance Run recording, no Ack |
+| `0x15` | AttitudeSample | device→phone | 10 Hz while the phone advertises bit 8, no Ack |
 | `0x16` | HomeLocation | phone→device | when the home address changes, and after every handshake |
 | `0x17` | SettingsState | both ways | when settings or the theme change, and after every handshake |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
@@ -452,8 +452,10 @@ Ack reply. A UI action must be ACKed Ok only after a successful commit.
 
 ### 6.10 AttitudeSample (`0x15`, fixed 13 bytes)
 
-Low-rate device→phone attitude telemetry. It is sent only while a Ride or a
-Performance Run is recording, carries no Ack, and only carries valid estimates.
+Low-rate device→phone attitude telemetry. The device sends it at 10 Hz once the
+phone advertises bit 8 in its ConnectionStatus, carries no Ack, and only carries
+valid estimates. A phone that does not advertise bit 8 is never sent the type;
+after a disconnect the next handshake decides again.
 
 ```text
 u8  revision
@@ -530,13 +532,14 @@ legal.
 
 | SettingsState.theme | device behaviour | `moto_ui_theme_t` |
 | --- | --- | --- |
-| 0 Official | vendor theme, no override | `MOTO_UI_THEME_OFFICIAL` |
+| 0 Official | the original interface: the black-and-white round screen from before the fork (a separate widget tree, four pages) | `MOTO_UI_THEME_OFFICIAL` |
 | 1 Auto | choose by ambient light | the device picks DAY / NIGHT |
 | 2 Day | force daylight | `MOTO_UI_THEME_GTA_DAY` |
 | 3 Night | force night | `MOTO_UI_THEME_GTA_NIGHT` |
 
-The phone's Vice / Heat themes map to Night / Day; Auto is the device's own capability and the
-phone does not participate in the light decision.
+The phone wears the same theme: Official is the original black-and-white look, Night / Day are
+Vice / Heat, and the phone resolves Auto from the same `ambient_night` flag the device uses, so
+both surfaces reach the same answer.
 
 ## 7. Display Snapshot to the shared NavSnapshot
 

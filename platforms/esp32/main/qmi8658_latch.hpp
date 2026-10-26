@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "qmi8658.h"
+#include "qmi8658_vendor.hpp"
 
 namespace moto::motion {
 

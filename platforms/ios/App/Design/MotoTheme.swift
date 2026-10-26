@@ -1,14 +1,20 @@
+import MotoNavigationCore
 import SwiftUI
+import UIKit
 
 // MARK: - Theme
 
-/// Two themes, chosen by ambient light rather than taste.
-/// See DESIGN.md → "Theme switch".
+/// Three looks, one per round-screen family: the GTA poster by night (Vice)
+/// and by day (Heat), and the black-and-white interface this project was
+/// forked from (Original). The rider picks the theme once; the phone wears
+/// what the round screen shows. See DESIGN.md → "Theme switch".
 enum MotoThemeName: String, CaseIterable, Identifiable {
     /// Dark garage, night ride. Instrument console. Amber on near-black.
     case vice
     /// Daylight with glare. Poster. Near-black on sunlit paper.
     case heat
+    /// The upstream look: white on true black, system type, no poster devices.
+    case original
 
     var id: String { rawValue }
 
@@ -16,6 +22,7 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         switch self {
         case .vice: return "Vice"
         case .heat: return "Heat"
+        case .original: return "Original"
         }
     }
 
@@ -24,6 +31,7 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         switch self {
         case .vice: return "夜间海报 · 午夜纸面"
         case .heat: return "日光海报 · 道路奶油"
+        case .original: return "原版 · 黑底白线"
         }
     }
 
@@ -31,6 +39,7 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         switch self {
         case .vice: return .vice
         case .heat: return .heat
+        case .original: return .original
         }
     }
 
@@ -38,25 +47,37 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
     /// Dark themes drive the system chrome; the light theme must also override it.
     var colorScheme: ColorScheme {
         switch self {
-        case .vice: return .dark
+        case .vice, .original: return .dark
         case .heat: return .light
         }
     }
 
-    /// Display weight differs per theme: the console is semi-bold, the poster is extra-bold.
-    var displayFontName: String {
+    /// Display weight differs per theme: the console is semi-bold, the poster is
+    /// extra-bold. Original has no bundled face: it sets numerals in the system
+    /// font, as the upstream app did.
+    var displayFontName: String? {
         switch self {
         case .vice: return "BarlowCondensed-SemiBold"
         case .heat: return "BarlowCondensed-ExtraBold"
+        case .original: return nil
         }
     }
 
     /// Wordmark face: Anton, the closest OFL match to the GTA logo weight.
-    var wordmarkFontName: String { "Anton-Regular" }
+    /// Original sets its headings in the system face instead.
+    var wordmarkFontName: String? { self == .original ? nil : "Anton-Regular" }
+
+    func wordmarkFont(size: CGFloat, relativeTo style: Font.TextStyle) -> Font {
+        guard let name = wordmarkFontName else {
+            let scaled = UIFontMetrics(forTextStyle: style.uiTextStyle).scaledValue(for: size)
+            return .system(size: scaled, weight: .heavy)
+        }
+        return .custom(name, size: size, relativeTo: style)
+    }
 
     var sweepDuration: Double {
         switch self {
-        case .vice: return 4
+        case .vice, .original: return 4
         case .heat: return 6
         }
     }
@@ -68,13 +89,15 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         // Glare on paper turns thin bands into haze; Heat carries no texture
         // inside the circle and lets the map blocks do the work.
         case .heat: return .none
+        // The upstream screen is flat black: no texture to imitate.
+        case .original: return .none
         }
     }
 
     /// Body copy floor. Heat never drops secondary text below `body` size.
     var minimumSecondaryTextSize: CGFloat {
         switch self {
-        case .vice: return 11
+        case .vice, .original: return 11
         case .heat: return 15
         }
     }
@@ -109,6 +132,10 @@ struct MotoPalette {
     let link: Color
     let ok: Color
     let abort: Color
+    /// The instrument band and the ink on it. The GTA themes share the magenta
+    /// rim; Original replaces it with white, as its round screen does.
+    var band = Color(hex: 0xF34DAA)
+    var onBand = Color(hex: 0x17151B)
 
     /// Vice — the instrument's night paper. The same tokens as the round screen:
     /// midnight purple ground, sunset-cream ink, hot pink for the band and for
@@ -152,6 +179,30 @@ struct MotoPalette {
         ok: Color(hex: 0x1D6B3C),
         abort: Color(hex: 0xB3241C)
     )
+
+    /// Original — the round screen's upstream colours on the phone: true black,
+    /// warm white ink and route, graphite rules. White is the accent, so plates
+    /// carry black ink (19:1). No magenta anywhere.
+    static let original = MotoPalette(
+        bg: Color(hex: 0x050607),
+        surface: Color(hex: 0x0E1012),
+        surface2: Color(hex: 0x16191C),
+        line: Color(hex: 0x303539),
+        lineSoft: Color(white: 1, opacity: 0.08),
+        ink: Color(hex: 0xF3F4EF),
+        inkMuted: Color(hex: 0xAEB2B0),
+        slab: Color(hex: 0x000000),
+        onSlab: Color(hex: 0xF3F4EF),
+        accent: Color(hex: 0xF3F4EF),
+        onAccent: Color(hex: 0x050607),
+        route: Color(hex: 0xF3F4EF),
+        link: Color(hex: 0xB8EDF5),
+        ok: Color(hex: 0x69D494),
+        abort: Color(hex: 0xFF4B43),
+        band: Color(hex: 0xF3F4EF),
+        onBand: Color(hex: 0x050607)
+    )
+
 }
 
 extension Color {
@@ -191,7 +242,11 @@ struct MotoTypography {
         }
         // `relativeTo:` keeps the instrument numeral honouring Dynamic Type;
         // the host view caps the range so a 76pt numeral cannot reflow the screen.
-        return .custom(theme.displayFontName, size: size, relativeTo: .largeTitle)
+        guard let name = theme.displayFontName else {
+            let scaled = UIFontMetrics(forTextStyle: .largeTitle).scaledValue(for: size)
+            return .system(size: scaled, weight: .semibold)
+        }
+        return .custom(name, size: size, relativeTo: .largeTitle)
     }
 
     func mono(_ token: MotoText) -> Font {
@@ -348,9 +403,57 @@ extension MotoPalette {
         contrast == .increased ? ink : inkMuted
     }
 
-    /// The instrument band. Brand, not state: identical in both themes, never a
-    /// warning colour. Ink on it measures 5.7:1, so plates carry `onBand` type
-    /// and the band is never used for text at prose size.
-    static let band = Color(hex: 0xF34DAA)
-    static let onBand = Color(hex: 0x17151B)
+    /// The instrument band. Brand, not state: identical in both GTA themes,
+    /// never a warning colour. Ink on it measures 5.7:1, so plates carry
+    /// `onBand` type and the band is never used for text at prose size. It is
+    /// read statically all over the app, so it follows the live theme through
+    /// `MotoAppearance` rather than through the environment.
+    @MainActor static var band: Color { MotoAppearance.shared.theme.palette.band }
+    @MainActor static var onBand: Color { MotoAppearance.shared.theme.palette.onBand }
+}
+
+// MARK: - Live theme
+
+/// The phone's current look. One source rather than an environment value,
+/// because presented sheets apply their own `.motoTheme` and the brand band is
+/// read statically; both need the live theme without a view hierarchy above
+/// them. `AppModel` is the only writer.
+@MainActor
+final class MotoAppearance: ObservableObject {
+    static let shared = MotoAppearance()
+
+    @Published private(set) var theme: MotoThemeName = .vice
+
+    func apply(_ theme: MotoThemeName) {
+        guard theme != self.theme else { return }
+        self.theme = theme
+    }
+}
+
+private extension Font.TextStyle {
+    var uiTextStyle: UIFont.TextStyle {
+        switch self {
+        case .largeTitle: return .largeTitle
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption1
+        case .caption2: return .caption2
+        default: return .body
+        }
+    }
+}
+
+extension MotoThemeName {
+    init(look: PhoneThemeLook) {
+        switch look {
+        case .original: self = .original
+        case .gtaDay: self = .heat
+        case .gtaNight: self = .vice
+        }
+    }
 }

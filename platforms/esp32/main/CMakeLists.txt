@@ -1,6 +1,7 @@
 set(MOTO_REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../..")
-set(MOTO_SHARED_UI_SOURCE
-    "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/src/moto_nav_ui.cpp")
+# The dispatcher and both interfaces (GTA, classic). Globbed like the fonts.
+file(GLOB MOTO_SHARED_UI_SOURCE
+    "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/src/*.cpp")
 # Every generated font is a source in its own right, and listing them one by
 # one is how the xtensa link lost attitude_estimator.cpp, device_settings.cpp
 # and the 2026-10-23 display faces. Glob the directory instead: a new face
@@ -50,6 +51,7 @@ idf_component_register(
         esp_timer
         esp_driver_gpio
         esp_driver_i2c
+        esp_driver_usb_serial_jtag
         esp_hw_support
         esp_app_format
         freertos

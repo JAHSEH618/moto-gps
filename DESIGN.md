@@ -3,20 +3,23 @@
 
 # Design
 
-Visual system for the MOTO GPS phone app (`platforms/ios`) and the web shell (`platforms/web/shell`). One structure, two themes. Themes are triggered by ambient light, not by taste.
+Visual system for the MOTO GPS phone app (`platforms/ios`) and the web shell (`platforms/web/shell`). Three themes, one choice: the rider picks a theme on the phone, and the phone and the round screen both wear it.
 
 ## Theme switch
 
-| Theme | Trigger | Lighting condition |
-|---|---|---|
-| **Vice** | device theme `Night`, or system dark mode when the device is unreachable | Dark garage, night ride. Phone must not blind the rider. |
-| **Heat** | device theme `Day`, or system light mode when the device is unreachable | Daylight, glare on the screen. Readability beats atmosphere. |
+| Theme | Round screen | Phone | Picked as |
+|---|---|---|---|
+| **Original** | the upstream interface this project was forked from (`moto_nav_ui_classic.cpp`): true black, white route over grey roads, Montserrat, four pages | `MotoThemeName.original`: black, warm white ink, white accent and route, system type, no texture | 原版 |
+| **Vice** | GTA poster, night paper | Vice palette | GTA · 夜间, or GTA · 自动 after dark |
+| **Heat** | GTA poster, day paper | Heat palette | GTA · 白天, or GTA · 自动 in daylight |
 
-`DeviceSettings.theme = Auto` maps through the device; the app never contradicts the handlebar. There is **no app-level appearance switch** — HIG § Dark Mode: an app-specific appearance setting makes people adjust two places and suspect a broken app. The device owns the choice; losing the link falls back to the system appearance.
+The control is one setting with two levels: **原版 / GTA**, and inside GTA **自动 / 白天 / 夜间**. It lives on the device-settings sheet and is persisted on the phone, which applies its own look at once and sends `SettingsState.theme` to the handlebar (now, or on the next handshake if the link is down). There is no second, phone-only appearance switch: one choice, two surfaces, so a rider never has to set the look twice. The phone no longer follows the system's dark or light mode.
 
-`Auto` needs a light condition the handlebar does not have: there is no clock, light sensor or network time on the ESP32-S3, so the phone supplies one day/night flag with the settings and the device resolves `Auto` to `Day` or `Night` from it (day until the first flag arrives). An explicit `Day` or `Night` ignores the flag. The control therefore reads **Auto / Day / Night** on the device-settings screen; Vice and Heat are the phone palettes that follow the result, not a second setting.
+Original is not a palette of the GTA tree. It is a separate widget tree with its own layout and page set; the round screen tears one tree down and builds the other when the rider crosses between Original and GTA, and replays the current page, link state, track and snapshot so the switch reads as a theme change. A request for the Performance or Lean page lands on navigation in Original, which never had those pages.
 
-Both themes share geometry, spacing, type scale, and the circle motif. Only paper band, accent, display weight, and texture change — never structure. If a component needs a different layout in the other theme, the component is wrong.
+`Auto` needs a light condition the handlebar does not have: there is no clock, light sensor or network time on the ESP32-S3, so the phone supplies one day/night flag with the settings and the device resolves `Auto` to `Day` or `Night` from it (day until the first flag arrives). The phone resolves its own look from the same flag (`DeviceSettingsTheme.phoneLook(ambientNight:)`), so the two surfaces cannot disagree. An explicit `Day` or `Night` ignores the flag.
+
+The two GTA themes share geometry, spacing, type scale, and the circle motif. Only paper band, accent, display weight, and texture change — never structure. If a component needs a different layout in the other theme, the component is wrong.
 
 **Heat is a light theme on purpose.** A dark interface behind glass in direct sun becomes a mirror: reflectance wins and the numerals disappear. Readability in daylight requires a high-luminance paper and near-black ink, which is also the palette of the poster the theme is named after. Atmosphere is sacrificed for legibility; that is the trade.
 

@@ -36,6 +36,36 @@ This file tracks only the checklist of what is still wanted; the short-term even
 - [ ] **(B)** Evaluate the three BLE HID media keys; "like" and cross-player track information remain optional capabilities
 - [x] **(B)** iOS uses the public `systemMusicPlayer` to connect Apple Music previous track, play/pause, next track and the MediaState return; "like", which has no public interface, stays hidden and returns Unsupported
 
+## GTA visual system and attitude / IMU
+
+Per-item progress, acceptance numbers and design trade-offs are recorded in [docs/todo.md](docs/todo.md); the attitude chain's design is in [DESIGN_V2](docs/DESIGN_V2.md) and the [ADRs](docs/adr/).
+
+- [x] **(A)** Rebuild the round screen as one poster instrument: paper disc, magenta rim band, Barlow Condensed / Noto Sans SC faces, applied to the navigation, 0-100, lean, compass and music pages
+- [x] **(B)** Move the iOS home, ride, route-preview and map-download screens onto the same poster language, with the radar drawing only the real route, roads and buildings
+- [x] **(A/B)** Safehouse: the `HomeShortcut` command, `HomeLocation` (0x16) delivery, the home blip and north badge on the round radar, and the `SET HOME ON PHONE` hint when the phone refuses
+- [x] **(A/B)** `SettingsState` (0x17) bidirectional settings sync, persisted in device NVS and replayed at boot
+- [x] **(A/B)** `AttitudeSample` (0x15) codec, golden payload and the iOS receive path (500 ms expiry rule)
+- [x] **(A)** Estimate lean by fusion rather than by accelerometer angle; gate standstill on the measured stationary magnitude
+- [x] **(B)** Static mount calibration: long press on the lean page, 3 s countdown, CAL OK / CAL FAIL plate, result stored in NVS `att.rmount`
+- [x] **(B)** Make latch polling the default IMU chain, keeping FIFO for A/B only; 32 MB partition plan, self-describing tlog recording and deterministic replay
+- [x] **(B)** Firmware sends `AttitudeSample` at 10 Hz per ADR 0001 (while the phone advertises bit 8), and the phone advertises it; not yet seen on a real iPhone
+- [ ] **(B)** 10-minute static acceptance of the IMU latch chain on the board (`imu stats`), then the same card for the FIFO A/B
+- [ ] **(B)** Validate the lean page's direction against a known tilt, measure the mounted zero offset, and document the calibration steps next to the user manual
+- [ ] **(B)** Feed vehicle speed into the attitude estimator (DESIGN_V2 §3.7 `SpeedFusion`) so the kinematic correction and horizontal lateral G work on the bike
+- [ ] **(B)** Flash the poster-instrument firmware, accept each page on the physical panel, and confirm that one left swipe reaches the 0-100 page
+- [ ] **(A/B)** Decide whether the device or the phone owns the live 0-100 clock, then link `MotoRideCore` into the app and build ride recording, storage and charts
+- [ ] **(B)** Settle the phone ride screen's attitude readout in `DESIGN.md`, then implement it
+- [ ] **(B)** Replace the phone home and ride maps with a rounded-rectangle GTA-style live map drawn only from real scene geometry
+- [x] **(A)** GTA map six-class road colours and widths
+- [ ] **(A)** GTA map: road casing, coverage anti-aliasing for roads and the route, water / green / pedestrian / parking areas
+- [ ] **(A)** Once the out-of-bounds elements are fixed, commit the inside-the-disc geometry check as a test
+- [x] **(A/B)** Three themes controlled from the phone: Original (the black-and-white round screen from before the fork, its own widget tree), GTA Day and GTA Night, plus GTA Auto; the phone changes its own look and the round screen follows through `SettingsState`
+- [ ] **(A)** Decide whether track-title glyphs extend to GB2312 level 2
+- [ ] **(B)** Screenshot-accept the route-preview screen against a real gateway and a live fix
+- [x] **(B)** Add an `--esp32` firmware build gate to `scripts/verify.sh`
+- [x] **(B)** Docs sync: rewrite DESIGN_V2 §3.2 around the latch chain, and add the tlog partition erase step and `LOG DIRTY` to `BENCH_TEST_PLAN`
+- [ ] **(B)** Strip the bench scaffolding before shipping (`sys tasks`, `imu stats`, `ui theme`, the display-timing window, `ui dbg`)
+
 ## Base contracts and engineering
 
 - [x] **(A)** Establish the A/B/C migration levels and the rule of announcing changes before making them

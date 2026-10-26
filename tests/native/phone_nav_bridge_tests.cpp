@@ -772,6 +772,97 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
   CHECK(moto::test::phone_nav_bridge_last_heading_deg() == before_stale);
 }
 
+
+struct AttitudeSenderContext {
+  std::vector<moto::ble::AttitudeSample> samples;
+  std::vector<std::uint8_t> flags;
+};
+
+bool record_attitude_sender(const moto::ble::Message& message,
+                            std::uint8_t flags, void* context) {
+  auto* sender = static_cast<AttitudeSenderContext*>(context);
+  if (const auto* sample = std::get_if<moto::ble::AttitudeSample>(&message)) {
+    sender->samples.push_back(*sample);
+    sender->flags.push_back(flags);
+  }
+  return true;
+}
+
+void phone_ready(PhoneNavBridge& bridge, std::uint32_t capabilities,
+                 std::uint16_t sequence) {
+  moto::ble::ConnectionStatus ready;
+  ready.role = moto::ble::EndpointRole::Phone;
+  ready.state = moto::ble::ConnectionState::Ready;
+  ready.minimum_version = moto::ble::kProtocolVersion;
+  ready.maximum_version = moto::ble::kProtocolVersion;
+  ready.capabilities = capabilities;
+  ready.session_id = 777;
+  CHECK(bridge.on_message(make_message(ready, sequence)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+}
+
+// ADR 0001: the device sends AttitudeSample at 10 Hz to a phone that
+// advertised bit 8, valid estimates only, no Ack, in protocol units.
+void test_attitude_uplink_is_gated_and_paced() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  AttitudeSenderContext sender;
+  bridge.set_sender(record_attitude_sender, &sender);
+
+  moto::motion::AttitudeEstimate attitude;
+  attitude.valid = true;
+  attitude.lean_deg = -31.27F;
+  attitude.pitch_deg = 2.5F;
+  attitude.longitudinal_g = -0.412F;
+  attitude.lateral_g = 0.6F;
+
+  // A dead link sends nothing.
+  bridge.on_imu_sample(0.0F, attitude, 1'000);
+  pump(bridge);
+  CHECK(sender.samples.empty());
+
+  // A phone without the capability is never sent the type.
+  bridge.on_link_state(true);
+  phone_ready(bridge, moto::ble::CapabilityNavigation, 30);
+  bridge.on_imu_sample(0.0F, attitude, 2'000);
+  pump(bridge);
+  CHECK(sender.samples.empty());
+
+  // A phone that asks receives it, paced to 10 Hz across a 125 Hz stream.
+  phone_ready(bridge, moto::ble::CapabilityAttitudeTelemetry, 31);
+  for (std::uint64_t t = 3'000; t < 4'000; t += 8) {
+    bridge.on_imu_sample(0.0F, attitude, t);
+    pump(bridge);
+  }
+  CHECK(sender.samples.size() == 10);
+  if (!sender.samples.empty()) {
+    const moto::ble::AttitudeSample& first = sender.samples.front();
+    CHECK(first.monotonic_ms == 3'000);
+    CHECK(first.lean_cdeg == -3'127);
+    CHECK(first.pitch_cdeg == 250);
+    CHECK(first.longitudinal_mg == -412);
+    CHECK(first.lateral_mg == 600);
+    CHECK(sender.flags.front() == 0);
+  }
+
+  // An invalid estimate is not telemetry.
+  sender.samples.clear();
+  attitude.valid = false;
+  bridge.on_imu_sample(0.0F, attitude, 5'000);
+  pump(bridge);
+  CHECK(sender.samples.empty());
+
+  // Losing the link forgets the phone's capabilities.
+  attitude.valid = true;
+  bridge.on_link_state(false);
+  bridge.on_link_state(true);
+  bridge.on_imu_sample(0.0F, attitude, 6'000);
+  pump(bridge);
+  CHECK(sender.samples.empty());
+}
+
 void test_imu_attitude_reaches_the_lean_page() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
@@ -904,6 +995,7 @@ int main() {
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();
   test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored();
   test_imu_attitude_reaches_the_lean_page();
+  test_attitude_uplink_is_gated_and_paced();
   test_home_location_projects_onto_the_radar();
 
   if (failures != 0) {

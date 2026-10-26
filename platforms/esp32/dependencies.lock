@@ -267,7 +267,7 @@ dependencies:
   lvgl/lvgl:
     dependencies: []
     source:
-      path: /Users/okonma/CodeSpace/moto/third_party/lvgl
+      path: /Users/okonma/CodeSpace/moto-gps/third_party/lvgl
       type: local
     version: '*'
   waveshare/esp32_s3_touch_amoled_1_75c:
