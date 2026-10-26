@@ -912,11 +912,11 @@ extern "C" esp_err_t board_port_init(void) {
   ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), kTag,
                       "LVGL adapter initialization failed");
 
-  // The built-in 64 KiB LVGL heap is separate from the adapter's PSRAM draw
-  // buffers. A map-sized strip lets the boot Logo's opacity/transform layer
-  // exceed that tiny heap: LVGL keeps retrying the blocked layer and starves
-  // IDLE0 before BLE can start. Keep the internal pool for small allocations
-  // and add a bounded PSRAM pool for complete intermediate layers.
+  // The built-in 8 KiB LVGL heap is separate from the adapter's PSRAM draw
+  // buffers. It serves small allocations; a map-sized strip still lets the
+  // boot Logo's opacity/transform layer need a complete intermediate layer,
+  // which is why the bounded PSRAM pool below exists. Keeping this pool small
+  // is what keeps internal DRAM free for BLE and task stacks.
   static_assert(LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN,
                 "Review the LVGL pool setup after changing allocators");
   lvgl_extra_pool_storage = heap_caps_malloc(

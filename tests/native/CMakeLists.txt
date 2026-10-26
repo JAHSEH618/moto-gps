@@ -62,18 +62,18 @@ target_compile_features(nav_core_tests PRIVATE cxx_std_17)
 # directory is configured standalone with its lightweight UI stub.
 if(TARGET lvgl)
   # The board does not run on this one pool: board_port_init() adds a 2 MiB
-  # PSRAM pool on top of the 64 KiB internal default (see
+  # PSRAM pool on top of the 8 KiB internal default (see
   # platforms/esp32/main/board_port_waveshare_1_75c.cpp). A suite with a single
   # 8 MiB pool models nothing the firmware does, so the high-water mark it
   # reports says nothing about the device. Run in the board's shape instead.
-  set(MOTO_NATIVE_LVGL_HEAP_BYTES "65536" CACHE STRING
-      "LVGL internal heap for native render tests; 65536 matches the board")
+  set(MOTO_NATIVE_LVGL_HEAP_BYTES "8192" CACHE STRING
+      "LVGL internal heap for native render tests; 8192 matches the board")
   # A cached value survives the default changing, and an 8 MiB pool is how the
   # last heap "defect" was measured against a shape the firmware never has.
-  if(NOT MOTO_NATIVE_LVGL_HEAP_BYTES STREQUAL "65536")
+  if(NOT MOTO_NATIVE_LVGL_HEAP_BYTES STREQUAL "8192")
     message(WARNING
       "MOTO_NATIVE_LVGL_HEAP_BYTES=${MOTO_NATIVE_LVGL_HEAP_BYTES} is not the "
-      "board's 64 KiB pool; the render suite no longer models the device")
+      "board's 8 KiB pool; the render suite no longer models the device")
   endif()
   # LV_USE_TEST compiles lv_test_indev.c, the only way a test can send a real
   # LV_EVENT_GESTURE. It must be PUBLIC: the flag also adds members to
@@ -214,7 +214,7 @@ target_compile_features(phone_nav_bridge_tests PRIVATE cxx_std_17)
 add_test(NAME nav_core_tests COMMAND nav_core_tests)
 if(TARGET nav_ui_render_tests)
   # argv: partial buffer rows, extra pool bytes. The pool matches the board's
-  # 2 MiB PSRAM layer, so the suite runs with 64 KiB + 2 MiB like the device.
+  # 2 MiB PSRAM layer, so the suite runs with 8 KiB + 2 MiB like the device.
   add_test(NAME nav_ui_render_tests COMMAND nav_ui_render_tests 40 2097152)
   # A trap is instant, but a deadlock or an accidental infinite loop in a
   # timer is not. Fail in three minutes instead of ctest's 1500 s default.

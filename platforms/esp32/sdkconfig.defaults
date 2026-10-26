@@ -62,3 +62,8 @@ CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=185
 # The 40 px CJK face in shared/nav_ui/assets exceeds the 1 MB glyph-bitmap
 # limit; without this the firmware fails at compile time, not at link time.
 CONFIG_LV_FONT_FMT_TXT_LARGE=y
+
+# The 2 MiB PSRAM pool below carries UI layers; the internal pool only
+# serves small allocations. 32 KiB keeps internal DRAM free without the boot
+# logo starve the old 64 KiB comment described.
+CONFIG_LV_MEM_SIZE_KILOBYTES=8

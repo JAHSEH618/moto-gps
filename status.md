@@ -1022,3 +1022,11 @@ register reads have never seen a fitted cell.
 - New `test_a_concave_footprint_uses_the_scanline_fill` covers an L-shaped building and asserts both legs fill while the notch stays ground.
 - Board measurement with the installed iPhone build sending 36 roads / 24 buildings: steady 11–13 ms average, max ~20 ms. The boot/map-scene transition still has a one-off ~0.5 s frame while the whole map is bound for the first time.
 - The new iPhone app is installed (bundle `com.friedhelmliu.motogps`); the device log now shows `roads=36/149 buildings=24/115` instead of the old 24/16 window.
+
+## 2026-10-27T01:30:00+09:00 — LVGL internal pool 64 KiB → 8 KiB
+
+- The 64 KiB `CONFIG_LV_MEM_SIZE_KILOBYTES` pool was the largest internal static allocation after the UI moved to PSRAM. The board also adds a 2 MiB PSRAM TLSF pool before the tree is built, so the internal pool only needs to serve small early allocations.
+- Native render tests pass with `8 KiB + 2 MiB` (was configured for 64 KiB). The board boots, builds the boot screen, receives the 36-road/24-building phone window, and holds 11–13 ms steady frames.
+- Internal heap on the board: **free 96 KiB, minimum 47 KiB** (was 40/7). `work_mem_int$4` dropped from 0x10000 to 0x2000.
+- Remaining large internal objects: `phone_bridge` 25,208 B, `tlog` 4,176 B, `presenter` 2,224 B. They are not moved yet: the bridge owns mutexes/strings and the tlog block is the flash-write source, so both need a deliberate PSRAM-safe design rather than a tag.
+- `sdkconfig.defaults`, the native CMake default and the board comment now all say 8 KiB.
