@@ -26,12 +26,12 @@ constexpr TickType_t kFifoPollDelay = pdMS_TO_TICKS(4);
 constexpr std::uint32_t kWarmupMs = 200;
 constexpr float kGravity = 9.80665F;
 
-// Board axis regression is still pending. These are the sensor-frame forward
-// and up axes the adapter has always assumed: sensor +y is up and sensor -z is
-// forward. The basis is usable but not calibrated, so CAL_OK stays false until
-// the rider runs the v2 calibration.
-constexpr moto::motion::Vec3f kSensorForward{0.0F, 0.0F, -1.0F};
-constexpr moto::motion::Vec3f kSensorUp{0.0F, 1.0F, 0.0F};
+// The assumed mount before the rider calibrates: screen upright and facing
+// the rider, so forward is into the glass and up is the screen's top (sensor
+// +x, measured; it used to be guessed as +y). Usable but not calibrated, so
+// CAL_OK stays false until the rider runs the v2 calibration.
+constexpr moto::motion::Vec3f kSensorForward = moto::motion::kSensorIntoScreen;
+constexpr moto::motion::Vec3f kSensorUp = moto::motion::kSensorScreenTop;
 
 std::uint64_t monotonic_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
@@ -153,6 +153,11 @@ void MotionHeadingSensor::run() {
              esp_err_to_name(init));
     return;
   }
+  // The vendored driver returns mg unless told otherwise. Everything here is
+  // m/s^2: in mg the static capture saw ~1000 and rejected every CAL, and the
+  // poll fallback fed the estimator a 100x gravity vector. The latch and FIFO
+  // readers decode the registers themselves and were never affected.
+  qmi8658_set_accel_unit_mps2(&device_, true);
   configure_poll_mode();
 
   mount_ = has_mount_ ? mount_ : [] {
@@ -250,6 +255,10 @@ void MotionHeadingSensor::run() {
 void MotionHeadingSensor::run_calibration() {
   calibration_requested_ = false;
   moto::motion::MountCalibration candidate = mount_;
+  // Step 1 measures up only; forward is never measured on the bike (step 2 is
+  // not wired), so it comes from the screen's geometry, not from the stored
+  // basis. Inheriting it kept a wrong guess through every re-CAL.
+  candidate.set_basis(kSensorForward, kSensorUp, false);
   candidate.begin_static();
   bool ok = false;
   const std::uint64_t started = monotonic_ms();
@@ -298,6 +307,19 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
   last_pitch_deg_ = out.pitch_deg;
   last_quality_ = out.quality;
   last_flags_ = out.flags;
+  last_raw_ = raw;
+  if (gyro_int_reset_) {
+    gyro_int_reset_ = false;
+    for (int axis = 0; axis < 3; ++axis) {
+      gyro_int_deg_[axis] = 0.0F;
+      gyro_int_accel_[axis] = raw.accel_mps2[axis];
+    }
+  } else {
+    const moto::motion::Vec3f bias = lean_.bias_sensor_dps();
+    gyro_int_deg_[0] += (raw.gyro_dps[0] - bias.x) * dt;
+    gyro_int_deg_[1] += (raw.gyro_dps[1] - bias.y) * dt;
+    gyro_int_deg_[2] += (raw.gyro_dps[2] - bias.z) * dt;
+  }
 
   moto::motion::AttitudeEstimate attitude;
   attitude.lean_deg = out.lean_deg;

@@ -66,14 +66,12 @@ Vec3f rotate_about_axis(const Vec3f& v, const Vec3f& axis, float angle_rad) {
 
 // The bike's forward axis in the sensor frame for a given up axis: the hint
 // projected onto the level plane. A hint nearly parallel to up has no level
-// direction, so fall back to the adapter's assumed forward (sensor -z, screen
-// facing the rider), then to sensor +y (a screen lying flat with its top
-// towards the front wheel), then to sensor +x.
+// direction, so fall back to into the glass (screen facing the rider), then to
+// the screen's top (a screen lying flat with its top towards the front wheel),
+// then to its left edge.
 Vec3f level_forward(const Vec3f& hint, const Vec3f& up) {
-  const Vec3f candidates[] = {hint,
-                              {0.0F, 0.0F, -1.0F},
-                              {0.0F, 1.0F, 0.0F},
-                              {1.0F, 0.0F, 0.0F}};
+  const Vec3f candidates[] = {hint, kSensorIntoScreen, kSensorScreenTop,
+                              {0.0F, 1.0F, 0.0F}};
   for (const Vec3f& candidate : candidates) {
     const Vec3f level = sub(candidate, scale(up, dot(candidate, up)));
     if (length(level) > 0.5F) return normalise(level);

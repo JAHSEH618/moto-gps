@@ -224,6 +224,64 @@ void serial_command_task(void* context) {
                static_cast<unsigned>(sensor->last_quality()),
                static_cast<unsigned>(sensor->last_flags()),
                sensor->mode_name());
+    } else if (std::strcmp(line, "imu raw") == 0) {
+      const RawImuSample raw = sensor->last_raw();
+      const moto::motion::LeanEstimator& lean = sensor->lean();
+      const moto::motion::Vec3f up = lean.up_body();
+      const moto::motion::Vec3f bias = lean.bias_sensor_dps();
+      const moto::motion::Vec3f fwd = lean.mount().forward_axis();
+      ESP_LOGI(kTag,
+               "imu raw a=%.3f %.3f %.3f g=%.2f %.2f %.2f bias=%.2f %.2f %.2f "
+               "fwd=%.2f %.2f %.2f "
+               "up=%.3f %.3f %.3f still=%.2f jit=%.3f da=%.4f aref=%.3f "
+               "lean=%.2f pitch=%.2f flags=0x%04x",
+               static_cast<double>(raw.accel_mps2[0]),
+               static_cast<double>(raw.accel_mps2[1]),
+               static_cast<double>(raw.accel_mps2[2]),
+               static_cast<double>(raw.gyro_dps[0]),
+               static_cast<double>(raw.gyro_dps[1]),
+               static_cast<double>(raw.gyro_dps[2]),
+               static_cast<double>(bias.x), static_cast<double>(bias.y),
+               static_cast<double>(bias.z), static_cast<double>(fwd.x),
+               static_cast<double>(fwd.y), static_cast<double>(fwd.z),
+               static_cast<double>(up.x),
+               static_cast<double>(up.y), static_cast<double>(up.z),
+               static_cast<double>(lean.static_for_s()),
+               static_cast<double>(lean.gyro_jitter_dps()),
+               static_cast<double>(lean.accel_delta_mps2()),
+               static_cast<double>(lean.accel_magnitude_ref_mps2()),
+               static_cast<double>(sensor->last_lean_deg()),
+               static_cast<double>(sensor->last_pitch_deg()),
+               static_cast<unsigned>(sensor->last_flags()));
+    } else if (std::strcmp(line, "imu int reset") == 0) {
+      sensor->request_gyro_integral_reset();
+      ESP_LOGI(kTag, "gyro integral reset; rotate the board, then hold still");
+    } else if (std::strcmp(line, "imu int") == 0) {
+      // A still board's specific force is world up in sensor axes, and it
+      // turns by minus the body rotation. Its change between the reset and
+      // now therefore predicts the gyro integral's component across gravity.
+      const float* gyro = sensor->gyro_integral_deg();
+      const float* start = sensor->gyro_integral_start_accel();
+      const RawImuSample now = sensor->last_raw();
+      const float ax = start[1] * now.accel_mps2[2] - start[2] * now.accel_mps2[1];
+      const float ay = start[2] * now.accel_mps2[0] - start[0] * now.accel_mps2[2];
+      const float az = start[0] * now.accel_mps2[1] - start[1] * now.accel_mps2[0];
+      const float cross = std::sqrt(ax * ax + ay * ay + az * az);
+      const float dot = start[0] * now.accel_mps2[0] +
+                        start[1] * now.accel_mps2[1] +
+                        start[2] * now.accel_mps2[2];
+      const float angle_deg = std::atan2(cross, dot) * 57.29578F;
+      const float k = cross > 1.0e-6F ? -angle_deg / cross : 0.0F;
+      ESP_LOGI(kTag,
+               "imu int gyro=%.1f %.1f %.1f accel=%.1f %.1f %.1f turn=%.1f",
+               static_cast<double>(gyro[0]), static_cast<double>(gyro[1]),
+               static_cast<double>(gyro[2]), static_cast<double>(ax * k),
+               static_cast<double>(ay * k), static_cast<double>(az * k),
+               static_cast<double>(angle_deg));
+    } else if (std::strcmp(line, "imu cal") == 0) {
+      // Same path as the long-press on the Lean page.
+      sensor->request_static_calibration();
+      ESP_LOGI(kTag, "lean calibration requested; keep the board still 2 s");
     } else if (std::strcmp(line, "imu fifo off") == 0) {
       sensor->request_fifo_mode(false);
       ESP_LOGI(kTag, "FIFO disabled; restarting acquisition on latch");

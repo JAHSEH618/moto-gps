@@ -774,3 +774,51 @@ The first firmware build failed because the bootloader sub-build's CMake cache
 pointed at an old `~/CodeSpace/esp/esp-idf`; clearing
 `platforms/esp32/build/bootloader*` fixed it. **Not verified:** nothing in
 this section has run on the board or against a real iPhone.
+
+## 2026-10-26T18:10:00+09:00 — Lean: the screen's top is QMI +x, and CAL can capture
+
+**Symptom.** Flat on the desk, tilting forward/back moved the Lean number
+correctly, tilting left/right barely moved it.
+
+**Cause 1: the IMU axes were guessed, and the guess was 90° off.** The adapter
+assumed screen-up = QMI +y (a placeholder since 2026-10-21; the axis regression
+never ran). Measured on the board with the new `imu int` integrator, standing
+it on each edge: lifting the left edge turns it +90° about sensor x, lifting
+the top edge −90° about sensor y, so the top of the display is **+x**, its
+left edge +y, out of the glass +z. A flat screen took sensor +y (its left
+edge) as forward, which swapped Lean and pitch: the left/right tilt was
+computed as pitch, and the forward/back tilt showed up as Lean, which is why
+it looked right. `kSensorScreenTop` / `kSensorIntoScreen` in
+`lean_estimator.hpp` now hold the measured axes; the assumed upright mount
+(up = screen top, forward = into the glass), `level_forward()`'s flat fallback
+and the replay tool use them.
+
+**Cause 2: CAL could never succeed.** The vendored QMI8658 driver returns mg
+unless `qmi8658_set_accel_unit_mps2()` is called, and nothing called it. The
+static capture reads through the driver, so it saw |a| ≈ 1000, failed its
+8.3–11.3 m/s² window and rejected every long-press (the board logged "no
+stored mount basis"). The poll fallback fed the estimator the same 100×
+vector: the last 1000 s tlog session has accel saturated at ±327 m/s². The
+latch and FIFO readers decode the registers themselves and were not affected.
+A re-CAL also inherited the previous basis's forward; since step 2 is not
+wired on the device, forward now always comes from the screen geometry.
+
+**Bench tools.** `imu raw` (raw sample, bias, forward axis, stillness gate,
+lean/pitch), `imu cal` (the long-press capture from serial), `imu int reset`
+/ `imu int` (per-axis gyro integral against the gravity change).
+
+**Verification.** Red first: `test_uncalibrated_flat_screen_leans_about_its_top_axis`
+read 0° Lean / 29.7° pitch for a lifted left edge, as on the board. Native
+15/15 with that test, `test_uncalibrated_upright_screen_reads_lean` and
+`test_flat_capture_takes_the_screen_top_as_forward`. On the board: `imu cal`
+now captures in 2 s; after re-CAL flat, `fwd` reads `1.00 0.00 -0.03` (it
+was `0.00 0.99 0.14`); held left/right tilts read −29.2/−31.2/−34.6° against
+−28.7/−31.1/−34.5° from gravity, and the rider confirmed left/right on the
+glass. A CAL captured flat on the desk is stored on this board; long-press
+again in the real mount.
+
+**Also found, not changed.** A violent flip clipped the x gyro at −512 dps,
+leaving ~18° of Lean/pitch error until stillness corrected it 1.5 s later.
+The y gyro reads ~8% (fit over old tlog windows: ~13%) below the gravity
+change; y is the pitch axis in both mounts, and pitch is re-anchored at rest.
+The 16 MB tlog is full, so nothing after the oldest sessions is recorded.

@@ -557,7 +557,8 @@ void test_capture_keeps_the_basis_orthonormal() {
 // estimator must adopt gravity as a provisional up and read level.
 void test_uncalibrated_flat_screen_reads_level() {
   MountCalibration assumed;
-  assumed.set_basis({0.0F, 0.0F, -1.0F}, {0.0F, 1.0F, 0.0F}, false);
+  assumed.set_basis(moto::motion::kSensorIntoScreen,
+                    moto::motion::kSensorScreenTop, false);
   LeanEstimator estimator;
   estimator.set_mount(assumed);
   const Vec3f flat{0.0F, 0.0F, kGravity};
@@ -577,6 +578,115 @@ void test_uncalibrated_flat_screen_reads_level() {
   }
   check_near(estimator.output().lean_deg, settled, 0.3F,
              "no winding while it lies still");
+}
+
+// Rotate a still board about one sensor axis at 30 dps until `degrees`, with
+// the specific force following, then hold it there for six seconds.
+void tilt_about(LeanEstimator& estimator, const Vec3f& axis, float degrees,
+                const Vec3f& start_up) {
+  const float rate = degrees > 0.0F ? 30.0F : -30.0F;
+  const int steps = static_cast<int>(std::fabs(degrees) / 30.0F / kDt);
+  Vec3f up = start_up;
+  for (int i = 0; i < steps; ++i) {
+    // World up seen from a body turning by +w about `axis` turns by -w.
+    const float w = -rate * kDt * kDegToRad;
+    const Vec3f k = unit3(axis);
+    const Vec3f kxu = cross3(k, up);
+    const float kdu = dot3(k, up);
+    up = unit3({up.x * std::cos(w) + kxu.x * std::sin(w) +
+                    k.x * kdu * (1.0F - std::cos(w)),
+                up.y * std::cos(w) + kxu.y * std::sin(w) +
+                    k.y * kdu * (1.0F - std::cos(w)),
+                up.z * std::cos(w) + kxu.z * std::sin(w) +
+                    k.z * kdu * (1.0F - std::cos(w))});
+    estimator.step({k.x * rate, k.y * rate, k.z * rate},
+                   {up.x * kGravity, up.y * kGravity, up.z * kGravity}, kDt,
+                   SpeedSample{});
+  }
+  for (int i = 0; i < 6 * 112; ++i) {
+    estimator.step({0.0F, 0.0F, 0.0F},
+                   {up.x * kGravity, up.y * kGravity, up.z * kGravity}, kDt,
+                   SpeedSample{});
+  }
+}
+
+// Measured on the board (2026-10-26): on the Waveshare 1.75C the QMI8658's
+// +x points at the top of the display and +y at its left edge. A flat screen
+// with its top towards the front wheel must therefore lean about sensor x.
+// The old guess (top = +y) took lifting the left edge as pitch, so Lean
+// barely moved, and lifting the top edge as Lean.
+void test_uncalibrated_flat_screen_leans_about_its_top_axis() {
+  MountCalibration assumed;
+  assumed.set_basis(moto::motion::kSensorIntoScreen,
+                    moto::motion::kSensorScreenTop, false);
+  LeanEstimator estimator;
+  estimator.set_mount(assumed);
+  const Vec3f flat{0.0F, 0.0F, 1.0F};
+  for (int i = 0; i < 6 * 112; ++i) {
+    estimator.step({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, kGravity}, kDt,
+                   SpeedSample{});
+  }
+  // Lift the left edge: the right side goes down, a right lean.
+  tilt_about(estimator, {1.0F, 0.0F, 0.0F}, 30.0F, flat);
+  check_near(estimator.output().lean_deg, 30.0F, 1.0F,
+             "left edge lifted 30 deg reads 30 deg right");
+  check_near(estimator.output().pitch_deg, 0.0F, 1.0F,
+             "left edge lifted reads no pitch");
+
+  LeanEstimator nose;
+  nose.set_mount(assumed);
+  for (int i = 0; i < 6 * 112; ++i) {
+    nose.step({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, kGravity}, kDt, SpeedSample{});
+  }
+  // Lift the top edge: nose up, about the screen's right axis (sensor -y).
+  tilt_about(nose, {0.0F, -1.0F, 0.0F}, 20.0F, flat);
+  check_near(nose.output().pitch_deg, 20.0F, 1.0F,
+             "top edge lifted 20 deg reads 20 deg nose-up");
+  check_near(nose.output().lean_deg, 0.0F, 1.0F,
+             "top edge lifted reads no Lean");
+}
+
+// Upright and facing the rider, the screen's top is up: gravity is along
+// sensor +x. The assumed mount must read that as level without a CAL, and a
+// lean about the forward axis (into the glass) as Lean. With up = +y it read
+// a level screen as lying on its side.
+void test_uncalibrated_upright_screen_reads_lean() {
+  MountCalibration assumed;
+  assumed.set_basis(moto::motion::kSensorIntoScreen,
+                    moto::motion::kSensorScreenTop, false);
+  LeanEstimator estimator;
+  estimator.set_mount(assumed);
+  const Vec3f upright{1.0F, 0.0F, 0.0F};
+  for (int i = 0; i < 6 * 112; ++i) {
+    estimator.step({0.0F, 0.0F, 0.0F}, {kGravity, 0.0F, 0.0F}, kDt,
+                   SpeedSample{});
+  }
+  check_near(estimator.output().lean_deg, 0.0F, 1.0F,
+             "upright screen reads level before calibration");
+  check_near(estimator.output().pitch_deg, 0.0F, 1.0F,
+             "upright screen reads no pitch before calibration");
+  // Right lean is a positive turn about forward, i.e. about sensor -z.
+  tilt_about(estimator, moto::motion::kSensorIntoScreen, 20.0F, upright);
+  check_near(estimator.output().lean_deg, 20.0F, 1.0F,
+             "upright screen turned 20 deg reads 20 deg right");
+}
+
+// Step 1 measures up; forward is only ever the screen's geometry (step 2 is
+// not wired on the bike). A capture on a flat board must take the screen's
+// top as forward, whatever forward the previous basis carried.
+void test_flat_capture_takes_the_screen_top_as_forward() {
+  MountCalibration mount;
+  mount.set_basis(moto::motion::kSensorIntoScreen,
+                  moto::motion::kSensorScreenTop, false);
+  mount.begin_static();
+  bool ready = false;
+  for (int i = 0; i < 300 && !ready; ++i) {
+    ready = mount.observe_static({0.0F, 0.0F, kGravity}, {0.0F, 0.0F, 0.0F},
+                                 0.01F);
+  }
+  CHECK(ready);
+  check_near(dot3(mount.forward_axis(), moto::motion::kSensorScreenTop), 1.0F,
+             1.0e-3F, "flat capture: forward is the screen's top");
 }
 
 // The first stillness after power-on takes the mean rate at once. Learning
@@ -655,6 +765,9 @@ int main() {
   test_recalibration_measures_afresh();
   test_capture_keeps_the_basis_orthonormal();
   test_uncalibrated_flat_screen_reads_level();
+  test_uncalibrated_flat_screen_leans_about_its_top_axis();
+  test_uncalibrated_upright_screen_reads_lean();
+  test_flat_capture_takes_the_screen_top_as_forward();
   test_first_stillness_seeds_the_bias();
   test_bias_survives_a_new_mount();
   test_restored_bias_holds_from_the_first_sample();

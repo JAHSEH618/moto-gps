@@ -67,7 +67,8 @@ std::string replay_to_csv(const std::vector<std::uint8_t>& file) {
 
   moto::motion::LeanEstimator estimator;
   moto::motion::MountCalibration mount;
-  mount.set_basis({0.0F, 0.0F, -1.0F}, {0.0F, 1.0F, 0.0F}, false);
+  mount.set_basis(moto::motion::kSensorIntoScreen,
+                  moto::motion::kSensorScreenTop, false);
   estimator.set_mount(mount);
 
   std::uint32_t session = 0;

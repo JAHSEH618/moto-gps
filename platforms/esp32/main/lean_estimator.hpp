@@ -15,6 +15,15 @@
 // expressed in the body frame is (0, sin(lean), cos(lean)).
 namespace moto::motion {
 
+// QMI8658 axes against the Waveshare 1.75C's display, measured on the board
+// on 2026-10-26 by standing it on each edge: +x points at the top of the
+// screen, +y at its left edge, +z out of the glass. The adapter's assumed
+// mount (upright, facing the rider) and a flat screen's forward both come
+// from these; the old guess had the top at +y, which swapped Lean and pitch
+// on a flat screen.
+inline constexpr Vec3f kSensorScreenTop{1.0F, 0.0F, 0.0F};
+inline constexpr Vec3f kSensorIntoScreen{0.0F, 0.0F, -1.0F};
+
 // Sensor-to-ISO-body mount basis. The old scalar lean_zero_offset_cdeg could
 // only trim a zero, not a rotated bracket; this replaces it.
 struct MountCalibration {
@@ -167,6 +176,13 @@ class LeanEstimator {
 
   // True while the stationary window used to learn the bias is open.
   bool bias_learning() const { return static_for_s_ >= kStaticHoldS; }
+
+  // Bench view of the stillness gate and the attitude state (`imu raw`).
+  float static_for_s() const { return static_for_s_; }
+  float gyro_jitter_dps() const { return gyro_jitter_ema_; }
+  float accel_delta_mps2() const { return accel_delta_ema_; }
+  float accel_magnitude_ref_mps2() const { return accel_magnitude_ema_; }
+  Vec3f up_body() const { return up_body_; }
 
  private:
   static constexpr float kDegToRad = 0.017453292519943295F;

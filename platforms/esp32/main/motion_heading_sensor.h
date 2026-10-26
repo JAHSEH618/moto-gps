@@ -82,6 +82,16 @@ class MotionHeadingSensor {
   float last_pitch_deg() const { return last_pitch_deg_; }
   std::uint8_t last_quality() const { return last_quality_; }
   std::uint16_t last_flags() const { return last_flags_; }
+  // `imu raw`: the last sensor-frame sample and the estimator's gate state.
+  // A torn read only garbles one bench line.
+  const RawImuSample& last_raw() const { return last_raw_; }
+  const moto::motion::LeanEstimator& lean() const { return lean_; }
+  // `imu int`: bias-corrected gyro integrated per sensor axis since the last
+  // reset, and the accelerometer at that reset. Rotating the board between two
+  // still poses gives each axis's gain against the gravity change.
+  void request_gyro_integral_reset() { gyro_int_reset_ = true; }
+  const float* gyro_integral_deg() const { return gyro_int_deg_; }
+  const float* gyro_integral_start_accel() const { return gyro_int_accel_; }
   void set_mode_callback(ModeCallback callback, void* context);
 
   esp_err_t start(SampleCallback callback, void* context);
@@ -135,6 +145,10 @@ class MotionHeadingSensor {
   volatile float last_pitch_deg_ = 0.0F;
   volatile uint8_t last_quality_ = 0;
   volatile uint16_t last_flags_ = 0;
+  RawImuSample last_raw_{};
+  volatile bool gyro_int_reset_ = false;
+  float gyro_int_deg_[3] = {0.0F, 0.0F, 0.0F};
+  float gyro_int_accel_[3] = {0.0F, 0.0F, 0.0F};
   const char* fifo_reason_ = nullptr;
   const char* latch_reason_ = nullptr;
   moto::motion::Qmi8658Fifo fifo_{};
