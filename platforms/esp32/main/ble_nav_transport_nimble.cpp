@@ -638,7 +638,8 @@ void BleNavTransport::send_connection_status(
                         moto::ble::CapabilityAttitudeTelemetry |
                         moto::ble::CapabilityHomeLocation |
                         moto::ble::CapabilityDeviceSettings |
-                        moto::ble::CapabilityCompassHeading;
+                        moto::ble::CapabilityCompassHeading |
+                        moto::ble::CapabilityGnssInput;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(negotiated_frame_size());

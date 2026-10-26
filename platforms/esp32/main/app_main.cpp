@@ -253,6 +253,21 @@ void serial_command_task(void* context) {
                static_cast<double>(sensor->last_lean_deg()),
                static_cast<double>(sensor->last_pitch_deg()),
                static_cast<unsigned>(sensor->last_flags()));
+    } else if (std::strcmp(line, "imu speed") == 0) {
+      // DESIGN_V2 §3.7 state. age is the newest fix's, from when the phone
+      // took it; a snapshot-only phone shows its arrival instead.
+      const moto::motion::SpeedFusion& speed = sensor->speed();
+      const moto::motion::SpeedSample sample = speed.sample(
+          static_cast<std::uint32_t>(esp_timer_get_time() / 1'000));
+      ESP_LOGI(kTag,
+               "imu speed v=%.2f valid=%d age=%.2f sigma=%.2f bias=%.3f "
+               "refused=%u dropped=%u",
+               static_cast<double>(speed.speed_mps()), sample.valid ? 1 : 0,
+               static_cast<double>(sample.age_s),
+               static_cast<double>(speed.sigma_mps()),
+               static_cast<double>(speed.bias_mps2()),
+               static_cast<unsigned>(speed.rejected_fixes()),
+               static_cast<unsigned>(sensor->dropped_speed_fixes()));
     } else if (std::strcmp(line, "imu int reset") == 0) {
       sensor->request_gyro_integral_reset();
       ESP_LOGI(kTag, "gyro integral reset; rotate the board, then hold still");
@@ -609,6 +624,29 @@ void update_motion_heading(
   }
 }
 
+// Sensor task, before the sample the fix was applied to, so the recorder's
+// GNSS and dyn records replay in the order the fusion saw them.
+void record_speed_fix(const moto::motion::SpeedFix& fix, bool applied,
+                      void* context) {
+  (void)context;
+  moto::device::GnssRecord record;
+  record.t_rx_ms = fix.rx_ms;
+  record.fix_ms = fix.fix_ms;
+  record.speed_cms = static_cast<std::uint16_t>(
+      std::clamp(std::lround(fix.mps * 100.0F), 0L, 65'535L));
+  record.course_cdeg = 0xFFFFU;
+  record.speed_acc_cms =
+      fix.accuracy_mps >= 0.0F
+          ? static_cast<std::uint16_t>(std::clamp(
+                std::lround(fix.accuracy_mps * 100.0F), 0L, 65'534L))
+          : 0xFFFFU;
+  record.flags = static_cast<std::uint8_t>(
+      moto::device::kGnssHasSpeed |
+      (fix.timestamped ? moto::device::kGnssTimestamped : 0U) |
+      (applied ? 0U : moto::device::kGnssRefused));
+  tlog.append_gnss(record);
+}
+
 void demo_tick_task(void* context) {
   auto* bridge = static_cast<PhoneNavBridge*>(context);
   while (true) {
@@ -859,11 +897,11 @@ extern "C" void app_main(void) {
   }
   tlog.begin(session_info);
   phone_bridge.set_speed_listener(
-      [](float speed_mps, bool valid, void* context) {
-        static_cast<MotionHeadingSensor*>(context)->set_vehicle_speed(
-            speed_mps, valid);
+      [](const moto::motion::SpeedFix& fix, void* context) {
+        static_cast<MotionHeadingSensor*>(context)->add_speed_fix(fix);
       },
       &motion_sensor);
+  motion_sensor.set_fix_callback(record_speed_fix, nullptr);
   motion_sensor.set_mode_callback(lean_mode_changed, nullptr);
   motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
   moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,

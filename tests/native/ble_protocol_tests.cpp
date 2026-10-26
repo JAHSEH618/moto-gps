@@ -136,6 +136,16 @@ HomeLocation home_fixture() {
   return value;
 }
 
+GnssInput gnss_fixture() {
+  GnssInput value;
+  value.flags = GnssInputHasSpeed | GnssInputHasSpeedAccuracy;
+  value.phone_monotonic_ms = 0x12345678U;
+  value.fix_age_ms = 320;
+  value.speed_cmps = 1'525;  // 54.9 km/h
+  value.speed_accuracy_cmps = 40;
+  return value;
+}
+
 SettingsState settings_fixture() {
   SettingsState value;
   value.theme = SettingsTheme::Night;
@@ -300,6 +310,7 @@ void dump_golden() {
   const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
   const Bytes home = encode_or_fail(Message{home_fixture()});
   const Bytes settings = encode_or_fail(Message{settings_fixture()});
+  const Bytes gnss = encode_or_fail(Message{gnss_fixture()});
   std::cout << "connection.payload=" << hex(ByteView(connection)) << '\n';
   std::cout << "connection.frame="
             << frame_hex(fragment_or_fail(MessageType::ConnectionStatus, 1,
@@ -316,6 +327,7 @@ void dump_golden() {
   std::cout << "attitude.payload=" << hex(ByteView(attitude)) << '\n';
   std::cout << "home.payload=" << hex(ByteView(home)) << '\n';
   std::cout << "settings.payload=" << hex(ByteView(settings)) << '\n';
+  std::cout << "gnss.payload=" << hex(ByteView(gnss)) << '\n';
 }
 
 void test_uuid_contract() {
@@ -368,6 +380,7 @@ void test_all_message_round_trips() {
       Message{attitude_fixture()},
       Message{home_fixture()},
       Message{settings_fixture()},
+      Message{gnss_fixture()},
       Message{command_fixture()},
   };
   for (const Message& message : messages) {
@@ -437,6 +450,7 @@ void test_golden_vectors() {
   const Bytes attitude = encode_or_fail(Message{attitude_fixture()});
   const Bytes home = encode_or_fail(Message{home_fixture()});
   const Bytes settings = encode_or_fail(Message{settings_fixture()});
+  const Bytes gnss = encode_or_fail(Message{gnss_fixture()});
 
   CHECK(expected.at("connection.payload") == hex(ByteView(connection)));
   CHECK(expected.at("connection.frame") ==
@@ -452,6 +466,7 @@ void test_golden_vectors() {
   CHECK(expected.at("attitude.payload") == hex(ByteView(attitude)));
   CHECK(expected.at("home.payload") == hex(ByteView(home)));
   CHECK(expected.at("settings.payload") == hex(ByteView(settings)));
+  CHECK(expected.at("gnss.payload") == hex(ByteView(gnss)));
 }
 
 void test_attitude_sample_validation() {
@@ -498,6 +513,55 @@ void test_home_location_validation() {
   if (decoded.ok()) {
     CHECK(std::get<HomeLocation>(decoded.value) == home_fixture());
   }
+}
+
+// The fix time travels as the phone's own monotonic clock plus an age; the
+// device never compares wall clocks. Fields without their flag must be zero so
+// one fix has one encoding.
+void test_gnss_input() {
+  CHECK(static_cast<std::uint8_t>(MessageType::GnssInput) == 0x18);
+  CHECK(CapabilityGnssInput == (1U << 12U));
+
+  const Bytes encoded = encode_or_fail(Message{gnss_fixture()});
+  CHECK(encoded.size() == kGnssInputPayloadSize);
+  const MessageResult decoded =
+      decode_message(MessageType::GnssInput, ByteView(encoded));
+  CHECK(decoded.ok());
+  if (decoded.ok()) {
+    CHECK(std::get<GnssInput>(decoded.value) == gnss_fixture());
+  }
+
+  // A fix without a speed is still a valid message (the phone had a position
+  // but Core Location reported no speed).
+  GnssInput no_speed;
+  no_speed.phone_monotonic_ms = 1'000;
+  CHECK(encode_message(Message{no_speed}).ok());
+
+  GnssInput unflagged_speed = no_speed;
+  unflagged_speed.speed_cmps = 100;
+  CHECK(!encode_message(Message{unflagged_speed}).ok());
+
+  GnssInput unflagged_accuracy = gnss_fixture();
+  unflagged_accuracy.flags = GnssInputHasSpeed;
+  CHECK(!encode_message(Message{unflagged_accuracy}).ok());
+
+  GnssInput unknown_flag = gnss_fixture();
+  unknown_flag.flags |= static_cast<std::uint8_t>(1U << 2U);
+  CHECK(!encode_message(Message{unknown_flag}).ok());
+
+  GnssInput too_fast = gnss_fixture();
+  too_fast.speed_cmps = kMaxGnssSpeedCmps + 1;
+  CHECK(!encode_message(Message{too_fast}).ok());
+  too_fast.speed_cmps = kMaxGnssSpeedCmps;
+  CHECK(encode_message(Message{too_fast}).ok());
+
+  // A peer that sends an unknown flag is refused by the decoder as well.
+  Bytes tampered = encoded;
+  tampered[1] = static_cast<std::uint8_t>(tampered[1] | 0x80U);
+  CHECK(!decode_message(MessageType::GnssInput, ByteView(tampered)).ok());
+  Bytes trailing = encoded;
+  trailing.push_back(0);
+  CHECK(!decode_message(MessageType::GnssInput, ByteView(trailing)).ok());
 }
 
 void test_settings_state() {
@@ -823,6 +887,7 @@ int main(int argc, char** argv) {
   test_attitude_sample_validation();
   test_home_location_validation();
   test_settings_state();
+  test_gnss_input();
   test_fragmentation_and_reassembly();
   test_full_map_scene_budget_and_reassembly();
   test_crc_duplicate_gap_conflict_and_timeout();

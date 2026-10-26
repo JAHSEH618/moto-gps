@@ -43,6 +43,8 @@ class TlogLogger {
   // Acquisition health, written every 10 s. This is the on-disk half of the
   // `imu stats` contract; replay prints it as `# imu ...`.
   void append_stats(const ImuStatsRecord& stats);
+  // One phone GNSS speed as SpeedFusion received it. Sensor task only.
+  void append_gnss(const GnssRecord& record);
 
   std::uint32_t records() const { return seq_; }
   std::uint32_t write_errors() const { return write_errors_; }

@@ -89,6 +89,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) int32_t longitudeE6;
 @end
 
+/// One Core Location fix for the handlebar's speed fusion. The codec stamps
+/// the phone's monotonic clock; `fixAgeMs` is how long before that the fix was
+/// taken. Speeds are cm/s; a negative value means unknown.
+@interface MotoBLEGnssInput : NSObject
+@property(nonatomic) uint32_t phoneMonotonicMs;
+@property(nonatomic) uint16_t fixAgeMs;
+@property(nonatomic) int32_t speedCmps;
+@property(nonatomic) int32_t speedAccuracyCmps;
+@end
+
 @interface MotoBLESettingsStateInput : NSObject
 /// Raw values match `moto::ble::SettingsState`; the shared encoder refuses a
 /// value outside the reviewed table rather than clamping it into a scale the
@@ -211,6 +221,16 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (nullable NSArray<NSData *> *)encodeSettingsState:(MotoBLESettingsStateInput *)settings
                                               error:(NSError **)error;
+
+// Spelled out: Swift would otherwise prune the type name to `encode(_:)`.
+- (nullable NSArray<NSData *> *)encodeGnssInput:(MotoBLEGnssInput *)fix
+                                          error:(NSError **)error
+    NS_SWIFT_NAME(encodeGnssInput(_:));
+
+/// Test hook for checking the shared GnssInput payload without duplicating
+/// its binary layout in Swift.
+- (nullable NSData *)encodeGnssInputPayloadForTesting:(MotoBLEGnssInput *)fix
+                                                error:(NSError **)error;
 
 /// Test hook for checking the shared SettingsState payload without duplicating
 /// its binary layout in Swift.

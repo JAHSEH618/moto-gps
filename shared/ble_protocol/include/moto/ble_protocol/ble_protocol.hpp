@@ -119,6 +119,7 @@ enum class MessageType : std::uint8_t {
   AttitudeSample = 0x15,
   HomeLocation = 0x16,
   SettingsState = 0x17,
+  GnssInput = 0x18,
   DeviceCommand = 0x20,
 };
 
@@ -288,6 +289,10 @@ enum Capability : std::uint32_t {
   // The device understands NavigationHeadingCompass. Without this bit the
   // phone never sets that flag, which an older firmware would reject.
   CapabilityCompassHeading = 1U << 11U,
+  // The device takes GnssInput, the phone's speed stamped with when the fix
+  // was taken. Without this bit the phone sends none and the device ages the
+  // snapshot speed from its arrival.
+  CapabilityGnssInput = 1U << 12U,
 };
 
 struct ConnectionStatus {
@@ -678,6 +683,37 @@ struct AttitudeSample {
   bool operator==(const AttitudeSample& rhs) const noexcept;
 };
 
+enum GnssInputFlag : std::uint8_t {
+  GnssInputHasSpeed = 1U << 0U,
+  GnssInputHasSpeedAccuracy = 1U << 1U,
+};
+
+constexpr std::uint8_t kKnownGnssInputFlags =
+    GnssInputHasSpeed | GnssInputHasSpeedAccuracy;
+inline constexpr std::size_t kGnssInputPayloadSize = 12;
+// 360 km/h. A larger value is a broken fix, not a motorcycle.
+inline constexpr std::uint16_t kMaxGnssSpeedCmps = 10'000;
+
+// Phone->device, one per Core Location fix, fire-and-forget. The snapshot's
+// speed carries no time, so a fix that waited in the phone's send queue looked
+// fresh when it arrived. This one says when the fix was taken, in the phone's
+// own monotonic clock: `phone_monotonic_ms` is stamped when the message is
+// encoded and `fix_age_ms` is how long before that the fix was taken. The
+// device maps the phone clock onto its own from the smallest
+// (arrival - phone_monotonic_ms) it has seen recently, so a delay in the queue
+// shows up as age instead of disappearing. Wall clocks are never compared
+// across devices (DESIGN_V2 §12). Only sent to a peer that advertises
+// CapabilityGnssInput. Fields without their flag must be zero.
+struct GnssInput {
+  std::uint8_t flags = 0;
+  std::uint32_t phone_monotonic_ms = 0;
+  std::uint16_t fix_age_ms = 0;
+  std::uint16_t speed_cmps = 0;
+  std::uint16_t speed_accuracy_cmps = 0;
+
+  bool operator==(const GnssInput& rhs) const noexcept;
+};
+
 using Message = std::variant<ConnectionStatus,                             Heartbeat,
                              Ack,
                              NavigationSnapshot,
@@ -688,6 +724,7 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              AttitudeSample,
                              HomeLocation,
                              SettingsState,
+                             GnssInput,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;

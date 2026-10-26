@@ -6,6 +6,7 @@ enum BLEProtocolGoldenCheck {
         case vectorMissing
         case homeVectorMissing
         case settingsVectorMissing
+        case gnssVectorMissing
         case mismatch(expected: String, actual: String)
 
         var errorDescription: String? {
@@ -14,6 +15,7 @@ enum BLEProtocolGoldenCheck {
             case .vectorMissing: "BLE v1 黄金帧缺少 navigation.payload"
             case .homeVectorMissing: "BLE v1 黄金帧缺少 home.payload"
             case .settingsVectorMissing: "BLE v1 黄金帧缺少 settings.payload"
+            case .gnssVectorMissing: "BLE v1 黄金帧缺少 gnss.payload"
             case let .mismatch(expected, actual):
                 "BLE v1 编码不一致：expected \(expected), actual \(actual)"
             }
@@ -114,6 +116,25 @@ enum BLEProtocolGoldenCheck {
         let actualSettings = settingsPayload.map { String(format: "%02x", $0) }.joined()
         guard actualSettings == expectedSettings else {
             throw CheckError.mismatch(expected: expectedSettings, actual: actualSettings)
+        }
+
+        guard let expectedGnss = fixture
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("gnss.payload=") })?
+            .split(separator: "=", maxSplits: 1)
+            .last
+            .map(String.init)
+        else { throw CheckError.gnssVectorMissing }
+
+        let gnss = MotoBLEGnssInput()
+        gnss.phoneMonotonicMs = 0x1234_5678
+        gnss.fixAgeMs = 320
+        gnss.speedCmps = 1_525
+        gnss.speedAccuracyCmps = 40
+        let gnssPayload = try codec.encodeGnssInputPayload(forTesting: gnss)
+        let actualGnss = gnssPayload.map { String(format: "%02x", $0) }.joined()
+        guard actualGnss == expectedGnss else {
+            throw CheckError.mismatch(expected: expectedGnss, actual: actualGnss)
         }
     }
 }

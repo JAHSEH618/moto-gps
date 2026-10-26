@@ -1,6 +1,7 @@
 #include "phone_nav_bridge.h"
 #include "phone_nav_bridge_test_probe.hpp"
 #include "demo_fixture/jinan_big_data_demo.hpp"
+#include "esp_timer.h"
 
 #include <atomic>
 #include <chrono>
@@ -1101,20 +1102,22 @@ void test_home_location_projects_onto_the_radar() {
 
 struct SpeedRecord {
   int calls = 0;
-  float mps = -1.0F;
-  bool valid = false;
+  moto::motion::SpeedFix fix;
 };
 
-void record_speed(float mps, bool valid, void* context) {
+void record_speed(const moto::motion::SpeedFix& fix, void* context) {
   auto* record = static_cast<SpeedRecord*>(context);
   ++record->calls;
-  record->mps = mps;
-  record->valid = valid;
+  record->fix = fix;
 }
 
-// The Lean estimator's kinematic correction runs on the phone's GPS speed.
-// It must arrive with every snapshot, and stop counting as valid when the
-// fix goes stale or the phone goes away.
+std::uint32_t bridge_now_ms() {
+  return static_cast<std::uint32_t>(esp_timer_get_time() / 1'000);
+}
+
+// A phone that predates GnssInput still feeds the Lean estimator from its
+// snapshots, aged from arrival. A stale fix, no fix and a dropped link send
+// nothing: the fused speed ages out from the last real fix on its own.
 void test_phone_speed_reaches_the_lean_estimator() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
@@ -1127,26 +1130,95 @@ void test_phone_speed_reaches_the_lean_estimator() {
   navigation.state = moto::ble::NavigationState::Navigating;
   navigation.flags = moto::ble::NavigationHasFix;
   navigation.speed_deci_kph = 540;  // 54 km/h
+  const std::uint32_t before = bridge_now_ms();
   CHECK(bridge.on_message(make_message(navigation, 1)) ==
         moto::ble::AckStatus::Ok);
+  const std::uint32_t after = bridge_now_ms();
   CHECK(speed.calls == 1);
-  CHECK(speed.valid);
-  CHECK(std::fabs(speed.mps - 15.0F) < 1.0e-4F);
+  CHECK(std::fabs(speed.fix.mps - 15.0F) < 1.0e-4F);
+  CHECK(!speed.fix.timestamped);
+  CHECK(speed.fix.accuracy_mps < 0.0F);
+  CHECK(speed.fix.fix_ms == speed.fix.rx_ms);
+  CHECK(speed.fix.rx_ms - before <= after - before);
 
   navigation.flags |= moto::ble::NavigationGnssStale;
   CHECK(bridge.on_message(make_message(navigation, 2)) ==
         moto::ble::AckStatus::Ok);
-  CHECK(speed.calls == 2);
-  CHECK(!speed.valid);
-
   navigation.flags = 0;  // no fix at all
   CHECK(bridge.on_message(make_message(navigation, 3)) ==
         moto::ble::AckStatus::Ok);
-  CHECK(!speed.valid);
-
   bridge.on_link_state(false);
+  CHECK(speed.calls == 1);
+  pump(bridge);
+}
+
+// GnssInput carries when the fix was taken, in the phone's clock. The device
+// learns the clock offset from the fastest message it has seen, so a message
+// that waited in the phone's queue is placed in the past by that wait plus the
+// fix's own age, where a snapshot would have looked fresh.
+void test_gnss_input_places_the_fix_on_the_device_clock() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  SpeedRecord speed;
+  bridge.set_speed_listener(record_speed, &speed);
+  bridge.on_link_state(true);
+
+  // The phone's clock has nothing to do with ours, and has wrapped.
+  constexpr std::uint32_t kPhoneMs = 0xFFFFF000U;
+  moto::ble::GnssInput gnss;
+  gnss.flags = moto::ble::GnssInputHasSpeed | moto::ble::GnssInputHasSpeedAccuracy;
+  gnss.phone_monotonic_ms = kPhoneMs;
+  gnss.fix_age_ms = 250;
+  gnss.speed_cmps = 1'500;
+  gnss.speed_accuracy_cmps = 40;
+  CHECK(bridge.on_message(make_message(gnss, 1)) == moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 1);
+  CHECK(speed.fix.timestamped);
+  CHECK(std::fabs(speed.fix.mps - 15.0F) < 1.0e-4F);
+  CHECK(std::fabs(speed.fix.accuracy_mps - 0.4F) < 1.0e-4F);
+  CHECK(speed.fix.rx_ms - speed.fix.fix_ms == 250U);
+
+  // Arrives now, but was stamped 700 ms of phone time earlier than the first:
+  // it sat in a queue. Its fix is 700 + 120 ms old on arrival.
+  gnss.phone_monotonic_ms = kPhoneMs - 700U;
+  gnss.fix_age_ms = 120;
+  gnss.speed_cmps = 1'400;
+  CHECK(bridge.on_message(make_message(gnss, 2)) == moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 2);
+  const std::uint32_t queued_age = speed.fix.rx_ms - speed.fix.fix_ms;
+  CHECK(queued_age >= 820U);
+  CHECK(queued_age <= 830U);
+
+  // Without a speed the stamp still trains the clock, but nothing is sent.
+  moto::ble::GnssInput no_speed;
+  no_speed.phone_monotonic_ms = kPhoneMs + 1'000U;
+  CHECK(bridge.on_message(make_message(no_speed, 3)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 2);
+
+  // This phone has GnssInput, so its snapshots no longer carry the speed.
+  moto::ble::NavigationSnapshot navigation;
+  navigation.state = moto::ble::NavigationState::Navigating;
+  navigation.flags = moto::ble::NavigationHasFix;
+  navigation.speed_deci_kph = 540;
+  CHECK(bridge.on_message(make_message(navigation, 4)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 2);
+
+  // A new link may be an older phone: snapshots count again until it sends
+  // GnssInput, and the clock is learned afresh.
+  bridge.on_link_state(false);
+  bridge.on_link_state(true);
+  CHECK(bridge.on_message(make_message(navigation, 5)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 3);
+  CHECK(!speed.fix.timestamped);
+  gnss.phone_monotonic_ms = 12'345U;
+  gnss.fix_age_ms = 90;
+  CHECK(bridge.on_message(make_message(gnss, 6)) == moto::ble::AckStatus::Ok);
   CHECK(speed.calls == 4);
-  CHECK(!speed.valid);
+  CHECK(speed.fix.rx_ms - speed.fix.fix_ms == 90U);
   pump(bridge);
 }
 
@@ -1169,6 +1241,7 @@ int main() {
   test_attitude_uplink_is_gated_and_paced();
   test_home_location_projects_onto_the_radar();
   test_phone_speed_reaches_the_lean_estimator();
+  test_gnss_input_places_the_fix_on_the_device_clock();
 
   if (failures != 0) {
     std::cerr << failures << " phone navigation bridge checks failed\n";

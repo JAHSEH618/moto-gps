@@ -38,6 +38,7 @@ idf_component_register(
         "phone_nav_bridge.cpp"
         "flash_guard.cpp"
         "settings_store.cpp"
+        "speed_fusion.cpp"
         "tlog_logger.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"
         "${MOTO_SHARED_NAV_PRESENTER_SOURCE}"

@@ -538,6 +538,9 @@ final class AppModel: ObservableObject {
     }
 
     private func bind(_ runtime: SharedNavigationRuntime) {
+        runtime.onFix = { [weak self] fix in
+            self?.bluetooth.sendGnssFix(fix)
+        }
         runtime.onSnapshot = { [weak self] snapshot in
             self?.navigation = snapshot
             if snapshot.stateName == "navigating" || snapshot.stateName == "arrived" {

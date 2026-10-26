@@ -221,6 +221,25 @@ moto::ble::HomeLocation HomeLocationFromInput(MotoBLEHomeLocationInput *input) {
   return home;
 }
 
+moto::ble::GnssInput GnssInputFromInput(MotoBLEGnssInput *input) {
+  moto::ble::GnssInput fix;
+  fix.phone_monotonic_ms = input.phoneMonotonicMs;
+  fix.fix_age_ms = input.fixAgeMs;
+  // Fields without their flag stay zero; the shared validator refuses
+  // anything else, and a speed above its ceiling as well.
+  if (input.speedCmps >= 0) {
+    fix.flags |= moto::ble::GnssInputHasSpeed;
+    fix.speed_cmps = static_cast<std::uint16_t>(
+        std::min<int32_t>(input.speedCmps, moto::ble::kMaxGnssSpeedCmps));
+    if (input.speedAccuracyCmps >= 0) {
+      fix.flags |= moto::ble::GnssInputHasSpeedAccuracy;
+      fix.speed_accuracy_cmps = static_cast<std::uint16_t>(
+          std::min<int32_t>(input.speedAccuracyCmps, 0xFFFF));
+    }
+  }
+  return fix;
+}
+
 moto::ble::SettingsState SettingsStateFromInput(MotoBLESettingsStateInput *input) {
   moto::ble::SettingsState state;
   // Theme and units are mapped explicitly rather than cast: the device's
@@ -372,6 +391,16 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @end
 
 @implementation MotoBLEHomeLocationInput
+@end
+
+@implementation MotoBLEGnssInput
+- (instancetype)init {
+  if ((self = [super init])) {
+    _speedCmps = -1;
+    _speedAccuracyCmps = -1;
+  }
+  return self;
+}
 @end
 
 @implementation MotoBLESettingsStateInput
@@ -597,6 +626,27 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   return EncodeMessage(storage,
                        moto::ble::Message{SettingsStateFromInput(input)},
                        0, error);
+}
+
+- (NSArray<NSData *> *)encodeGnssInput:(MotoBLEGnssInput *)input
+                                 error:(NSError **)error {
+  auto *storage = static_cast<CodecStorage *>(_storage);
+  // No Ack: a fix is superseded by the next one within a second, and a
+  // retried fix would only arrive older.
+  return EncodeMessage(storage,
+                       moto::ble::Message{GnssInputFromInput(input)},
+                       0, error);
+}
+
+- (NSData *)encodeGnssInputPayloadForTesting:(MotoBLEGnssInput *)input
+                                       error:(NSError **)error {
+  const auto payload =
+      moto::ble::encode_message(moto::ble::Message{GnssInputFromInput(input)});
+  if (!payload.ok()) {
+    if (error != nullptr) *error = ProtocolError(payload.error, payload.offset);
+    return nil;
+  }
+  return [NSData dataWithBytes:payload.value.data() length:payload.value.size()];
 }
 
 - (NSData *)encodeSettingsStatePayloadForTesting:(MotoBLESettingsStateInput *)input

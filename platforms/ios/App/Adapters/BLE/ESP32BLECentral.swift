@@ -212,6 +212,9 @@ final class ESP32BLECentral: NSObject {
     private static let mapSceneCapability: UInt32 = 1 << 7
     /// The device understands NavigationHeadingCompass (protocol bit 11).
     private static let compassHeadingCapability: UInt32 = 1 << 11
+    /// The device takes GnssInput, fixes stamped with when they were taken
+    /// (protocol bit 12).
+    private static let gnssInputCapability: UInt32 = 1 << 12
     /// Below this the handlebar does not trust a GNSS course (it matches
     /// MotionHeadingFusion's course-anchor speed), so the compass goes instead.
     private static let courseMinimumSpeedMPS = 1.5
@@ -352,6 +355,36 @@ final class ESP32BLECentral: NSObject {
     func sendHomeLocation(_ home: HomeLocationBroadcast) {
         pendingHomeLocation = home
         flushPendingHomeLocation()
+    }
+
+    /// One Core Location fix for the handlebar's speed fusion, sent as it
+    /// arrives. Nothing is retained: the device needs the fix's own time, so
+    /// a fix held for a later session would only arrive old. Dropped while the
+    /// session is not ready or the peer does not advertise bit 12.
+    func sendGnssFix(_ fix: NavigationFix) {
+        guard protocolReady,
+              let codec,
+              peerCapabilities & Self.gnssInputCapability != 0
+        else { return }
+
+        let input = MotoBLEGnssInput()
+        // Stamped here, at encode: anything the frame waits in the queue after
+        // this is measured by the device as age. The fix's own age is a short
+        // wall-clock difference on this phone, never compared across devices.
+        input.phoneMonotonicMs = UInt32(truncatingIfNeeded: Self.monotonicMs())
+        let ageMs = max(0, Date().timeIntervalSince(fix.timestamp) * 1_000)
+        input.fixAgeMs = UInt16(min(ageMs, Double(UInt16.max)).rounded())
+        if let speed = fix.speedMps, speed.isFinite, speed >= 0 {
+            input.speedCmps = Int32(min(speed * 100, 10_000).rounded())
+            if let accuracy = fix.speedAccuracyMps, accuracy.isFinite, accuracy >= 0 {
+                input.speedAccuracyCmps = Int32(min(accuracy * 100, 65_535).rounded())
+            }
+        }
+        do {
+            try send(codec.encodeGnssInput(input))
+        } catch {
+            recoverFromTransportError(error.localizedDescription)
+        }
     }
 
     /// Same contract as the home address, with one difference that matters:

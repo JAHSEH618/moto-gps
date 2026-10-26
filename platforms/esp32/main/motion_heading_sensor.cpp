@@ -298,9 +298,19 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
       static_cast<std::uint64_t>(sample_us) / 1'000U;
   last_emit_us_ = sample_us;
   have_emit_ = true;
+  // DESIGN_V2 §3.7. Fixes first, so a fix that arrived since the last sample
+  // corrects the trajectory before this sample extends it; then this sample's
+  // longitudinal force, levelled by the Lean state of the sample before.
+  apply_speed_fixes();
+  const auto now_ms = static_cast<std::uint32_t>(sample_ms);
+  speed_.step(lean_.mount().to_body(
+                  {raw.accel_mps2[0], raw.accel_mps2[1], raw.accel_mps2[2]}),
+              lean_.up_body(),
+              lean_.static_for_s() >= moto::motion::SpeedFusion::kParkedForS,
+              dt, now_ms);
   lean_.step({raw.gyro_dps[0], raw.gyro_dps[1], raw.gyro_dps[2]},
              {raw.accel_mps2[0], raw.accel_mps2[1], raw.accel_mps2[2]}, dt,
-             speed_sample(sample_ms));
+             speed_.sample(now_ms));
   const moto::motion::LeanOutput& out = lean_.output();
   persist_bias(sample_ms);
   last_lean_deg_ = out.lean_deg;
@@ -346,37 +356,39 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
   callback_(-out.yaw_rate_dps, attitude, raw, sample_ms, callback_context_);
 }
 
-void MotionHeadingSensor::set_vehicle_speed(float speed_mps, bool valid) {
-  if (!valid || !std::isfinite(speed_mps) || speed_mps < 0.0F) {
-    speed_at_ms_.store(0, std::memory_order_release);
+void MotionHeadingSensor::add_speed_fix(const moto::motion::SpeedFix& fix) {
+  const std::lock_guard<std::mutex> lock(fix_mutex_);
+  if (fix_count_ == fix_queue_.size()) {
+    fixes_dropped_ = fixes_dropped_ + 1;
     return;
   }
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &speed_mps, sizeof(bits));
-  speed_bits_.store(bits, std::memory_order_relaxed);
-  // Never 0: zero is the "no speed" marker.
-  const std::uint32_t now = static_cast<std::uint32_t>(monotonic_ms()) | 1U;
-  speed_at_ms_.store(now, std::memory_order_release);
+  fix_queue_[fix_count_++] = fix;
 }
 
-moto::motion::SpeedSample MotionHeadingSensor::speed_sample(
-    std::uint64_t now_ms) const {
-  // Until this was wired the estimator always got an empty sample, so the
-  // kinematic correction that keeps Lean honest in a long corner never ran.
-  constexpr float kMaxAgeS = 2.5F;
-  moto::motion::SpeedSample sample;
-  const std::uint32_t at = speed_at_ms_.load(std::memory_order_acquire);
-  if (at == 0) return sample;
-  const std::uint32_t bits = speed_bits_.load(std::memory_order_relaxed);
-  float mps = 0.0F;
-  std::memcpy(&mps, &bits, sizeof(mps));
-  const float age_s =
-      static_cast<float>(static_cast<std::uint32_t>(now_ms) - at) / 1'000.0F;
-  if (age_s < 0.0F || age_s > kMaxAgeS) return sample;
-  sample.valid = true;
-  sample.mps = mps;
-  sample.age_s = age_s;
-  return sample;
+void MotionHeadingSensor::set_fix_callback(FixCallback callback,
+                                           void* context) {
+  fix_callback_ = callback;
+  fix_context_ = context;
+}
+
+void MotionHeadingSensor::apply_speed_fixes() {
+  // Never wait on the BLE task here: a fix that misses this sample makes the
+  // next one, 4.5 ms later.
+  std::array<moto::motion::SpeedFix, 4> fixes{};
+  std::size_t count = 0;
+  {
+    std::unique_lock<std::mutex> lock(fix_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || fix_count_ == 0) return;
+    count = fix_count_;
+    for (std::size_t i = 0; i < count; ++i) fixes[i] = fix_queue_[i];
+    fix_count_ = 0;
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    const bool applied = speed_.add_fix(fixes[i]);
+    if (fix_callback_ != nullptr) {
+      fix_callback_(fixes[i], applied, fix_context_);
+    }
+  }
 }
 
 void MotionHeadingSensor::persist_bias(std::uint64_t now_ms) {

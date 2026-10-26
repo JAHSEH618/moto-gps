@@ -896,3 +896,48 @@ leaving ~18° of Lean/pitch error until stillness corrected it 1.5 s later.
 The y gyro reads ~8% (fit over old tlog windows: ~13%) below the gravity
 change; y is the pitch axis in both mounts, and pitch is re-anchored at rest.
 The 16 MB tlog is full, so nothing after the oldest sessions is recorded.
+
+## 2026-10-26T18:58:00+09:00 — Speed fusion and a fix time on the wire
+
+**Problem.** The Lean estimator's kinematic correction (`φ_eff = atan(v·ψ̇/g)`)
+took the phone's speed straight from the navigation snapshot and aged it from
+arrival. The snapshot carries no time, the phone paces it at 5 Hz behind a send
+queue that a MapScene can fill, and Core Location's fix is already some hundreds
+of ms old. So a speed from before a hard stop could arrive looking fresh, and
+between fixes the speed did not move at all.
+
+**Wire.** `GnssInput` (0x18, 12 bytes, gated on `CapabilityGnssInput` bit 12):
+the phone's monotonic stamp at encode, the fix's age before that, speed and
+speedAccuracy in cm/s. No wall clock crosses devices. `PhoneNavBridge` keeps a
+`PhoneClock`: the smallest `arrival − stamp` of the last 16 messages is the
+clock offset, so queueing delay shows up as age. Snapshot speeds are still used
+for a phone that never sends `GnssInput`. Spec §6.13 and golden
+`gnss.payload=0103785634124001f5052800`.
+
+**Fusion** (`speed_fusion.cpp`, DESIGN_V2 §3.7). Each IMU sample integrates the
+specific force along forward levelled by the Lean state's û, minus `bias_lon`.
+ZUPT applies after 0.5 s of the estimator's stillness gate. A 3.2 s trajectory
+(50 ms points) lets each fix be compared with the speed *when it was taken*.
+The residual is applied with a scalar Kalman gain (variance grows 0.25 m²/s³,
+noise = the fix's speedAccuracy) to the present and to everything recorded
+since. `bias_lon` moves 5 % of residual/gap per fix, and it follows the parked
+residual with τ = 5 s. The estimator gets the fused speed with the newest fix's
+age, valid for 5 s. The sensor task drains a mutex-guarded fix queue with
+`try_lock`, and records each fix as a `GnssRecord` before the sample it was
+applied to, so `moto_replay` feeds the same fusion in the same order. New bench
+line: `imu speed`.
+
+**Verification.** Native 16/16. New `speed_fusion_tests` cover a late fix in a
+hard stop, a dropout during braking with an honest age and 5 s expiry, pitch
+not becoming acceleration, a learned 0.4 m/s² offset, ZUPT, and refused fixes.
+Three deliberate breakages were each caught by their own test: comparing
+against the present speed, no bias learning, and no ZUPT. Also new:
+`test_gnss_input`, and `test_gnss_input_places_the_fix_on_the_device_clock`
+(a message stamped 700 ms early lands 700 ms + its fix age in the past, and
+after a GnssInput the snapshot speed is ignored until the next link). The
+firmware builds into `build-codespace` with the app partition 42 % free. Swift
+package tests pass, and the iOS app builds for the simulator. **Not verified:**
+nothing has run on the board or on a real iPhone. The gains come from
+simulation. The one-way clock cannot see the shortest transit, and the
+round-trip TIME_SYNC (§12) is still open. Location only runs while navigating,
+so outside navigation there is no speed at all.

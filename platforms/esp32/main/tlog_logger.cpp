@@ -342,6 +342,24 @@ void TlogLogger::append_stats(const ImuStatsRecord& stats) {
   block_dirty_ = true;
 }
 
+void TlogLogger::append_gnss(const GnssRecord& record) {
+  if (!ready_ || full_ || dirty_) return;
+  if (payload_used_ + 1 + kGnssRecordSize > kBlockSize - kBlockHeaderSize) {
+    if (!write_block()) return;
+    if (!start_block()) {
+      ready_ = false;
+      return;
+    }
+  }
+  const auto encoded = encode_gnss(record);
+  block_[kBlockHeaderSize + payload_used_] = kRecordGnss;
+  std::memcpy(block_ + kBlockHeaderSize + payload_used_ + 1, encoded.data(),
+              encoded.size());
+  payload_used_ =
+      static_cast<std::uint16_t>(payload_used_ + 1 + encoded.size());
+  block_dirty_ = true;
+}
+
 void TlogLogger::flush() {
   if (!ready_ || !block_dirty_) return;
   if (!write_block()) return;

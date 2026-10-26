@@ -7,6 +7,7 @@
 
 #include "dyn_record.hpp"
 #include "lean_estimator.hpp"
+#include "speed_fusion.hpp"
 
 namespace {
 
@@ -71,11 +72,12 @@ std::string replay_to_csv(const std::vector<std::uint8_t>& file) {
                   moto::motion::kSensorScreenTop, false);
   estimator.set_mount(mount);
 
+  // Speed goes through SpeedFusion exactly as on the device: a GNSS record is
+  // written just before the sample it was applied to, so applying it when it
+  // is read reproduces the firmware's order.
+  moto::motion::SpeedFusion fusion;
   std::uint32_t session = 0;
   bool have_session = false;
-  bool have_speed = false;
-  std::uint32_t last_gnss_rx = 0;
-  std::uint16_t last_speed_cms = 0;
   std::uint32_t previous_t = 0;
   bool have_previous = false;
 
@@ -101,6 +103,7 @@ std::string replay_to_csv(const std::vector<std::uint8_t>& file) {
       session = header.boot_id;
       have_session = true;
       estimator.reset();
+      fusion.reset();
       have_previous = false;
       char line[160];
       std::snprintf(line, sizeof(line), "# session %u block_seq %u\n",
@@ -131,21 +134,18 @@ std::string replay_to_csv(const std::vector<std::uint8_t>& file) {
                 : 0.008F;
         previous_t = record.t_ms;
         have_previous = true;
-        moto::motion::SpeedSample speed;
-        if (have_speed) {
-          speed.valid = true;
-          speed.mps = static_cast<float>(last_speed_cms) / 100.0F;
-          speed.age_s =
-              static_cast<float>(record.t_ms - last_gnss_rx) / 1000.0F;
-          if (speed.age_s < 0.0F) speed.age_s = 0.0F;
-        }
+        const moto::motion::Vec3f accel{
+            static_cast<float>(record.ax_cms2) / 100.0F,
+            static_cast<float>(record.ay_cms2) / 100.0F,
+            static_cast<float>(record.az_cms2) / 100.0F};
+        fusion.step(estimator.mount().to_body(accel), estimator.up_body(),
+                    estimator.static_for_s() >=
+                        moto::motion::SpeedFusion::kParkedForS,
+                    dt, record.t_ms);
         estimator.step({static_cast<float>(record.gx_dds) / 10.0F,
                         static_cast<float>(record.gy_dds) / 10.0F,
                         static_cast<float>(record.gz_dds) / 10.0F},
-                       {static_cast<float>(record.ax_cms2) / 100.0F,
-                        static_cast<float>(record.ay_cms2) / 100.0F,
-                        static_cast<float>(record.az_cms2) / 100.0F},
-                       dt, speed);
+                       accel, dt, fusion.sample(record.t_ms));
         csv += format_dyn(static_cast<double>(record.t_ms),
                           estimator.output());
         continue;
@@ -159,9 +159,20 @@ std::string replay_to_csv(const std::vector<std::uint8_t>& file) {
           break;
         }
         offset += moto::device::kGnssRecordSize;
-        have_speed = (record.flags & 0x01U) != 0U;
-        last_gnss_rx = record.t_rx_ms;
-        last_speed_cms = record.speed_cms;
+        if ((record.flags & moto::device::kGnssHasSpeed) != 0U &&
+            (record.flags & moto::device::kGnssRefused) == 0U) {
+          moto::motion::SpeedFix fix;
+          fix.mps = static_cast<float>(record.speed_cms) / 100.0F;
+          fix.accuracy_mps =
+              record.speed_acc_cms == 0xFFFFU
+                  ? -1.0F
+                  : static_cast<float>(record.speed_acc_cms) / 100.0F;
+          fix.fix_ms = record.fix_ms;
+          fix.rx_ms = record.t_rx_ms;
+          fix.timestamped =
+              (record.flags & moto::device::kGnssTimestamped) != 0U;
+          fusion.add_fix(fix);
+        }
         continue;
       }
       if (type == moto::device::kRecordMount) {

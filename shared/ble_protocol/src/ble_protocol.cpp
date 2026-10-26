@@ -553,6 +553,26 @@ Error validate(const AttitudeSample& value) {
   return Error::None;
 }
 
+Error validate(const GnssInput& value) {
+  if ((value.flags & ~kKnownGnssInputFlags) != 0U) {
+    return Error::OutOfRange;
+  }
+  const bool has_speed = (value.flags & GnssInputHasSpeed) != 0U;
+  const bool has_accuracy = (value.flags & GnssInputHasSpeedAccuracy) != 0U;
+  // An accuracy describes a speed; one without the other is a sender bug.
+  if (has_accuracy && !has_speed) {
+    return Error::OutOfRange;
+  }
+  if ((!has_speed && value.speed_cmps != 0U) ||
+      (!has_accuracy && value.speed_accuracy_cmps != 0U)) {
+    return Error::OutOfRange;
+  }
+  if (value.speed_cmps > kMaxGnssSpeedCmps) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -702,6 +722,12 @@ BytesResult encode_payload(const T& value) {
     writer.u16(static_cast<std::uint16_t>(value.pitch_cdeg));
     writer.u16(static_cast<std::uint16_t>(value.longitudinal_mg));
     writer.u16(static_cast<std::uint16_t>(value.lateral_mg));
+  } else if constexpr (std::is_same_v<T, GnssInput>) {
+    writer.u8(value.flags);
+    writer.u32(value.phone_monotonic_ms);
+    writer.u16(value.fix_age_ms);
+    writer.u16(value.speed_cmps);
+    writer.u16(value.speed_accuracy_cmps);
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -1582,6 +1608,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::AttitudeSample;
         } else if constexpr (std::is_same_v<T, SettingsState>) {
           return MessageType::SettingsState;
+        } else if constexpr (std::is_same_v<T, GnssInput>) {
+          return MessageType::GnssInput;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1665,6 +1693,27 @@ MessageResult decode_settings_state(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool GnssInput::operator==(const GnssInput& rhs) const noexcept {
+  return std::tie(flags, phone_monotonic_ms, fix_age_ms, speed_cmps,
+                  speed_accuracy_cmps) ==
+         std::tie(rhs.flags, rhs.phone_monotonic_ms, rhs.fix_age_ms,
+                  rhs.speed_cmps, rhs.speed_accuracy_cmps);
+}
+
+MessageResult decode_gnss_input(ByteView payload) {
+  Reader reader(payload);
+  GnssInput value;
+  if (begin_payload(reader)) {
+    value.flags = reader.u8();
+    value.phone_monotonic_ms = reader.u32();
+    value.fix_age_ms = reader.u16();
+    value.speed_cmps = reader.u16();
+    value.speed_accuracy_cmps = reader.u16();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -1685,6 +1734,8 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_home_location(payload);
     case MessageType::SettingsState:
       return decode_settings_state(payload);
+    case MessageType::GnssInput:
+      return decode_gnss_input(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

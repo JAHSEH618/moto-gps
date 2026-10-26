@@ -7,6 +7,7 @@
 
 #include "attitude_estimator.hpp"
 #include "device_settings.hpp"
+#include "gnss_input.hpp"
 #include "moto/ble_protocol/ble_protocol.hpp"
 #include "moto_nav_presenter.hpp"
 #include "motion_heading_fusion.hpp"
@@ -47,11 +48,14 @@ class PhoneNavBridge {
   using SettingsStoreCallback =
       bool (*)(const moto::device::DeviceSettings& settings);
   void set_settings_store(SettingsStoreCallback callback);
-  // The phone's GPS speed, as it arrives: every navigation snapshot, and an
-  // invalid speed when the link drops. The Lean estimator's kinematic
-  // correction needs it (DESIGN_V2 §3.5); valid means the phone has a fix
-  // that is not stale. Called on the BLE task, outside the bridge lock.
-  using SpeedListener = void (*)(float speed_mps, bool valid, void* context);
+  // The phone's GNSS speed, one call per usable fix, placed on this device's
+  // clock (DESIGN_V2 §3.7). A phone that sends GnssInput is heard only
+  // through it, with the time the fix was taken; an older phone's snapshot
+  // speed is passed on with its arrival time instead. Nothing is sent when the
+  // fix is stale or the link drops: the fused speed ages out on its own.
+  // Called on the BLE task, outside the bridge lock.
+  using SpeedListener = void (*)(const moto::motion::SpeedFix& fix,
+                                 void* context);
   void set_speed_listener(SpeedListener listener, void* context);
   // Apple Media Service: the iPhone's own Now Playing service, read by the
   // device over the same BLE link. While it is available the music page shows
@@ -105,6 +109,7 @@ class PhoneNavBridge {
   void consume_media(const moto::ble::MediaState& input);
   moto::ble::AckStatus consume_map_scene(const moto::ble::MapScene& input);
   void consume_home_location(const moto::ble::HomeLocation& input);
+  void consume_gnss(const moto::ble::GnssInput& input);
   moto::ble::AckStatus consume_settings(
       const moto::ble::SettingsState& input);
   // Requires state_mutex_. This helper never calls LVGL or the BLE sender.
@@ -148,6 +153,10 @@ class PhoneNavBridge {
   SettingsStoreCallback settings_store_ = nullptr;
   SpeedListener speed_listener_ = nullptr;
   void* speed_listener_context_ = nullptr;
+  // Per link: the phone's monotonic clock mapped onto ours, and whether this
+  // phone sends GnssInput (then its snapshot speeds are not passed on).
+  moto::motion::PhoneClock phone_clock_;
+  bool gnss_input_seen_ = false;
   // Command id of the last HomeShortcut. The phone answers InvalidState when no
   // home is set; the device cannot know that on its own, so the refusal has to
   // come back as a visible hint instead of a silent no-op.

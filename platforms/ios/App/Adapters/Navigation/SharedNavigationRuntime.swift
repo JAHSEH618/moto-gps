@@ -7,6 +7,9 @@ import MotoNavigationCore
 final class SharedNavigationRuntime {
     var onSnapshot: ((MotoNavCoreSnapshot) -> Void)?
     var onFailure: ((String) -> Void)?
+    /// Every accepted fix, raw, before NavCore sees it. The handlebar's speed
+    /// fusion needs the fix's own time, which a snapshot does not carry.
+    var onFix: ((NavigationFix) -> Void)?
 
     private let bridge = MotoNavCoreBridge()
     private let locationSource: any NavigationLocationSource
@@ -100,6 +103,7 @@ final class SharedNavigationRuntime {
     }
 
     private func accept(_ fix: NavigationFix) {
+        onFix?(fix)
         let commands = bridge.pushFixLongitude(
             fix.coordinate.longitudeDeg,
             latitude: fix.coordinate.latitudeDeg,

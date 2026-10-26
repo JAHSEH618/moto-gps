@@ -124,6 +124,9 @@ extension CoreLocationNavigationSource: @preconcurrency CLLocationManagerDelegat
                 altitudeM: location.verticalAccuracy >= 0 ? location.altitude : nil,
                 horizontalAccuracyM: location.horizontalAccuracy,
                 speedMps: location.speed >= 0 ? location.speed : nil,
+                speedAccuracyMps: location.speed >= 0 && location.speedAccuracy >= 0
+                    ? location.speedAccuracy
+                    : nil,
                 courseDeg: location.course >= 0 ? location.course : nil,
                 timestamp: location.timestamp
             )

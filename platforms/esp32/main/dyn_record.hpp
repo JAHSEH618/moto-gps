@@ -57,6 +57,13 @@ struct DynRecord {
   std::uint8_t quality = 0;
 };
 
+// GnssRecord::flags.
+inline constexpr std::uint8_t kGnssHasSpeed = 1U << 0;
+// fix_ms came from the phone's GnssInput stamp; without it fix_ms is arrival.
+inline constexpr std::uint8_t kGnssTimestamped = 1U << 1;
+// SpeedFusion refused the fix (reordered, too old, not finite). Replay skips it.
+inline constexpr std::uint8_t kGnssRefused = 1U << 2;
+
 struct GnssRecord {
   std::uint32_t t_rx_ms = 0;
   std::uint32_t fix_ms = 0;

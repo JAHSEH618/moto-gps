@@ -44,6 +44,9 @@ public struct NavigationFix: Equatable, Sendable {
     public let altitudeM: Double?
     public let horizontalAccuracyM: Double
     public let speedMps: Double?
+    /// One sigma of `speedMps` (Core Location's speedAccuracy); nil when the
+    /// platform does not report one.
+    public let speedAccuracyMps: Double?
     public let courseDeg: Double?
     public let timestamp: Date
 
@@ -52,6 +55,7 @@ public struct NavigationFix: Equatable, Sendable {
         altitudeM: Double? = nil,
         horizontalAccuracyM: Double,
         speedMps: Double? = nil,
+        speedAccuracyMps: Double? = nil,
         courseDeg: Double? = nil,
         timestamp: Date
     ) {
@@ -59,6 +63,7 @@ public struct NavigationFix: Equatable, Sendable {
         self.altitudeM = altitudeM
         self.horizontalAccuracyM = horizontalAccuracyM
         self.speedMps = speedMps
+        self.speedAccuracyMps = speedAccuracyMps
         self.courseDeg = courseDeg
         self.timestamp = timestamp
     }

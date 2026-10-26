@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 
 #include "attitude_estimator.hpp"
 #include "esp_err.h"
@@ -9,6 +11,7 @@
 #include "lean_estimator.hpp"
 #include "qmi8658_fifo.hpp"
 #include "qmi8658_latch.hpp"
+#include "speed_fusion.hpp"
 
 // The raw sample (sensor frame) travels with the estimate so the development
 // recorder can store what the estimator actually saw, not just its output.
@@ -95,9 +98,19 @@ class MotionHeadingSensor {
   void set_mode_callback(ModeCallback callback, void* context);
 
   esp_err_t start(SampleCallback callback, void* context);
-  // The phone's GPS speed (any task). Feeds the Lean estimator's kinematic
-  // correction; a speed older than 2.5 s is treated as none.
-  void set_vehicle_speed(float speed_mps, bool valid);
+  // One phone GNSS speed (any task), placed on this device's clock. It is
+  // queued and applied to SpeedFusion before the next IMU sample; the fused
+  // speed feeds the Lean estimator's kinematic correction with the fix's age.
+  void add_speed_fix(const moto::motion::SpeedFix& fix);
+  // Called on the sensor task for every queued fix, applied or not, before the
+  // sample it was applied to. The recorder writes it from here, so its GNSS
+  // records sit in the same order as the samples the fusion saw.
+  using FixCallback = void (*)(const moto::motion::SpeedFix& fix, bool applied,
+                               void* context);
+  void set_fix_callback(FixCallback callback, void* context);
+  // `imu speed`: written by the sensor task, read by the command task.
+  const moto::motion::SpeedFusion& speed() const { return speed_; }
+  std::uint32_t dropped_speed_fixes() const { return fixes_dropped_; }
 
  private:
   static void task_entry(void* context);
@@ -111,7 +124,7 @@ class MotionHeadingSensor {
   void run_calibration();
   void emit(const RawImuSample& raw, std::int64_t sample_us);
   void persist_bias(std::uint64_t now_ms);
-  moto::motion::SpeedSample speed_sample(std::uint64_t now_ms) const;
+  void apply_speed_fixes();
 
   qmi8658_dev_t device_{};
   moto::motion::LeanEstimator lean_{};
@@ -119,10 +132,16 @@ class MotionHeadingSensor {
   bool have_emit_ = false;
   float temperature_c_ = 0.0F;
   int temperature_countdown_ = 0;
-  // Phone GPS speed, written by the BLE task and read by this one. The float
-  // travels as its bit pattern; a zero timestamp means "no speed".
-  std::atomic<std::uint32_t> speed_bits_{0};
-  std::atomic<std::uint32_t> speed_at_ms_{0};
+  // Phone GNSS fixes, written by the BLE task and drained by this one. About
+  // one a second arrives against a sample every 4.5 ms, so four slots only
+  // fill when the sensor task is not running.
+  std::mutex fix_mutex_;
+  std::array<moto::motion::SpeedFix, 4> fix_queue_{};
+  std::size_t fix_count_ = 0;
+  volatile std::uint32_t fixes_dropped_ = 0;
+  moto::motion::SpeedFusion speed_{};
+  FixCallback fix_callback_ = nullptr;
+  void* fix_context_ = nullptr;
   // Bias persistence: written only from this task, only while parked.
   moto::motion::Vec3f saved_bias_dps_{};
   bool bias_saved_ = false;

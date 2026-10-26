@@ -158,6 +158,15 @@ target_include_directories(lean_estimator_tests PRIVATE
 )
 target_compile_features(lean_estimator_tests PRIVATE cxx_std_17)
 
+add_executable(speed_fusion_tests
+  speed_fusion_tests.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/speed_fusion.cpp"
+)
+target_include_directories(speed_fusion_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+)
+target_compile_features(speed_fusion_tests PRIVATE cxx_std_17)
+
 add_executable(ams_codec_tests
   ams_codec_tests.cpp
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/ams_codec.cpp"
@@ -208,6 +217,7 @@ add_test(NAME motion_heading_fusion_tests COMMAND motion_heading_fusion_tests)
 add_test(NAME device_settings_tests COMMAND device_settings_tests)
 add_test(NAME attitude_estimator_tests COMMAND attitude_estimator_tests)
 add_test(NAME lean_estimator_tests COMMAND lean_estimator_tests)
+add_test(NAME speed_fusion_tests COMMAND speed_fusion_tests)
 add_test(NAME ams_codec_tests COMMAND ams_codec_tests)
 
 add_executable(mount_basis_tests
@@ -226,6 +236,7 @@ add_executable(dyn_record_tests
   dyn_replay.cpp
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/dyn_record.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/lean_estimator.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/speed_fusion.cpp"
 )
 target_include_directories(dyn_record_tests PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
@@ -239,6 +250,7 @@ add_executable(moto_replay
   dyn_replay.cpp
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/dyn_record.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/lean_estimator.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/speed_fusion.cpp"
 )
 target_include_directories(moto_replay PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"

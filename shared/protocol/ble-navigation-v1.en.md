@@ -194,6 +194,7 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x15` | AttitudeSample | device→phone | 10 Hz while the phone advertises bit 8, no Ack |
 | `0x16` | HomeLocation | phone→device | when the home address changes, and after every handshake |
 | `0x17` | SettingsState | both ways | when settings or the theme change, and after every handshake |
+| `0x18` | GnssInput | phone→device | one per Core Location fix (about 1 Hz), no ACK |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -216,11 +217,12 @@ Capability bits: bit0 navigation, bit1 route geometry, bit2 traffic, bit3 media 
 touch commands, bit5 music commands, bit6 command ACK, bit7 map scene,
 bit8 attitude telemetry, bit9 home location, bit10 device settings, bit11 compass heading (the
 device understands NavigationSnapshot's HeadingCompass flag; the phone sets that flag only for
-a peer that advertises this bit, because an older firmware rejects unknown flags).
+a peer that advertises this bit, because an older firmware rejects unknown flags), bit12 GNSS
+input (the device takes `0x18`).
 
-`0x16` and `0x17` are optional messages: the phone only sends them to a peer that advertises
-the matching capability. An older firmware does not know the types at all, rather than
-receiving and ignoring them.
+`0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
+advertises the matching capability. An older firmware does not know the types at all, rather
+than receiving and ignoring them.
 
 ### 6.2 Heartbeat (`0x02`, fixed 11 bytes)
 
@@ -544,6 +546,36 @@ The phone wears the same theme: Official is the original black-and-white look, N
 Vice / Heat, and the phone resolves Auto from the same `ambient_night` flag the device uses, so
 both surfaces reach the same answer.
 
+### 6.13 GnssInput (`0x18`, fixed 12 bytes)
+
+The phone's GNSS speed, together with **when the fix was taken**. NavigationSnapshot's speed
+has no time, so a fix that waited in the phone's send queue still looked fresh on the device;
+the device's speed fusion (DESIGN_V2 §3.7) needs the fix time, not the arrival time.
+
+```text
+u8  revision
+u8  flags                bit0 has_speed, bit1 has_speed_accuracy; other bits refused
+u32 phone_monotonic_ms   low 32 bits of the phone's monotonic clock, stamped at encode
+u16 fix_age_ms           how many ms before phone_monotonic_ms the fix was taken
+u16 speed_cmps           cm/s, <= 10000; must be 0 without has_speed
+u16 speed_accuracy_cmps  cm/s, one sigma; must be 0 without has_speed_accuracy
+```
+
+Rules: an accuracy needs a speed, and a field without its flag must be 0, so one fix has one
+encoding.
+
+Time is only computed within each clock; **wall clocks are never compared** (DESIGN_V2 §12).
+The phone sends `fix_age_ms = now − CLLocation.timestamp`, a short difference on its own clock.
+The device takes the smallest `arrival − phone_monotonic_ms` of the last 16 messages as the
+offset between the clocks and places the fix at
+`phone_monotonic_ms − fix_age_ms + offset`. Transit only ever adds to that difference, so the
+minimum is "true offset + shortest transit", and a delay in the queue is counted as the fix's
+age. The only delay it cannot see is the shortest transit itself (a connection interval or two).
+
+The phone stamps at encode and sends at once; it does not keep a fix for a later session (an
+old fix is useless). In a session that has delivered GnssInput the device stops using
+NavigationSnapshot's speed; after a disconnect it learns the offset again.
+
 ## 7. Display Snapshot to the shared NavSnapshot
 
 The adapter must do value conversion and must not operate on `moto_ui_state_t` directly. The
@@ -634,6 +666,13 @@ SettingsState payload (night, 65%, mph, 40 deg, 0-60, music page hidden, -1.25 d
 
 ```text
 01034101283c001f83ff010105000000
+```
+
+GnssInput payload (speed and accuracy, phone_monotonic_ms=0x12345678, fix age 320 ms,
+15.25 m/s, 0.40 m/s):
+
+```text
+0103785634124001f5052800
 ```
 
 The machine-readable complete vectors are authoritative in the fixture. Changing any v1 byte

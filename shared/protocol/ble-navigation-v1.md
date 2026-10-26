@@ -166,6 +166,7 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x15` | AttitudeSample | 设备→手机 | 手机声明 bit8 时 10 Hz，无 ACK |
 | `0x16` | HomeLocation | 手机→设备 | 家地址变化时，以及每次握手后 |
 | `0x17` | SettingsState | 双向 | 设置或主题变化时，以及每次握手后 |
+| `0x18` | GnssInput | 手机→设备 | 每个 Core Location fix 一条（约 1 Hz），无 ACK |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -188,10 +189,10 @@ u16 heartbeat_interval_ms  >=250
 bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene、
 bit8 attitude telemetry、bit9 home location、bit10 device settings、
 bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标志；手机只对
-声明了它的对端置该位，旧固件会拒绝未知标志）。
+声明了它的对端置该位，旧固件会拒绝未知标志）、bit12 GNSS input（设备接收 `0x18`）。
 
-`0x16` 与 `0x17` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
-根本不认识这两种类型，而不是收到后忽略。
+`0x16`、`0x17` 与 `0x18` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
+根本不认识这些类型，而不是收到后忽略。
 
 ### 6.2 Heartbeat (`0x02`, 固定 11 字节)
 
@@ -493,6 +494,33 @@ u32 settings_revision    非零，单调
 手机端跟随同一个主题：Official 对应原版黑白，Night / Day 分别对应 Vice / Heat；
 Auto 由手机按同一个 `ambient_night` 标志解析，和设备的结果一致。
 
+### 6.13 GnssInput (`0x18`, 固定 12 字节)
+
+手机的 GNSS 速度，附带 fix **是什么时候取到的**。NavigationSnapshot 的速度没有时间，
+在手机发送队列里等过的 fix 到了设备上仍像是刚取到的；设备的速度融合（DESIGN_V2 §3.7）
+需要的是 fix 时刻，而不是到达时刻。
+
+```text
+u8  revision
+u8  flags                bit0 has_speed，bit1 has_speed_accuracy；其他位拒收
+u32 phone_monotonic_ms   手机单调时钟低 32 位，编码这一条时打的戳
+u16 fix_age_ms           fix 比 phone_monotonic_ms 早多少毫秒
+u16 speed_cmps           cm/s，<= 10000；无 has_speed 时必须为 0
+u16 speed_accuracy_cmps  cm/s，一倍标准差；无 has_speed_accuracy 时必须为 0
+```
+
+约束：有精度就必须有速度；没有对应标志的字段必须为 0，同一个 fix 只有一种编码。
+
+时间只在各自的时钟里算，**不比较墙钟**（DESIGN_V2 §12）：手机端
+`fix_age_ms = 现在 − CLLocation.timestamp`，是手机自己的一段短差值；设备端用
+`到达时刻 − phone_monotonic_ms` 在最近 16 条里的最小值作为两个时钟的偏移，
+`fix 时刻 = phone_monotonic_ms − fix_age_ms + 偏移`。传输延迟只会让这个差值变大，所以
+最小值就是"真偏移 + 最短传输"；排队造成的延迟会如实算进 fix 的年龄。看不见的只有
+最短传输本身（一两个连接间隔）。
+
+手机端在编码时打戳并立刻发送，不缓存到下一次会话（一个旧 fix 没有用）。收到过
+GnssInput 的会话里，设备不再使用 NavigationSnapshot 的速度；断开后重新学习偏移。
+
 ## 7. Display Snapshot 到共享 NavSnapshot
 
 适配器必须做值转换，不得直接操作 `moto_ui_state_t`。推荐映射如下：
@@ -576,6 +604,12 @@ SettingsState payload（夜间、65%、mph、40°、0-60、隐藏音乐页、-1.
 
 ```text
 01034101283c001f83ff010105000000
+```
+
+GnssInput payload（速度与精度、phone_monotonic_ms=0x12345678、fix_age 320 ms、15.25 m/s、0.40 m/s）：
+
+```text
+0103785634124001f5052800
 ```
 
 机器可读的完整向量以 fixture 为准。修改任何 v1 字节都应先解释兼容性影响，并由
