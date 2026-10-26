@@ -369,6 +369,36 @@ void test_a_building_footprint_interior_is_filled() {
   CHECK(pixel_at(300, 150) == kNightGround);
 }
 
+// The triangle fan is only safe for convex footprints. An L-shaped OSM
+// building must fall back to the scanline fill and still leave the notch
+// unpainted.
+void test_a_concave_footprint_uses_the_scanline_fill() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_show_buildings(1);
+  moto_ui_state_t state = base_state();
+  state.route_point_count = 2;
+  state.route_points[0] = {40, 280};
+  state.route_points[1] = {60, 280};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 6;
+  state.building_points[0] = {100, 100};
+  state.building_points[1] = {180, 100};
+  state.building_points[2] = {180, 140};
+  state.building_points[3] = {140, 140};
+  state.building_points[4] = {140, 190};
+  state.building_points[5] = {100, 190};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 6, 0};
+  moto_nav_ui_set_state(&state);
+  capture();
+
+  CHECK(pixel_at(120, 150) == kNightBlock);
+  CHECK(pixel_at(160, 120) == kNightBlock);
+  CHECK(pixel_at(160, 160) == kNightGround);
+}
+
 void test_the_map_covers_the_bottom_of_the_round_canvas() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
@@ -2264,6 +2294,7 @@ int main(int argc, char **argv) {
   test_rebuilding_the_ui_is_idempotent();
   test_buildings_are_opt_in();
   test_a_building_footprint_interior_is_filled();
+  test_a_concave_footprint_uses_the_scanline_fill();
   test_the_map_covers_the_bottom_of_the_round_canvas();
   test_the_ring_carries_progress_and_a_north_badge();
   test_a_refused_home_tap_shows_a_hint_and_fades();

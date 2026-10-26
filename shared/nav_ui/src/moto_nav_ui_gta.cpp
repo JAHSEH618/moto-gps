@@ -1519,6 +1519,85 @@ void draw_building_fills(lv_event_t *event) {
             packed_index += static_cast<std::size_t>(count) + 1U;
             continue;
         }
+        // Convex footprints are the common case, and a triangle fan is O(n)
+        // draw tasks instead of one per scanline. The fan triangles are
+        // expanded about their own centroid by a fraction of the inradius so
+        // neighbouring triangles overlap along the shared spokes; without that
+        // overlap LVGL's antialiased triangle edges leave a visible seam.
+        bool convex = count >= 3;
+        int turn_sign = 0;
+        for(std::uint8_t i = 0; i < count && convex; ++i) {
+            const lv_point_precise_t &a = points[i];
+            const lv_point_precise_t &b = points[(i + 1U) % count];
+            const lv_point_precise_t &c = points[(i + 2U) % count];
+            const float cross =
+                (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            if(std::abs(cross) < 0.01F) continue;
+            const int sign = cross > 0 ? 1 : -1;
+            if(turn_sign == 0) {
+                turn_sign = sign;
+            } else if(turn_sign != sign) {
+                convex = false;
+            }
+        }
+        if(convex) {
+            float centre_x = 0.0F;
+            float centre_y = 0.0F;
+            for(std::uint8_t i = 0; i < count; ++i) {
+                centre_x += static_cast<float>(points[i].x);
+                centre_y += static_cast<float>(points[i].y);
+            }
+            centre_x /= static_cast<float>(count);
+            centre_y /= static_cast<float>(count);
+            lv_draw_triangle_dsc_t triangle;
+            lv_draw_triangle_dsc_init(&triangle);
+            triangle.color = fill.bg_color;
+            triangle.opa = LV_OPA_COVER;
+            for(std::uint8_t i = 0; i < count; ++i) {
+                const lv_point_precise_t &a = points[i];
+                const lv_point_precise_t &b = points[(i + 1U) % count];
+                const float tri_cx =
+                    (centre_x + static_cast<float>(a.x) +
+                     static_cast<float>(b.x)) / 3.0F;
+                const float tri_cy =
+                    (centre_y + static_cast<float>(a.y) +
+                     static_cast<float>(b.y)) / 3.0F;
+                const float ab = std::hypot(
+                    static_cast<float>(b.x - a.x),
+                    static_cast<float>(b.y - a.y));
+                const float ca = std::hypot(
+                    static_cast<float>(a.x - centre_x),
+                    static_cast<float>(a.y - centre_y));
+                const float cb = std::hypot(
+                    static_cast<float>(b.x - centre_x),
+                    static_cast<float>(b.y - centre_y));
+                const float twice_area = std::abs(
+                    (static_cast<float>(a.x - centre_x) *
+                         static_cast<float>(b.y - centre_y)) -
+                    (static_cast<float>(a.y - centre_y) *
+                         static_cast<float>(b.x - centre_x)));
+                const float perimeter = ab + ca + cb;
+                const float inradius =
+                    perimeter > 0.0F ? twice_area / perimeter : 1.0F;
+                const float scale =
+                    1.0F + 0.75F / std::max(1.0F, inradius);
+                const auto expand = [&](float x, float y, int slot) {
+                    triangle.p[slot] = {
+                        static_cast<lv_value_precise_t>(
+                            area.x1 + tri_cx + (x - tri_cx) * scale),
+                        static_cast<lv_value_precise_t>(
+                            area.y1 + tri_cy + (y - tri_cy) * scale),
+                    };
+                };
+                expand(centre_x, centre_y, 0);
+                expand(static_cast<float>(a.x), static_cast<float>(a.y), 1);
+                expand(static_cast<float>(b.x), static_cast<float>(b.y), 2);
+                lv_draw_triangle(layer, &triangle);
+            }
+            packed_index += static_cast<std::size_t>(count) + 1U;
+            continue;
+        }
+
         const int32_t first_row = std::max(
             std::max<int32_t>(0, clip.y1 - area.y1),
             static_cast<int32_t>(std::ceil(minimum_y)));

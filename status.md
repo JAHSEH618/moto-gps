@@ -1014,3 +1014,11 @@ register reads have never seen a fitted cell.
 - Measured after flashing: render avg 12–13 ms (max 19–20 ms) on the stationary 24-road scene, internal heap 39–40 KiB free. The 2 fps figure is the idle map update rate, not the refresh ceiling.
 - `test_a_building_footprint_interior_is_filled` now samples the first and last rows of a merged run.
 - The 6-hour retention flag now distinguishes "lit" from "unlit": `RTC_DATA_ATTR g_screen_lit` is set at reveal and in the 60 s PWR refresh, cleared just before deep sleep. A software reset while the panel is on no longer looks like six hours of darkness, and `tlog status` reports `unlit=0` while lit.
+
+## 2026-10-27T01:15:00+09:00 — Convex building fills are a triangle fan
+
+- The merged-scanline path still cost ~478 ms per redraw on the new phone window (36 roads / 24 buildings) because the OSM footprints are rotated, so adjacent spans never matched exactly. The 24/16 window had only axis-aligned rectangles, which is why 12 ms looked representative.
+- Convex footprints now use a centroid fan: O(vertices) triangles instead of O(rows) rectangles. Each triangle is expanded about its own centroid by a fraction of its inradius so neighbouring triangles overlap along the shared spokes; without that overlap the LVGL antialiased triangle edges leave the old seam. Concave footprints keep the scanline fallback.
+- New `test_a_concave_footprint_uses_the_scanline_fill` covers an L-shaped building and asserts both legs fill while the notch stays ground.
+- Board measurement with the installed iPhone build sending 36 roads / 24 buildings: steady 11–13 ms average, max ~20 ms. The boot/map-scene transition still has a one-off ~0.5 s frame while the whole map is bound for the first time.
+- The new iPhone app is installed (bundle `com.friedhelmliu.motogps`); the device log now shows `roads=36/149 buildings=24/115` instead of the old 24/16 window.
