@@ -177,6 +177,10 @@ python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
 
 或在串口输入 `tlog clear`：固件写 NVS 标志并重启，`app_main` 在显示、BLE、IMU 任务启动前擦除整个 16 MB 分区，然后从 0x0 重新录制。擦除期间不要断电；失败时标志保留，下次开机会重试。
 
+**6 小时未点亮自动清理。** 屏幕点亮时把当前 RTC 计数写进 `RTC_DATA_ATTR`（每 60 s 刷新，进入深度睡眠前再写一次）。下一次启动时，如果该计数显示屏幕已熄灭超过 6 小时，`app_main` 会在显示、BLE、IMU 任务启动前擦除 tlog，并在串口打印 `screen unlit for ... min; clearing tlog`。`tlog status` 可查看当前未点亮时长和是否会触发清理。
+
+限制：这块板没有 RTC 芯片（0x51 PCF85063 在扫描中不存在），所以该机制依赖 ESP32 的 RTC 计数器，能跨深度睡眠，**不能跨 AXP2101 完全断电**；完全断电后 RTC 域清零，只能当作一次全新启动，不会误删日志。要在完全断电后仍计 6 小时，需要手机下发墙钟时间或补 RTC 芯片。
+
 | 抓 | 期望 |
 |---|---|
 | `moto_replay` 首行 | `# mt r1 blocks` |

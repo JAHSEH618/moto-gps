@@ -1000,3 +1000,10 @@ register reads have never seen a fitted cell.
 - `tlog clear` on the serial console writes NVS `moto_device/tlog.clear` and reboots. `app_main` checks the flag after `load_settings()` and before `board_port_init()`/BLE/IMU, so `TlogLogger::erase_all()` erases the 16 MB partition in 1 MiB chunks with no live task to stall; success clears the flag, failure keeps it for the next boot.
 - `TlogLogger::erase_all()` resets block/sequence state; `begin()` starts again at 0x0. The host `parttool.py erase_partition` path remains for a device that cannot boot.
 - `docs/BENCH_TEST_PLAN.md` §5 documents both paths. Firmware rebuilt: `moto_gps_esp32.bin` 0x5081d0, 16% of the 6 MiB slot free.
+
+## 2026-10-27T00:50:00+09:00 — Six-hour unlit tlog retention
+
+- The screen stamps `esp_rtc_get_time_us()` into `RTC_DATA_ATTR` when it is revealed, refreshes it every 60 s in the PWR task, and stamps it again before deep sleep. `app_main` checks the gap before display/BLE/IMU startup: if the screen has been unlit for >= 6 h, it erases the tlog partition there and then, so the next lit session starts at 0x0.
+- The RTC counter and `RTC_DATA_ATTR` survive deep sleep but not an AXP2101 full power cut; the board has no PCF85063 (0x51 absent). A cold boot therefore starts without a last-lit record instead of guessing. This limit is documented in BENCH_TEST_PLAN §5.
+- `tlog status` prints ready/full/dirty/records/blocks, the current unlit duration and whether the 6 h rule would fire.
+- Rebuilt: `moto_gps_esp32.bin` 0x5084a0, 16% of the 6 MiB slot free; RTC data section 0x10 bytes at 0x50000000.

@@ -21,6 +21,8 @@
 #include "phone_nav_bridge.h"
 #include "settings_store.h"
 #include "esp_app_desc.h"
+#include "esp_attr.h"
+#include "esp_rtc_time.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +46,33 @@ static TaskHandle_t g_task_cmd = nullptr;
 static TaskHandle_t g_task_ui_flags = nullptr;
 static TaskHandle_t g_task_demo = nullptr;
 static TaskHandle_t g_task_power = nullptr;
+
+// "Screen unlit for 6 hours clears the tlog" retention. RTC memory survives
+// deep sleep, and the RTC counter keeps counting through it, so this measures
+// the screen-off interval without an RTC chip. A full power cut loses the RTC
+// domain; there is no wall clock on this board to recover that interval, so a
+// cold boot starts with no last-lit record rather than guessing.
+constexpr std::uint32_t kScreenLitMagic = 0x4D4F544FU;  // "MOTO"
+constexpr std::uint64_t kUnlitClearAfterUs =
+    6ULL * 60ULL * 60ULL * 1'000'000ULL;
+RTC_DATA_ATTR static std::uint64_t g_last_lit_rtc_us = 0;
+RTC_DATA_ATTR static std::uint32_t g_last_lit_magic = 0;
+
+void note_screen_lit() {
+  g_last_lit_rtc_us = esp_rtc_get_time_us();
+  g_last_lit_magic = kScreenLitMagic;
+}
+
+bool screen_unlit_for_clear(std::uint64_t* elapsed_us = nullptr) {
+  if (g_last_lit_magic != kScreenLitMagic || g_last_lit_rtc_us == 0) {
+    return false;
+  }
+  const std::uint64_t now_us = esp_rtc_get_time_us();
+  if (now_us <= g_last_lit_rtc_us) return false;
+  const std::uint64_t elapsed = now_us - g_last_lit_rtc_us;
+  if (elapsed_us != nullptr) *elapsed_us = elapsed;
+  return elapsed >= kUnlitClearAfterUs;
+}
 // Bench-only lean sweep: a repeatable 40 Hz UI load for the page frame-rate
 // measurement. Zero means off.
 static volatile std::uint32_t g_ui_bench_lean_until_ms = 0;
@@ -318,6 +347,18 @@ void serial_command_task(void* context) {
       ESP_LOGW(kTag, "tlog clear requested; rebooting to erase the partition");
       vTaskDelay(pdMS_TO_TICKS(100));
       esp_restart();
+    } else if (std::strcmp(line, "tlog status") == 0) {
+      std::uint64_t unlit_us = 0;
+      const bool unlit = screen_unlit_for_clear(&unlit_us);
+      ESP_LOGI(kTag,
+               "tlog status: ready=%d full=%d dirty=%d records=%lu blocks=%lu "
+               "unlit=%llu s unlit_clear=%d",
+               tlog.ready() ? 1 : 0, tlog.full() ? 1 : 0,
+               tlog.dirty() ? 1 : 0,
+               static_cast<unsigned long>(tlog.records()),
+               static_cast<unsigned long>(tlog.blocks()),
+               static_cast<unsigned long long>(unlit_us / 1'000'000ULL),
+               unlit ? 1 : 0);
     } else if (std::strncmp(line, "ui page ", 8) == 0) {
       // Bench-only page switch: lets the frame-time window be attributed to a
       // page without touching the screen. The touch path stays authoritative
@@ -728,11 +769,18 @@ void power_button_task(void*) {
   // The bezel ring (DESIGN_V2 §2.9). The gauge moves by a percent every few
   // minutes, so five seconds is plenty and keeps the shared I2C bus quiet.
   constexpr std::uint64_t kBatteryPollMs = 5'000;
+  constexpr std::uint64_t kScreenLitNoteMs = 60'000;
   std::uint64_t battery_polled_ms = 0;
+  std::uint64_t screen_lit_noted_ms = 0;
   bool battery_logged = false;
   while (true) {
     const std::uint64_t now_ms =
         static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
+    if (screen_lit_noted_ms == 0 ||
+        now_ms - screen_lit_noted_ms >= kScreenLitNoteMs) {
+      screen_lit_noted_ms = now_ms;
+      note_screen_lit();
+    }
     if (battery_polled_ms == 0 || now_ms - battery_polled_ms >= kBatteryPollMs) {
       battery_polled_ms = now_ms;
       board_power_t power{};
@@ -785,8 +833,10 @@ void power_button_task(void*) {
       while (board_port_power_button_pressed()) {
         vTaskDelay(pdMS_TO_TICKS(20));
       }
-      // Flush the partial 4 KB sector before the rail drops: up to 2 s of
-      // records live in RAM between flushes.
+      // The screen is about to go dark; stamp that moment for the unlit
+      // retention clock, then flush the partial 4 KB sector before the rail
+      // drops (up to 2 s of records live in RAM between flushes).
+      note_screen_lit();
       tlog.flush();
       ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
           1ULL << 3, ESP_EXT1_WAKEUP_ANY_HIGH));
@@ -814,15 +864,25 @@ extern "C" void app_main(void) {
   const moto::device::DeviceSettings boot_settings =
       moto::device::load_settings();
 
-  // `tlog clear` is deferred to here: no display, BLE or IMU task exists yet,
-  // so the multi-second cache-off erase cannot drop samples or stall a frame.
-  if (moto::device::tlog_clear_requested()) {
+  // `tlog clear` and the 6-hour unlit retention both erase here: no display,
+  // BLE or IMU task exists yet, so the multi-second cache-off erase cannot
+  // drop samples or stall a frame.
+  std::uint64_t unlit_us = 0;
+  const bool unlit_clear = screen_unlit_for_clear(&unlit_us);
+  const bool requested_clear = moto::device::tlog_clear_requested();
+  if (unlit_clear) {
+    ESP_LOGW(kTag,
+             "screen unlit for %llu min (limit 360); clearing tlog",
+             static_cast<unsigned long long>(unlit_us / 60'000'000ULL));
+  }
+  if (requested_clear || unlit_clear) {
     ESP_LOGW(kTag, "tlog clear requested; erasing the 16 MB partition");
     if (tlog.erase_all()) {
-      moto::device::clear_tlog_clear_request();
+      if (requested_clear) moto::device::clear_tlog_clear_request();
       ESP_LOGI(kTag, "tlog partition erased; recording will start at 0x0");
     } else {
-      ESP_LOGE(kTag, "tlog erase failed; the request stays for the next boot");
+      ESP_LOGE(kTag,
+               "tlog erase failed; a requested clear stays for the next boot");
     }
   }
 
@@ -868,6 +928,10 @@ extern "C" void app_main(void) {
   if (reveal_result != ESP_OK) {
     ESP_LOGE(kTag, "could not reveal boot animation: %s",
              esp_err_to_name(reveal_result));
+  } else {
+    // This is the first moment the panel is actually lit. The 6-hour
+    // retention clock starts here, not at chip reset.
+    note_screen_lit();
   }
   board_port_unlock();
 
