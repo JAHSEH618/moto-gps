@@ -775,6 +775,50 @@ pointed at an old `~/CodeSpace/esp/esp-idf`; clearing
 `platforms/esp32/build/bootloader*` fixed it. **Not verified:** nothing in
 this section has run on the board or against a real iPhone.
 
+## 2026-10-26T16:02:50+09:00 — Link cover, Lean speed and Lean redesign
+
+**The waiting screens are a GTA III cover.** CONNECT / LINKING / LINKED /
+READY TO RIDE / BUILDING ROUTE drop the slash-and-chip poster for the boot's
+box art: a 6 px gutter (white by night, black by day) frames a pager panel —
+a black handset whose lit green LCD carries the Chinese instruction, kicker
+above — the two-line headline on the paper, and the city under an orange dusk
+sky. A pager cursor blinks while the cover waits on the rider, the boot's gold
+bar steps while it waits on the system, and PHONE LINKED turns HUD gold by
+night. The first draft nested a second clip_corner inside the overlay and
+overflowed the 8 KiB LVGL render task on the board (reboot loop); the panels
+are now plain rectangles cut to the circle by two rings drawn over them, and
+every element is a direct child of the overlay. Measured on the board with a
+forced cross-fade every 3 s: 2204 B of render stack free, against 1852 B for
+the old cover.
+
+**Lean frame time, measured on the board.** The ±30°/2 s `ui bench lean` ran
+at 15 fps, 53 ms a frame. Fixed in order of what the board showed: per-frame
+dirty areas kept inside the casing so the rim is never redrawn (the rim strips
+were ~16 ms); four horizon strips instead of eight; frame and protractor moved
+below the scene, which now ends at the casing's inner edge; the scene's
+circle-radius paper is drawn as a plain fill for areas inside the disc
+(`LV_EVENT_DRAW_TASK_ADDED`); motion dirtied once per refresh from what was
+last drawn; the idle progress canvas hidden. Also found: `apply_debug_hidden()`
+re-showed the Lean disc on every theme change, and `reset_ui_state()`'s memset
+zeroed `lean_scene_dirty`, so a tree built before the IMU's first sample never
+showed NO IMU. A larger LVGL circle cache was tried and changed nothing.
+
+**Lean redesign.** No horizon, no sun, no rim blip and no bike figure: a
+segmented arc across the top (twelve 5° segments a side, filled in quarter
+degrees; HUD orange, red past 45°, the peak's segment held in gold), the
+unsigned numeral in the middle with L/R peaks beside it, and the dusk skyline
+under it, its feet trimmed by a strip of casing that per-frame areas never
+reach. Same bench afterwards: 16 ms render, 34 fps, 1.8 dirty areas a frame.
+
+**Verification:** native 15/15, including new `test_lean_sweep_repaints_inside_the_casing`
+(every flushed area inside r < 197 through ±52°, at most six a frame) and
+`test_lean_samples_between_refreshes_leave_no_residue` (checked against a
+deliberately broken invalidation). Firmware built into `build-codespace` and
+app-flashed; heap 56 KiB free / 24 KiB minimum as before. `app_main.cpp`'s
+uncommitted HEAPPROBE lines were built in and not touched. **Not verified:** the
+cover and the new Lean page have only been seen as PPM dumps, not on the glass,
+and the link states only through the dump harness (no phone was connected).
+
 ## 2026-10-26T18:10:00+09:00 — Lean: the screen's top is QMI +x, and CAL can capture
 
 **Symptom.** Flat on the desk, tilting forward/back moved the Lean number

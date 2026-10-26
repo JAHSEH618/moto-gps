@@ -46,9 +46,13 @@ constexpr std::size_t kFrameBytes = static_cast<std::size_t>(kWidth) *
 
 std::vector<std::uint8_t> shadow_frame;
 std::uint64_t flush_count = 0;
+// When set, every flushed area is appended here: the dirty-area tests read
+// what LVGL actually repainted, not what the UI meant to invalidate.
+std::vector<lv_area_t>* flush_log = nullptr;
 
 void flush_cb(lv_display_t* display, const lv_area_t* area,
               std::uint8_t* px_map) {
+  if (flush_log != nullptr) flush_log->push_back(*area);
   // Partial rendering: stitch each flushed area into the shadow frame so a
   // complete deterministic frame is always available for hashing.
   const int bytes_per_pixel = LV_COLOR_DEPTH / 8;
@@ -130,6 +134,17 @@ std::uint16_t pixel_at(int x, int y) {
   std::uint16_t pixel = 0;
   std::memcpy(&pixel, shadow_frame.data() + offset, sizeof(pixel));
   return pixel;
+}
+
+// Pixels of exactly `color` inside [x1, x2] x [y1, y2].
+int count_pixels_in(int x1, int y1, int x2, int y2, std::uint16_t color) {
+  int count = 0;
+  for (int y = y1; y <= y2; ++y) {
+    for (int x = x1; x <= x2; ++x) {
+      if (pixel_at(x, y) == color) ++count;
+    }
+  }
+  return count;
 }
 
 // A single pixel on a diagonal arc can land on an antialiased edge, so the
@@ -732,14 +747,102 @@ void test_lean_page_without_attitude_keeps_the_poster() {
   state.has_attitude = 0;
   moto_nav_ui_set_state(&state);
   capture();
-  // The sun is still on the world line: an absent attitude is "--", not an
-  // empty page with a NO IMU plate where the instrument should be.
-  CHECK(has_color_within(111, 295, rgb565(0xD2, 0xAD, 0x6A), 10));
+  // The instrument is still there: an absent attitude is a dark arc and a
+  // NO IMU plate where the numeral goes, not an empty disc.
+  CHECK(pixel_at(240, 72) == rgb565(0x2A, 0x2A, 0x2A));
+  CHECK(count_pixels_in(180, 210, 290, 240, rgb565(0xF2, 0xEE, 0xE4)) > 40);
   CHECK(pixel_at(kWidth / 2, kHeight / 2) !=
         rgb565(0x00, 0x00, 0x00));
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
 }
+
+// The Lean page's frame time on the board is set by how many areas it dirties
+// and whether any of them reaches the rim: each area costs a tree walk and a
+// QSPI flush, and one that touches the rim re-strokes band, casing and
+// protractor. A sweep from upright to full lean and over to the other side
+// must therefore repaint only inside the casing, in a bounded number of areas.
+void test_lean_sweep_repaints_inside_the_casing() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_LEAN;
+  state.has_attitude = 1;
+  state.lean_deg = 0.0F;
+  moto_nav_ui_set_state(&state);
+  // Let the page dots fade first; they sit at the rim and are not the lean.
+  pump(1'200);
+
+  std::vector<lv_area_t> areas;
+  std::size_t most_per_frame = 0;
+  bool reached_rim = false;
+  const double cx = kWidth / 2.0;
+  const double cy = kHeight / 2.0;
+  constexpr double kCasingInner = 197.0;
+  float lean = 0.0F;
+  float step = 1.5F;
+  for (int frame = 0; frame < 140; ++frame) {
+    lean += step;
+    if (lean >= 52.0F || lean <= -52.0F) step = -step;
+    state.lean_deg = lean;
+    areas.clear();
+    flush_log = &areas;
+    moto_nav_ui_set_state(&state);
+    pump(5);  // one 25 ms refresh
+    flush_log = nullptr;
+    most_per_frame = std::max(most_per_frame, areas.size());
+    for (const lv_area_t& area : areas) {
+      const double xs[2] = {area.x1 - cx, area.x2 + 1 - cx};
+      const double ys[2] = {area.y1 - cy, area.y2 + 1 - cy};
+      for (double x : xs) {
+        for (double y : ys) {
+          if (std::sqrt(x * x + y * y) >= kCasingInner) {
+            if (!reached_rim) {
+              std::cerr << "lean " << lean << " repainted the rim: "
+                        << area.x1 << ',' << area.y1 << '-' << area.x2 << ','
+                        << area.y2 << '\n';
+            }
+            reached_rim = true;
+          }
+        }
+      }
+    }
+  }
+  CHECK(!reached_rim);
+  // A changed arc segment or two a side, and the numeral's old and new box
+  // on the frames where the number changes.
+  CHECK(most_per_frame <= 6);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+}
+
+// The sensor runs faster than the panel, so the page dirties the motion once
+// per refresh, from what it last drew to the newest sample. Several samples
+// between two refreshes must leave exactly the frame a full repaint gives:
+// no horizon, sun or blip left behind at a position that was never drawn.
+void test_lean_samples_between_refreshes_leave_no_residue() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_DAY);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_LEAN;
+  state.has_attitude = 1;
+  state.lean_deg = -8.0F;
+  moto_nav_ui_set_state(&state);
+  capture();
+  const float burst[] = {4.0F, 19.0F, 33.0F, 27.5F};
+  for (float lean : burst) {
+    state.lean_deg = lean;
+    moto_nav_ui_set_state(&state);
+  }
+  const Frame incremental = capture();
+  lv_obj_invalidate(lv_screen_active());
+  const Frame repainted = capture();
+  CHECK(incremental.hash == repainted.hash);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+}
+
+
 
 void test_clearing_geometry_leaves_no_residue() {
   moto_ui_state_t with_route = base_state();
@@ -1198,6 +1301,24 @@ void dump_review_frames(const char *dir) {
     }
   }
 
+  // The lean page through a corner: upright, mid-corner, past the hot mark,
+  // and back the other way, so the held peaks show on both sides.
+  {
+    moto_nav_ui_set_page(MOTO_UI_PAGE_LEAN);
+    moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+    moto_ui_state_t corner = state;
+    corner.page = MOTO_UI_PAGE_LEAN;
+    const float leans[] = {0.0F, 24.0F, 52.0F, -31.0F};
+    for (float lean : leans) {
+      corner.lean_deg = lean;
+      moto_nav_ui_set_state(&corner);
+      pump(80);
+      char path[512];
+      std::snprintf(path, sizeof(path), "%s/lean-at-%+03d.ppm", dir,
+                    static_cast<int>(lean));
+      write_ppm_to(path);
+    }
+  }
   // The no-IMU lean page is a distinct design state: the poster must still be
   // there, with the NO IMU plate instead of a number.
   state.page = MOTO_UI_PAGE_LEAN;
@@ -1228,21 +1349,39 @@ void dump_review_frames(const char *dir) {
   empty.home_x = 233 - 900;
   empty.home_y = 233 + 500;
   moto_nav_ui_set_state(&empty);
+  // Every link state, in both papers: offline, linking, the linked flash
+  // (inside its 920 ms hold), ready, and building a route.
   const struct {
     const char *name;
     moto_ui_phone_connection_t connection;
+    std::uint8_t route_in_flight;
+    int cycles;
   } lifecycle[] = {
-      {"life-offline", MOTO_UI_PHONE_OFFLINE},
-      {"life-connecting", MOTO_UI_PHONE_CONNECTING},
-      {"life-ready", MOTO_UI_PHONE_ONLINE},
+      {"offline", MOTO_UI_PHONE_OFFLINE, 0, 120},
+      {"connecting", MOTO_UI_PHONE_CONNECTING, 0, 120},
+      {"connected", MOTO_UI_PHONE_ONLINE, 0, 60},
+      {"ready", MOTO_UI_PHONE_ONLINE, 0, 400},
+      {"planning", MOTO_UI_PHONE_ONLINE, 1, 120},
   };
-  for(const auto &step : lifecycle) {
-    moto_nav_ui_set_phone_connection(step.connection);
+  const ThemeCase link_themes[] = {{"day", MOTO_UI_THEME_GTA_DAY},
+                                   {"night", MOTO_UI_THEME_GTA_NIGHT}};
+  for (const ThemeCase &theme : link_themes) {
+    moto_nav_ui_set_theme(theme.theme);
+    for (const auto &step : lifecycle) {
+      moto_nav_ui_set_phone_connection(step.connection);
+      empty.route_request_in_flight = step.route_in_flight;
+      moto_nav_ui_set_state(&empty);
+      pump(step.cycles);
+      char path[512];
+      std::snprintf(path, sizeof(path), "%s/life-%s-%s.ppm", dir, theme.name,
+                    step.name);
+      write_ppm_to(path);
+    }
+    // Drop the link so the next paper starts from offline again.
+    empty.route_request_in_flight = 0;
+    moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_OFFLINE);
     moto_nav_ui_set_state(&empty);
-    pump(step.connection == MOTO_UI_PHONE_ONLINE ? 400 : 120);
-    char path[512];
-    std::snprintf(path, sizeof(path), "%s/%s.ppm", dir, step.name);
-    write_ppm_to(path);
+    pump(120);
   }
 
   // The boot sequence is a timed series of cuts: dump each stage.
@@ -1784,6 +1923,8 @@ int main(int argc, char **argv) {
   test_auto_theme_follows_the_ambient_night_flag();
   test_performance_and_lean_pages_render_attitude();
   test_lean_page_without_attitude_keeps_the_poster();
+  test_lean_sweep_repaints_inside_the_casing();
+  test_lean_samples_between_refreshes_leave_no_residue();
   test_lean_press_durations_dispatch_actions();
   test_lean_status_slot_reports_cal_and_fallback();
   test_clearing_geometry_leaves_no_residue();

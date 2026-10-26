@@ -16,13 +16,21 @@ p.5.0|lv_label|-|339,150-360,176|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 p.6|lv_obj|moto-radar-ring|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
 p.7|lv_obj|moto-compass-north|15,220-40,245|bg=fff2eee4/opa255|bd=ff0a0a0a/3|opa=255|r=32767|S-G-
 p.7.0|lv_label|-|24,224-32,242|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.10|lv_obj|-|0,0-465,465|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=32767|-CGE
-p.10.0|lv_obj|moto-skyline|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.10.1|lv_obj|-|-13,318-452,356|bg=ff111111/opa255|bd=ff000000/0|opa=255|r=0|S-G-
-p.10.2|lv_label|-|39,135-426,266|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.10.3|lv_label|-|78,347-388,376|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.10.4|lv_obj|-|136,378-329,416|bg=ff111111/opa255|bd=ff000000/0|opa=255|r=0|S-G-
-p.10.4.0|lv_label|-|167,388-298,406|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.10|lv_obj|-|0,0-465,465|bg=ff000000/opa255|bd=ff000000/0|opa=255|r=32767|-CGE
+p.10.0|lv_obj|-|26,26-439,439|bg=ff111111/opa255|bd=ff000000/0|opa=255|r=32767|--G-
+p.10.1|lv_obj|-|32,32-433,161|bg=ff4e4e4a/opa255|bd=ff000000/0|opa=255|r=0|--G-
+p.10.2|lv_obj|-|32,168-433,299|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=0|--G-
+p.10.3|lv_obj|-|32,306-433,433|bg=fff08a3c/opa255|bd=ff000000/0|opa=255|r=0|--G-
+p.10.4|lv_obj|-|91,92-374,151|bg=ff060606/opa255|bd=ff5a5a56/2|opa=255|r=10|--G-
+p.10.5|lv_obj|-|99,100-348,143|bg=ffb4c47a/opa255|bd=ff6e7e44/2|opa=255|r=3|--G-
+p.10.6|lv_obj|-|356,105-367,116|bg=ff2a2a28/opa255|bd=ff5a5a56/1|opa=255|r=32767|--G-
+p.10.7|lv_obj|-|356,125-367,136|bg=ff2a2a28/opa255|bd=ff5a5a56/1|opa=255|r=32767|--G-
+p.10.8|lv_label|-|111,107-340,136|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.10.10|lv_label|-|167,62-298,80|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.10.11|lv_label|-|39,168-426,299|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.10.12|lv_obj|moto-skyline|32,306-433,433|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.10.15|lv_obj|-|26,26-439,439|bg=ff111111/opa0|bd=ff111111/6|opa=255|r=32767|--G-
+p.10.16|lv_obj|-|0,0-465,465|bg=ff000000/opa0|bd=ff000000/26|opa=255|r=32767|--G-
 page 1
 p|lv_obj|-|0,0-465,465|bg=ff000000/opa255|bd=ff000000/0|opa=255|r=0|-CG-
 p.0|lv_obj|-|26,26-439,439|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=32767|S-G-
@@ -50,16 +58,15 @@ p.7.0|lv_label|-|150,347-237,373|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 p.8|lv_label|-|290,347-289,373|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 page 2
 p|lv_obj|moto-lean-page|0,0-465,465|bg=ff000000/opa255|bd=ff000000/0|opa=255|r=0|-CG-
-p.0|lv_obj|-|26,26-439,439|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=32767|S-G-
-p.1|lv_obj|-|26,26-439,439|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=32767|--G-
-p.2|lv_obj|-|98,93-214,126|bg=ff111111/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.2.0|lv_label|-|136,97-176,123|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.3|lv_obj|-|243,93-359,126|bg=ff111111/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.3.0|lv_label|-|273,97-328,123|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.5|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.7|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
-p.8|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.9|lv_obj|-|267,34-280,47|bg=fff08a3c/opa255|bd=ff0a0a0a/3|opa=255|r=32767|S-G-
+p.1|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.2|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.3|lv_obj|-|36,36-429,429|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=32767|--G-
+p.4|lv_obj|moto-skyline|0,22-465,487|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.5|lv_obj|-|0,296-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.6|lv_obj|-|24,206-140,239|bg=ff111111/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.6.0|lv_label|-|62,210-102,236|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.7|lv_obj|-|326,206-442,239|bg=ff111111/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.7.0|lv_label|-|356,210-411,236|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 page 3
 p|lv_obj|moto-gg-page|0,0-465,465|bg=ff000000/opa255|bd=ff000000/0|opa=255|r=0|-CG-
 p.0|lv_obj|-|26,26-439,439|bg=ffefece4/opa255|bd=ff000000/0|opa=255|r=32767|S-G-

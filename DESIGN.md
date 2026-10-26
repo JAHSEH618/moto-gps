@@ -173,9 +173,10 @@ No texture inside the circle in either GTA theme — GTA III's radar is flat, an
 | Rules | 1px default, 2px after a block that ends a group. Never 0.5px, never shadowed. |
 | Map content | Radar draws blocks and streets in `ink` at 10–22%: a minimap silhouette, not a blank disc. |
 | Rider | A chunky arrow, not a dot. Heading is part of the readout. |
-| Dusk skyline (round screen) | Liberty City at dusk along the bottom of the launch, compass and music pages and the waiting screen: two rows of towers, far row lighter, gold lamps by night, pale print greys with paper windows by day. Frame, not data: it sits between the paper disc and the casing and below every reading, and is static. Not on navigation (the map is the world) or lean (the horizon is). |
+| Dusk skyline (round screen) | Liberty City at dusk along the bottom of the launch, compass, lean and music pages and the waiting screen: two rows of towers, far row lighter, gold lamps by night, pale print greys with paper windows by day. Frame, not data: it sits between the paper disc and the casing and below every reading, and is static. Not on navigation (the map is the world). |
 | HUD labels (round screen) | State labels (`LAUNCH`, `L`/`R` maxima, `CAL`, `NO IMU`, music source) are cased HUD type with no box, as GTA III's HUD never boxes a label. Counter slabs (`BEST`, `KM/H`) keep their block. |
 | Boot (round screen) | A GTA III loading screen in hard cuts, no fades: bezel black, then the box-art panel grid (radar with route and rider, safehouse, the city under a HUD-orange dusk sky) at 80 ms, the cream MOTO / GPS logo cased in black with a hard drop at 380 ms, then a gold loading bar stepping eight times from 520 ms. It measures the 1.25 s boot hold and claims nothing else. |
+| Link cover (round screen) | The waiting screens (CONNECT / LINKING / LINKED / READY TO RIDE / BUILDING ROUTE) are the same box art: a 6 px `band` gutter frames three panels — GTA III's pager (black handset, lit green LCD carrying the Chinese instruction, kicker `PHONE LINK` / `READY` / `ROUTE` above it), the two-line headline on the paper, and the city under a HUD-orange dusk sky. A pager cursor blinks while the cover waits on the rider; the boot's gold bar steps (eight steps, a beat full, again) while it waits on the system. `PHONE LINKED` turns HUD gold by night. The pager and dusk panel keep their colours in both themes. |
 
 ## Reference grammar (what we copied, and from where)
 
@@ -324,7 +325,7 @@ appears only where the map is the content. The bezel never changes.
 | Page | One idea |
 |---|---|
 | Navigation | The map is the screen. Distance is the only large number; the maneuver glyph and the limit sign are the only props. |
-| Lean | **An artificial horizon.** The disc is the bike; the world tilts and the sun rides the horizon. The rim blip marks the angle; `+42°` is printed on the world. |
+| Lean | **A race lean gauge.** A segmented arc across the top, twelve 5° segments a side to 60°, fills to the lean in quarter degrees: HUD orange, HUD red past 45°, and the segment holding each side's peak keeps its unlit part in clock gold. The unsigned `42°` is the poster in the middle, `L`/`R` peaks beside it, Liberty City at dusk underneath. No horizon and no bike figure: the arc is the scale and the number is the reading. |
 | Speed | The band is the speedometer: cream fills clockwise from twelve, magenta is what is left. |
 | Compass | A rose on the band, a giant cardinal in the middle, the bearing in magenta beneath. |
 | Launch (0–100) | A stopwatch, a shift strip, and the best time. Nothing else. |

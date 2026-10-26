@@ -84,6 +84,9 @@ struct MapPalette {
     // Poster-scale numerals. GTA III prints its HUD readouts in colour (the
     // clock in gold), never plain white; by day the paper needs black ink.
     lv_color_t hud;
+    // The Lean arc: an unlit segment, and a lit one past 45 degrees.
+    lv_color_t gauge_off;
+    lv_color_t gauge_hot;
 };
 
 // GTA III, Liberty City by day: the cover's white field as the paper and the
@@ -120,6 +123,8 @@ constexpr MapPalette kGtaDayPalette = {
         LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // other: almost the block
     },
     LV_COLOR_MAKE(0x11, 0x11, 0x11),  // hud numerals: ink
+    LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // gauge off: a pale print grey
+    LV_COLOR_MAKE(0xC8, 0x32, 0x1E),  // gauge hot: HUD red, darkened for paper
 };
 
 // GTA III, Liberty City at night: true black, box-art white type, and the
@@ -155,6 +160,8 @@ constexpr MapPalette kGtaNightPalette = {
         LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: into the dark
     },
     LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // hud numerals: clock gold
+    LV_COLOR_MAKE(0x2A, 0x2A, 0x2A),  // gauge off: unlit glass
+    LV_COLOR_MAKE(0xFF, 0x4B, 0x3A),  // gauge hot: HUD red
 };
 
 // Frame colours shared by both themes. Gold is the HUD clock: the boot card's
@@ -278,6 +285,12 @@ constexpr double px(double value) {
            static_cast<double>(kDesignWidth);
 }
 
+// What the Lean arc shows: segments lit per side, and each side's held peak.
+struct LeanArcState {
+    int lit[2];   // fill in quarter degrees; [0] left, [1] right
+    int peak[2];  // segment holding the side's peak, 0 for none
+};
+
 struct MapPolyline {
     const lv_point_precise_t *points = nullptr;
     std::uint16_t count = 0;
@@ -385,13 +398,23 @@ struct Ui {
     // navigation page so the speed and compass tools remain independently
     // usable while the phone is disconnected.
     lv_obj_t *nav_lifecycle = nullptr;
-    lv_obj_t *nav_lifecycle_symbol = nullptr;
     lv_obj_t *nav_lifecycle_title = nullptr;
+    // The pager's LCD line: the instruction, in Chinese.
     lv_obj_t *nav_lifecycle_subtitle = nullptr;
     lv_obj_t *nav_lifecycle_kicker = nullptr;
     lv_timer_t *nav_lifecycle_timer = nullptr;
-    lv_obj_t *lifecycle_rules[2]{};
-    lv_obj_t *lifecycle_slash = nullptr;
+    // The cover's gutter disc and its three panels (pager, title, city),
+    // repainted on a theme switch.
+    lv_obj_t *lifecycle_cover[2]{};
+    lv_obj_t *lifecycle_panels[3]{};
+    // Boot-style loading bar in the city panel, for states that wait on the
+    // system; a blinking LCD cursor for states that wait on the rider.
+    lv_obj_t *lifecycle_bar = nullptr;
+    lv_obj_t *lifecycle_bar_fill = nullptr;
+    lv_obj_t *lifecycle_cursor = nullptr;
+    const char *lifecycle_message = "";
+    std::uint32_t lifecycle_started_ms = 0;
+    int lifecycle_bar_steps = -1;
     ThemedText themed_text[kThemedTextCapacity]{};
     std::uint8_t themed_text_count = 0;
 
@@ -408,7 +431,6 @@ struct Ui {
     moto_ui_phone_connection_t phone_connection = MOTO_UI_PHONE_OFFLINE;
     LifecycleVisual lifecycle_visual = LifecycleVisual::Hidden;
     LifecycleVisual lifecycle_target = LifecycleVisual::Hidden;
-    std::uint16_t lifecycle_phase_deg = 0;
     bool lifecycle_success_active = false;
     bool navigation_has_guidance = false;
     bool navigation_route_request_in_flight = false;
@@ -460,7 +482,6 @@ struct Ui {
     char lean_text[24]{};
     lv_obj_t *lean_scene = nullptr;
     lv_obj_t *lean_marks = nullptr;
-    lv_obj_t *lean_blip = nullptr;
     lv_obj_t *lean_max_l_plate = nullptr;
     lv_obj_t *lean_max_r_plate = nullptr;
     lv_obj_t *lean_max_l = nullptr;
@@ -476,6 +497,12 @@ struct Ui {
     // hysteresis). The horizon, sun and blip follow lean_deg every frame.
     std::uint32_t lean_text_tick_ms = 0;
     float lean_text_deg = 0.0F;
+    // The lean the horizon was last dirtied for, and whether a newer sample
+    // is waiting for the next refresh (lean_refresh_start()).
+    float lean_drawn_deg = 0.0F;
+    LeanArcState lean_drawn_arc{};
+    bool lean_motion_pending = false;
+    lv_display_t *lean_display = nullptr;
 
     lv_obj_t *compass_heading = nullptr;
     lv_obj_t *compass_cardinal = nullptr;
@@ -559,6 +586,10 @@ void reset_ui_state() {
     ui.palette = kGtaDayPalette;
     ui.lifecycle_visual = LifecycleVisual::Hidden;
     ui.lifecycle_target = LifecycleVisual::Hidden;
+    // The Lean page's first state must apply its text even when it has no
+    // attitude; zeroed, a tree built before the IMU's first sample never
+    // showed NO IMU.
+    ui.lean_scene_dirty = true;
     // Force the first geometry payload to bind every mutable LVGL line even
     // when its protocol revision happens to start at zero.
     ui.nav_route_generation = ~std::uint32_t{0};
@@ -572,7 +603,16 @@ void reset_ui_state() {
 // invalidates those pointers. Clearing the pointers is what stops a late
 // snapshot from reaching freed LVGL objects; clearing `ui.live` is what stops
 // a late touch or a second create() from doing the same thing by another door.
+void lean_refresh_start(lv_event_t *);
+
 void teardown_ui() {
+    // The display outlives every tree; its hook must not call into a reset
+    // Ui or into the classic backend's screen.
+    if(ui.lean_display != nullptr) {
+        lv_display_remove_event_cb_with_user_data(ui.lean_display,
+                                                  lean_refresh_start, nullptr);
+        ui.lean_display = nullptr;
+    }
     if(ui.page_dots_timer != nullptr) {
         lv_timer_delete(ui.page_dots_timer);
         ui.page_dots_timer = nullptr;
@@ -707,10 +747,38 @@ lv_point_precise_t pt(double x, double y) {
             static_cast<lv_value_precise_t>(std::lround(y))};
 }
 
+// Nearest and farthest distance from the canvas centre to the area being
+// drawn.
+void clip_radius_range(const lv_layer_t *layer, double &nearest,
+                       double &farthest) {
+    const lv_area_t &clip = layer->_clip_area;
+    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
+    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
+    const double x1 = clip.x1 - cx;
+    const double x2 = clip.x2 + 1 - cx;
+    const double y1 = clip.y1 - cy;
+    const double y2 = clip.y2 + 1 - cy;
+    const double nx = x1 > 0.0 ? x1 : (x2 < 0.0 ? x2 : 0.0);
+    const double ny = y1 > 0.0 ? y1 : (y2 < 0.0 ? y2 : 0.0);
+    nearest = std::sqrt(nx * nx + ny * ny);
+    const double fx = std::max(std::fabs(x1), std::fabs(x2));
+    const double fy = std::max(std::fabs(y1), std::fabs(y2));
+    farthest = std::sqrt(fx * fx + fy * fy);
+}
+
 void stroke_ring(lv_layer_t *layer, int radius, int width, lv_color_t color) {
+    // An arc is the costliest primitive on the rim: two radius masks and an
+    // angle mask per half. A dirty area that only grazes the rim used to pay
+    // for six of them, so a ring, and each half of it, is stroked only where
+    // the area actually reaches.
+    double nearest, farthest;
+    clip_radius_range(layer, nearest, farthest);
+    if(farthest < radius - width - 1 || nearest > radius + 1) return;
+    const lv_area_t &clip = layer->_clip_area;
+    const int32_t cy = MOTO_UI_CANVAS_HEIGHT / 2;
     lv_draw_arc_dsc_t dsc;
     lv_draw_arc_dsc_init(&dsc);
-    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
+    dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, cy};
     dsc.radius = radius;
     dsc.width = width;
     dsc.color = color;
@@ -718,12 +786,26 @@ void stroke_ring(lv_layer_t *layer, int radius, int width, lv_color_t color) {
     dsc.rounded = 0;
     // Two halves: a full 360 arc is the one thing every LVGL major version
     // treats differently, and the rim is too visible to gamble.
-    dsc.start_angle = 0;
-    dsc.end_angle = 180;
-    lv_draw_arc(layer, &dsc);
-    dsc.start_angle = 180;
-    dsc.end_angle = 360;
-    lv_draw_arc(layer, &dsc);
+    if(clip.y2 >= cy - 1) {
+        dsc.start_angle = 0;
+        dsc.end_angle = 180;
+        lv_draw_arc(layer, &dsc);
+    }
+    if(clip.y1 <= cy + 1) {
+        dsc.start_angle = 180;
+        dsc.end_angle = 360;
+        lv_draw_arc(layer, &dsc);
+    }
+}
+
+// True when the segment's box, grown by `pad`, overlaps the area being drawn.
+bool clip_touches_segment(const lv_layer_t *layer, const lv_point_precise_t &a,
+                          const lv_point_precise_t &b, int pad) {
+    const lv_area_t &clip = layer->_clip_area;
+    return std::min(a.x, b.x) - pad <= clip.x2 &&
+           std::max(a.x, b.x) + pad >= clip.x1 &&
+           std::min(a.y, b.y) - pad <= clip.y2 &&
+           std::max(a.y, b.y) + pad >= clip.y1;
 }
 
 // True when the area being drawn lies wholly inside a circle of `radius`
@@ -1092,9 +1174,17 @@ void draw_skyline(lv_event_t *event) {
     const MapPalette &palette = given != nullptr ? *given : ui.palette;
     lv_area_t area;
     lv_obj_get_coords(object, &area);
-    const int cx = area.x1 + MOTO_UI_CANVAS_WIDTH / 2;
-    const int cy = area.y1 + MOTO_UI_CANVAS_HEIGHT / 2;
+    // A skyline sized to a cover panel (USER_2) is cropped by its own box,
+    // like the box art's illustrations, and keeps the canvas's rows.
+    const bool cropped = lv_obj_has_flag(object, LV_OBJ_FLAG_USER_2);
+    const int cx = (cropped ? 0 : area.x1) + MOTO_UI_CANVAS_WIDTH / 2;
+    const int cy = (cropped ? 0 : area.y1) + MOTO_UI_CANVAS_HEIGHT / 2;
     lv_layer_t *layer = lv_event_get_layer(event);
+    // Nothing of the city stands above its tallest spire (the far row's
+    // {-22, 26, 80, 26} tower): an area above that, such as the Lean arc or
+    // numeral, costs no tower loop.
+    constexpr int kSkylineTop = 80 - 26;
+    if(layer->_clip_area.y2 < cy + kSkylineTop) return;
     // A screen that clips to the circle itself (waiting screen, boot) lets
     // the feet run past the glass; a page relies on its casing.
     const int reach = lv_obj_has_flag(object, LV_OBJ_FLAG_USER_1) ? 240 : 210;
@@ -1133,6 +1223,20 @@ lv_obj_t *make_skyline(lv_obj_t *parent, const MapPalette *palette) {
     lv_obj_add_event_cb(sky, draw_skyline, LV_EVENT_DRAW_MAIN,
                         const_cast<MapPalette *>(palette));
     return sky;
+}
+
+// Dusk over the city, for the cover panels (boot and link screens): a
+// poster may be loud. HUD orange sky, black towers lit in the same orange.
+// Every field the skyline reads is the same in both themes.
+const MapPalette *dusk_palette() {
+    static MapPalette dusk = [] {
+        MapPalette palette = kGtaNightPalette;
+        palette.ground = kGtaNightPalette.route;
+        palette.building = kOutlineBlack;
+        palette.building_landmark = LV_COLOR_MAKE(0x6A, 0x30, 0x10);
+        return palette;
+    }();
+    return &dusk;
 }
 
 // A tool page's skyline goes between its paper disc and its casing, so the
@@ -2074,49 +2178,76 @@ void set_layer_opacity(void *object, int32_t opacity) {
     lv_obj_set_style_opa(static_cast<lv_obj_t *>(object), opacity, 0);
 }
 
+// The link cover's loading bar keeps the boot bar's cadence: eight hard
+// steps, held full for a beat, then it starts over. It loops because these
+// states have no measurable progress; it claims activity, not a percentage.
+constexpr int kLinkBarSteps = 8;
+constexpr std::uint32_t kLinkBarStepMs = 75;
+constexpr int kLinkBarHoldSteps = 4;
+constexpr std::uint32_t kLinkCursorBlinkMs = 500;
+// Bar track width (the boot bar's) and the LCD message's left inset; layout
+// constants, because the first content is applied before LVGL lays out.
+constexpr int kLinkBarWidth = px(140);
+constexpr int kLinkLcdTextX = 10;
+// The LCD's left edge in its panel (the pager is centred in a 402 px band).
+constexpr int kLinkLcdX = MOTO_UI_CANVAS_WIDTH / 2 - 284 / 2 + 8;
+
+void lifecycle_tick(lv_timer_t *);
+
 void apply_lifecycle_content(LifecycleVisual visual) {
     ui.lifecycle_visual = visual;
     const char *kicker = "PHONE LINK";
     const char *title = "";
-    const char *subtitle = "";
+    const char *message = "";
     // Every state is two lines: the headline is the poster, and a layout that
     // jumps between one and two lines would move the composition on each
     // transition.
     switch(visual) {
         case LifecycleVisual::PhoneOffline:
             title = "CONNECT\nPHONE";
-            subtitle = "请打开手机应用";
+            message = "请打开手机应用";
             break;
         case LifecycleVisual::PhoneConnecting:
             title = "LINKING\nPHONE";
-            subtitle = "正在建立连接";
+            message = "正在建立连接";
             break;
         case LifecycleVisual::Connected:
             title = "PHONE\nLINKED";
-            subtitle = "连接成功";
+            message = "连接成功";
             break;
         case LifecycleVisual::Ready:
             kicker = "READY";
             title = "READY TO\nRIDE";
-            subtitle = "请在手机选择目的地";
+            message = "请在手机选择目的地";
             break;
         case LifecycleVisual::Planning:
             kicker = "ROUTE";
             title = "BUILDING\nROUTE";
-            subtitle = "正在规划路线";
+            message = "正在规划路线";
             break;
         case LifecycleVisual::Hidden:
             break;
     }
     lv_label_set_text(ui.nav_lifecycle_kicker, kicker);
     lv_label_set_text(ui.nav_lifecycle_title, title);
-    lv_label_set_text(ui.nav_lifecycle_subtitle, subtitle);
-    lv_obj_set_style_text_color(ui.nav_lifecycle_title, ui.palette.ink, 0);
-    lv_obj_set_style_text_color(
-        ui.nav_lifecycle_subtitle,
-        visual == LifecycleVisual::Connected ? ui.palette.accent
-                                             : ui.palette.muted,
-        0);
+    lv_label_set_text(ui.nav_lifecycle_subtitle, message);
+    ui.lifecycle_message = message;
+    // The one moment the cover celebrates: the headline turns HUD gold by
+    // night (ink by day, where gold would not read on newsprint).
+    lv_obj_set_style_text_color(ui.nav_lifecycle_title,
+                                visual == LifecycleVisual::Connected
+                                    ? ui.palette.hud
+                                    : ui.palette.ink,
+                                0);
+    // The cursor sits after the message, so it moves with each state's text.
+    lv_point_t size;
+    lv_text_get_size(&size, message, &moto_font_text_24, 0, 0, LV_COORD_MAX,
+                     LV_TEXT_FLAG_NONE);
+    lv_obj_set_x(ui.lifecycle_cursor, kLinkLcdX + kLinkLcdTextX + size.x + 3);
+    ui.lifecycle_started_ms = lv_tick_get();
+    // Force the bar to repaint for the new state.
+    ui.lifecycle_bar_steps = -2;
+    lifecycle_tick(nullptr);
 }
 
 void lifecycle_fade_in();
@@ -2213,16 +2344,59 @@ void refresh_lifecycle() {
     transition_lifecycle(desired_lifecycle_visual());
 }
 
+// The cover's only motion, both cheap: the pager cursor blinks while the
+// cover waits on the rider (open the app, pick a destination), and the
+// loading bar steps while it waits on the system (linking, routing). Each
+// repaints a few hundred pixels, and only when its state actually changes.
 void lifecycle_tick(lv_timer_t *) {
-    if(ui.reduce_motion || ui.nav_lifecycle_symbol == nullptr ||
-       ui.lifecycle_visual == LifecycleVisual::Hidden) {
+    if(ui.nav_lifecycle == nullptr || ui.lifecycle_cursor == nullptr ||
+       ui.lifecycle_bar == nullptr) {
         return;
     }
-    const std::uint16_t step =
-        ui.lifecycle_visual == LifecycleVisual::PhoneConnecting ? 9U : 5U;
-    ui.lifecycle_phase_deg =
-        static_cast<std::uint16_t>((ui.lifecycle_phase_deg + step) % 360U);
-    lv_obj_invalidate(ui.nav_lifecycle_symbol);
+    const LifecycleVisual visual = ui.lifecycle_visual;
+    const std::uint32_t elapsed = lv_tick_elaps(ui.lifecycle_started_ms);
+    const bool waits_on_rider = visual == LifecycleVisual::PhoneOffline ||
+                                visual == LifecycleVisual::Ready;
+    const bool waits_on_system = visual == LifecycleVisual::PhoneConnecting ||
+                                 visual == LifecycleVisual::Planning;
+
+    const bool cursor =
+        waits_on_rider &&
+        (ui.reduce_motion || (elapsed / kLinkCursorBlinkMs) % 2U == 0U);
+    if(cursor == lv_obj_has_flag(ui.lifecycle_cursor, LV_OBJ_FLAG_HIDDEN)) {
+        if(cursor) {
+            lv_obj_remove_flag(ui.lifecycle_cursor, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui.lifecycle_cursor, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    int steps = -1;
+    if(waits_on_system) {
+        steps = ui.reduce_motion
+                    ? kLinkBarSteps
+                    : std::min<int>(
+                          kLinkBarSteps,
+                          static_cast<int>((elapsed / kLinkBarStepMs) %
+                                           (kLinkBarSteps + kLinkBarHoldSteps)));
+    }
+    if(steps == ui.lifecycle_bar_steps) return;
+    ui.lifecycle_bar_steps = steps;
+    if(steps < 0) {
+        lv_obj_add_flag(ui.lifecycle_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.lifecycle_bar_fill, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_remove_flag(ui.lifecycle_bar, LV_OBJ_FLAG_HIDDEN);
+    // A zero-width object still draws nothing, but keep it hidden at zero
+    // so the track reads empty, not as a one-pixel stub.
+    if(steps == 0) {
+        lv_obj_add_flag(ui.lifecycle_bar_fill, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(ui.lifecycle_bar_fill, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_set_width(ui.lifecycle_bar_fill,
+                     (kLinkBarWidth - 6) * steps / kLinkBarSteps);
 }
 
 void connection_success_timeout(lv_timer_t *timer) {
@@ -2501,96 +2675,152 @@ void update_performance(const moto_ui_state_t *state) {
 
 }
 
-// Eight spans along the datum line, each keeping the old and new position of
-// that span. The dirty rectangles stay thin, so the scene's paper fill and the
-// hero are not redrawn across the whole rotated bounding box, and all but the
-// two end spans stay inside the casing, where the rim draw is culled
-// (clip_inside_radius). The horizon now moves every frame, so strip area is
-// the page's render cost.
-constexpr int kLeanInvalidSegments = 8;
-constexpr double kLeanHorizonHalfSpan = 176.0;
-// The hero sits above the horizon's resting line instead of on it, and the
-// horizon passes behind a paper window cut around the digits, so the datum
-// can never run through the number at any lean.
-constexpr int kLeanHeroLiftPx = -30;
-constexpr int kLeanHeroWindowPad = 8;
+// The Lean page is a race graphic, not a flight instrument: the bike leans
+// and the world holds still. A segmented arc across the top is the scale
+// (the 0-100 page's shift strip bent round the rim) and fills as the bike
+// leans, the unsigned numeral is the poster, and Liberty City sits under it.
+//
+// Every per-frame dirty area stays inside kLeanDirtyRadius, where the rim
+// draw is culled (clip_inside_radius). On the board each dirty area costs a
+// tree walk and a QSPI flush whatever its size, and one that reached the rim
+// re-stroked band, casing and protractor: that was 16 ms of a 53 ms frame.
+constexpr int kLeanDirtyRadius = 192;
+// The numeral sits in the middle band, clear of the skyline's tallest spire.
+constexpr int kLeanHeroLiftPx = -10;
 
-void lean_point(float lean, double along, double &x, double &y) {
-    constexpr double kHorizon = 74.0;
-    const double a = -static_cast<double>(lean) * kPi / 180.0;
+// Arc: twelve 5-degree segments a side, 0 to 60 degrees, filled to the
+// lean in quarter degrees, so the scale moves every frame and not in 5-degree
+// steps. Lit is HUD orange, past 45 degrees HUD red; the segment holding each
+// side's peak keeps its unlit part in clock gold.
+// Radii keep the box of two neighbouring segments inside kLeanDirtyRadius
+// (LVGL joins neighbours into one area): on a diagonal that box's corner
+// sits about 8 % outside the arc.
+constexpr int kLeanArcInner = 156;
+constexpr int kLeanArcOuter = 177;
+constexpr int kLeanArcSegments = 12;
+constexpr double kLeanArcStepDeg = 5.0;
+constexpr double kLeanArcGapDeg = 0.7;
+constexpr int kLeanArcHotFrom = 10;  // segments 10..12 are past 45 degrees
+constexpr int kLeanArcQuarters = 20;  // quarter degrees per segment
+
+// Fill for a lean of `degrees` to one side, in quarter degrees.
+int lean_arc_fill(float degrees) {
+    if(!(degrees > 0.0F)) return 0;
+    const int quarters = static_cast<int>(std::lround(degrees * 4.0F));
+    return std::min(quarters, kLeanArcSegments * kLeanArcQuarters);
+}
+
+// The segment (1-based) that holds a peak of `degrees`, 0 for none.
+int lean_arc_peak(float degrees) {
+    const int quarters = lean_arc_fill(degrees);
+    return (quarters + kLeanArcQuarters - 1) / kLeanArcQuarters;
+}
+
+// Angles from twelve o'clock, positive clockwise, of segment `index`
+// (1-based) on `side` (+1 right, -1 left).
+void lean_arc_angles(int side, int index, double &from, double &to) {
+    const double a = (index - 1) * kLeanArcStepDeg + kLeanArcGapDeg / 2.0;
+    const double b = index * kLeanArcStepDeg - kLeanArcGapDeg / 2.0;
+    from = side > 0 ? a : -b;
+    to = side > 0 ? b : -a;
+}
+
+lv_area_t lean_arc_segment_area(int side, int index) {
+    double from, to;
+    lean_arc_angles(side, index, from, to);
     const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
     const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
-    x = cx + std::cos(a) * along - std::sin(a) * kHorizon;
-    y = cy + std::sin(a) * along + std::cos(a) * kHorizon;
-}
-
-void lean_sun_center(float lean, double &x, double &y) {
-    lean_point(lean, -122.0, x, y);
-}
-
-void invalidate_lean_change(float old_lean, float new_lean) {
-    const int32_t cx = MOTO_UI_CANVAS_WIDTH / 2;
-    const int32_t cy = MOTO_UI_CANVAS_HEIGHT / 2;
-    constexpr int32_t kInner = 196;
-    const auto clip = [&](lv_area_t &area) {
-        area.x1 = std::max(area.x1, cx - kInner);
-        area.y1 = std::max(area.y1, cy - kInner);
-        area.x2 = std::min(area.x2, cx + kInner);
-        area.y2 = std::min(area.y2, cy + kInner);
-    };
-    constexpr double kSpan = kLeanHorizonHalfSpan * 2.0;
-    // Half the 11 px casing stroke plus antialiasing.
-    constexpr double kPad = 7.0;
-    for(int i = 0; i < kLeanInvalidSegments; ++i) {
-        const double t0 = -kSpan / 2.0 + kSpan * i / kLeanInvalidSegments;
-        const double t1 =
-            -kSpan / 2.0 + kSpan * (i + 1) / kLeanInvalidSegments;
-        double ox0, oy0, ox1, oy1, nx0, ny0, nx1, ny1;
-        lean_point(old_lean, t0, ox0, oy0);
-        lean_point(old_lean, t1, ox1, oy1);
-        lean_point(new_lean, t0, nx0, ny0);
-        lean_point(new_lean, t1, nx1, ny1);
-        lv_area_t area;
-        area.x1 = static_cast<int32_t>(std::floor(
-            std::min({ox0, ox1, nx0, nx1}) - kPad));
-        area.y1 = static_cast<int32_t>(std::floor(
-            std::min({oy0, oy1, ny0, ny1}) - kPad));
-        area.x2 = static_cast<int32_t>(std::ceil(
-            std::max({ox0, ox1, nx0, nx1}) + kPad));
-        area.y2 = static_cast<int32_t>(std::ceil(
-            std::max({oy0, oy1, ny0, ny1}) + kPad));
-        clip(area);
-        if(area.x1 <= area.x2 && area.y1 <= area.y2) {
-            lv_obj_invalidate_area(ui.lean_scene, &area);
+    double x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+    for(double deg : {from, to, (from + to) / 2.0}) {
+        const double rad = deg * kPi / 180.0;
+        for(int r : {kLeanArcInner, kLeanArcOuter}) {
+            const double x = cx + std::sin(rad) * r;
+            const double y = cy - std::cos(rad) * r;
+            x1 = std::min(x1, x);
+            y1 = std::min(y1, y);
+            x2 = std::max(x2, x);
+            y2 = std::max(y2, y);
         }
     }
-    double osx, osy, nsx, nsy;
-    lean_sun_center(old_lean, osx, osy);
-    lean_sun_center(new_lean, nsx, nsy);
-    lv_area_t sun;
-    sun.x1 = static_cast<int32_t>(std::floor(std::min(osx, nsx) - 36.0));
-    sun.y1 = static_cast<int32_t>(std::floor(std::min(osy, nsy) - 36.0));
-    sun.x2 = static_cast<int32_t>(std::ceil(std::max(osx, nsx) + 36.0));
-    sun.y2 = static_cast<int32_t>(std::ceil(std::max(osy, nsy) + 36.0));
-    clip(sun);
-    if(sun.x1 <= sun.x2 && sun.y1 <= sun.y2) {
-        lv_obj_invalidate_area(ui.lean_scene, &sun);
+    return {static_cast<int32_t>(std::floor(x1)) - 1,
+            static_cast<int32_t>(std::floor(y1)) - 1,
+            static_cast<int32_t>(std::ceil(x2)) + 1,
+            static_cast<int32_t>(std::ceil(y2)) + 1};
+}
+
+void invalidate_box(double x1, double y1, double x2, double y2, double pad) {
+    const int32_t cx = MOTO_UI_CANVAS_WIDTH / 2;
+    const int32_t cy = MOTO_UI_CANVAS_HEIGHT / 2;
+    lv_area_t area{
+        std::max(static_cast<int32_t>(std::floor(x1 - pad)),
+                 cx - kLeanDirtyRadius),
+        std::max(static_cast<int32_t>(std::floor(y1 - pad)),
+                 cy - kLeanDirtyRadius),
+        std::min(static_cast<int32_t>(std::ceil(x2 + pad)),
+                 cx + kLeanDirtyRadius),
+        std::min(static_cast<int32_t>(std::ceil(y2 + pad)),
+                 cy + kLeanDirtyRadius)};
+    if(area.x1 <= area.x2 && area.y1 <= area.y2) {
+        lv_obj_invalidate_area(ui.lean_scene, &area);
     }
+}
+
+LeanArcState lean_arc_state(float lean, float peak_left, float peak_right) {
+    return {{lean_arc_fill(-lean), lean_arc_fill(lean)},
+            {lean_arc_peak(peak_left), lean_arc_peak(peak_right)}};
+}
+
+// One area per changed segment: a box around a run of segments reaches far
+// past the arc on a diagonal, and LVGL joins neighbours only when that is
+// cheaper than drawing them apart. A steady lean changes one segment a frame.
+void invalidate_arc_change(const LeanArcState &from, const LeanArcState &to) {
+    for(int s = 0; s < 2; ++s) {
+        const int side = s == 0 ? -1 : 1;
+        const auto dirty = [&](int index) {
+            if(index < 1 || index > kLeanArcSegments) return;
+            const lv_area_t a = lean_arc_segment_area(side, index);
+            invalidate_box(a.x1, a.y1, a.x2, a.y2, 0.0);
+        };
+        if(from.lit[s] != to.lit[s]) {
+            const int lo = std::min(from.lit[s], to.lit[s]);
+            const int hi = std::max(from.lit[s], to.lit[s]);
+            for(int i = lo / kLeanArcQuarters + 1;
+                i <= (hi + kLeanArcQuarters - 1) / kLeanArcQuarters; ++i) {
+                dirty(i);
+            }
+        }
+        if(from.peak[s] != to.peak[s]) {
+            dirty(from.peak[s]);
+            dirty(to.peak[s]);
+        }
+    }
+}
+
+// The hero's box in canvas coordinates: the label's line box, centred and
+// lifted. The scene draws it there and dirties exactly this box when it
+// changes.
+lv_area_t lean_hero_area(const char *text) {
+    lv_point_t size;
+    lv_text_get_size(&size, text, &moto_font_hero_176, 0, 0, LV_COORD_MAX,
+                     LV_TEXT_FLAG_NONE);
+    lv_area_t area;
+    area.x1 = static_cast<int32_t>(
+        std::lround(MOTO_UI_CANVAS_WIDTH / 2.0 - size.x / 2.0));
+    area.y1 = static_cast<int32_t>(std::lround(
+        MOTO_UI_CANVAS_HEIGHT / 2.0 + kLeanHeroLiftPx - size.y / 2.0));
+    area.x2 = area.x1 + size.x - 1;
+    area.y2 = area.y1 + size.y - 1;
+    return area;
 }
 
 // The hero is painted by the scene, so a new string has to dirty its own box:
 // the horizon strips only cross the bottom of it.
 void invalidate_lean_hero(const char *text) {
     if(ui.lean_scene == nullptr || text == nullptr || text[0] == '\0') return;
-    lv_point_t size;
-    lv_text_get_size(&size, text, &moto_font_hero_176, 0, 0, LV_COORD_MAX,
-                     LV_TEXT_FLAG_NONE);
-    const int32_t halo = std::max(px(5), kLeanHeroWindowPad) + 2;
-    lv_area_t area;
-    area.x1 = MOTO_UI_CANVAS_WIDTH / 2 - size.x / 2 - halo;
-    area.y1 = MOTO_UI_CANVAS_HEIGHT / 2 + kLeanHeroLiftPx - size.y / 2 - halo;
-    area.x2 = area.x1 + size.x + 2 * halo;
-    area.y2 = area.y1 + size.y + 2 * halo;
+    // LVGL strokes glyph outlines only for vector fonts; on these bitmap
+    // faces the halo is never drawn, so antialiasing is all the box needs.
+    lv_area_t area = lean_hero_area(text);
+    lv_area_increase(&area, 2, 2);
     lv_obj_invalidate_area(ui.lean_scene, &area);
 }
 
@@ -2598,9 +2828,8 @@ void update_lean_text(bool has, float lean) {
     char text[24];
     invalidate_lean_hero(ui.lean_text);
     if(has) {
-        // Unsigned (DESIGN_V2 §6): the side is the horizon's tilt, the rim
-        // blip and the L/R plates. The sign glyph made the hero a third wider
-        // and pushed it into the horizon.
+        // Unsigned (DESIGN_V2 §6): the side is the bike's tilt, the lit side
+        // of the arc and the L/R plates.
         const double magnitude = std::fabs(static_cast<double>(lean));
         std::snprintf(ui.lean_text, sizeof(ui.lean_text), "%0.0f°",
                       magnitude < 1.5 ? 0.0 : magnitude);
@@ -2623,7 +2852,6 @@ void update_lean_text(bool has, float lean) {
         if((g_debug_hidden & MOTO_UI_DBG_HIDE_SCENE) == 0) {
             lv_obj_remove_flag(ui.lean_scene, LV_OBJ_FLAG_HIDDEN);
         }
-        lv_obj_remove_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     } else {
         // A 176 px hyphen renders as two solid bricks, not a dash. The NO IMU
         // plate carries the state; leave the poster's centre empty.
@@ -2631,9 +2859,10 @@ void update_lean_text(bool has, float lean) {
         lv_label_set_text(ui.lean_max_l, "L --");
         lv_label_set_text(ui.lean_max_r, "R --");
         lv_obj_remove_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
     }
 }
+
+void schedule_lean_motion();
 
 void update_lean(const moto_ui_state_t *state) {
     if(ui.lean_scene == nullptr) return;
@@ -2643,18 +2872,24 @@ void update_lean(const moto_ui_state_t *state) {
     // Peaks are data, not pixels: keep them at the sample rate so a short
     // spike cannot fall between two display frames.
     if(has) {
-        ui.lean_peak_left = std::max(ui.lean_peak_left, -lean);
-        ui.lean_peak_right = std::max(ui.lean_peak_right, lean);
+        const float left = std::max(ui.lean_peak_left, -lean);
+        const float right = std::max(ui.lean_peak_right, lean);
+        // A new peak can move the arc's held segment without moving the
+        // bike far enough to count as motion.
+        if(left != ui.lean_peak_left || right != ui.lean_peak_right) {
+            ui.lean_peak_left = left;
+            ui.lean_peak_right = right;
+            schedule_lean_motion();
+        }
     }
 
     // DESIGN_V2 §2.7: "graphics at frame rate, numbers at the table rate".
-    // The horizon, sun and rim blip follow every sample; only the numerals
-    // are a 10 Hz / 1 deg / 0.6 deg-hysteresis display. Throttling the whole
-    // scene to 10 Hz is what made the horizon step instead of turn.
+    // The bike and the arc follow every sample; only the numerals are a
+    // 10 Hz / 1 deg / 0.6 deg-hysteresis display.
     const std::uint32_t now = lv_tick_get();
     const bool has_changed = ui.lean_has != has;
-    // A quarter degree is under a pixel at the horizon's ends (r=191), so
-    // sensor noise below it never costs a frame.
+    // A quarter degree is under half a pixel at the helmet, so sensor noise
+    // below it never costs a frame.
     const bool scene_moved = std::fabs(ui.lean_deg - lean) >= 0.25F;
     const bool text_due =
         static_cast<std::uint32_t>(now - ui.lean_text_tick_ms) >= 100U &&
@@ -2662,7 +2897,6 @@ void update_lean(const moto_ui_state_t *state) {
     const bool text_update = has_changed || ui.lean_scene_dirty || text_due;
     if(!(text_update || (has && scene_moved))) return;
 
-    const float previous_lean = ui.lean_deg;
     ui.lean_has = has;
     ui.lean_deg = lean;
     ui.lean_scene_dirty = false;
@@ -2673,19 +2907,35 @@ void update_lean(const moto_ui_state_t *state) {
         update_lean_text(has, lean);
     }
 
-    invalidate_lean_change(previous_lean, lean);
+    schedule_lean_motion();
+}
 
-    if(has) {
-        // Rim position: 0 at twelve o'clock, positive clockwise. Radius 196
-        // sits on the casing, so the blip reads as part of the instrument
-        // rather than as another label.
-        const double rad = static_cast<double>(lean) * kPi / 180.0;
-        const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
-        const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
-        const int x = static_cast<int>(std::lround(cx + std::sin(rad) * 196.0));
-        const int y = static_cast<int>(std::lround(cy - std::cos(rad) * 196.0));
-        lv_obj_set_pos(ui.lean_blip, x - 7, y - 7);
-    }
+// The sensor delivers faster than the panel refreshes, so the motion is
+// dirtied once per refresh, from what was last drawn to the newest sample.
+// Dirtying every sample also repainted positions that were never shown, and
+// each extra area costs a tree walk and a flush.
+void schedule_lean_motion() {
+    if(ui.lean_motion_pending) return;
+    ui.lean_motion_pending = true;
+    // LVGL pauses its refresh timer while nothing is dirty; nothing is dirty
+    // yet, so wake it for the hook below.
+    lv_timer_t *refresh = ui.lean_display != nullptr
+                              ? lv_display_get_refr_timer(ui.lean_display)
+                              : nullptr;
+    if(refresh != nullptr) lv_timer_resume(refresh);
+}
+
+// Display LV_EVENT_REFR_START: runs before LVGL joins and renders the dirty
+// areas, so the motion invalidated here is drawn in this same refresh.
+void lean_refresh_start(lv_event_t *) {
+    if(!ui.lean_motion_pending || ui.lean_scene == nullptr) return;
+    ui.lean_motion_pending = false;
+    const float lean = ui.lean_has ? ui.lean_deg : 0.0F;
+    const LeanArcState arc =
+        lean_arc_state(lean, ui.lean_peak_left, ui.lean_peak_right);
+    invalidate_arc_change(ui.lean_drawn_arc, arc);
+    ui.lean_drawn_deg = lean;
+    ui.lean_drawn_arc = arc;
 }
 
 void update_music_view() {
@@ -3058,70 +3308,174 @@ void create_navigation_page() {
                    LV_SYMBOL_HOME);
     lv_obj_center(home_glyph);
 
-    // Connection lifecycle overlay. The composition follows the same circular
-    // safe area as the navigation instrument and intentionally uses one hero
-    // symbol instead of a dashboard of technical status labels.
+    // Connection lifecycle overlay: the waiting screens are a GTA III cover,
+    // the same box art the boot sequence cuts through, so boot, link and ride
+    // read as one sequence. Framed panels inside the cover's gutter (white by
+    // night, black by day): a pager that carries the instruction, the
+    // headline, and Liberty City at dusk. The glass is round, so every panel
+    // is clipped to the inscribed circle and the type stays in its widest
+    // band.
     ui.nav_lifecycle = make_layer(page);
     lv_obj_set_style_radius(ui.nav_lifecycle, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_clip_corner(ui.nav_lifecycle, true, 0);
-    lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.ground, 0);
+    lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.frame, 0);
     lv_obj_set_style_bg_opa(ui.nav_lifecycle, LV_OPA_COVER, 0);
     lv_obj_add_flag(ui.nav_lifecycle, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(ui.nav_lifecycle, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    // The link screen is a cover, not a dialog, and the glass is round: every
-    // element has to live inside the inscribed circle. That rules out the
-    // full-bleed poster furniture (footer bar, corner credits) and pushes the
-    // composition the other way - one oversized headline in the widest band of
-    // the circle, an accent slash cut by the bezel, and a single status chip.
-    // The waiting screen is a cover: the city sits under its headline. The
-    // layer clips to the circle, so the towers may run past the glass.
-    lv_obj_add_flag(make_skyline(ui.nav_lifecycle, nullptr),
-                    LV_OBJ_FLAG_USER_1);
-    lv_obj_t *slash = lv_obj_create(ui.nav_lifecycle);
-    lv_obj_remove_style_all(slash);
-    lv_obj_clear_flag(slash, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(slash, px(360), px(30));
-    lv_obj_set_pos(slash, px(-10), px(246));
-    lv_obj_set_style_bg_color(slash, ui.palette.accent, 0);
-    lv_obj_set_style_bg_opa(slash, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_rotation(slash, -50, 0);
-    ui.lifecycle_slash = slash;
+    const auto box = [](lv_obj_t *parent, int x, int y, int w, int h,
+                        lv_color_t color) {
+        lv_obj_t *object = lv_obj_create(parent);
+        lv_obj_remove_style_all(object);
+        lv_obj_clear_flag(object, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_pos(object, x, y);
+        lv_obj_set_size(object, w, h);
+        lv_obj_set_style_bg_color(object, color, 0);
+        lv_obj_set_style_bg_opa(object, LV_OPA_COVER, 0);
+        return object;
+    };
 
-    // Display type: 1.6x the largest firmware font, tight leading, tracking
-    // near zero. Two lines is the whole composition.
-    ui.nav_lifecycle_title = make_text(
-        ui.nav_lifecycle, &moto_font_display_72, TextRole::Ink,
-        "CONNECT\nPHONE");
+    // No nested clip_corner: LVGL renders a clipped object's children into
+    // ARGB layers, and a second one inside the layer's own clip overflowed
+    // the 8 KiB render task. The panels are plain rectangles on a gutter
+    // disc; two rings drawn over them cut them to the circle instead: the
+    // 6 px gutter that frames the art, then the bezel out to the glass.
+    constexpr int kGap = 6;
+    constexpr int kInner = kDialRadius - kGap;
+    constexpr int kInnerX = MOTO_UI_CANVAS_WIDTH / 2 - kInner;
+    constexpr int kInnerY = MOTO_UI_CANVAS_HEIGHT / 2 - kInner;
+    lv_obj_t *gutter = box(ui.nav_lifecycle,
+                           MOTO_UI_CANVAS_WIDTH / 2 - kDialRadius,
+                           MOTO_UI_CANVAS_HEIGHT / 2 - kDialRadius,
+                           kDialRadius * 2, kDialRadius * 2, ui.palette.accent);
+    lv_obj_set_style_radius(gutter, LV_RADIUS_CIRCLE, 0);
+    ui.lifecycle_cover[0] = gutter;
+
+    // Three bands, in canvas rows: the pager's, the headline's and the
+    // city's. The headline band is centred on the glass, where it is widest.
+    constexpr int kPagerBottom = 162;
+    constexpr int kTitleBottom = 300;
+    constexpr int kFull = kInner * 2;
+    lv_obj_t *pager_panel = box(ui.nav_lifecycle, kInnerX, kInnerY, kFull,
+                                kPagerBottom - kInnerY, ui.palette.background);
+    lv_obj_t *title_panel =
+        box(ui.nav_lifecycle, kInnerX, kPagerBottom + kGap, kFull,
+            kTitleBottom - kPagerBottom - kGap, ui.palette.ground);
+    constexpr int kCityY = kTitleBottom + kGap;
+    lv_obj_t *city_panel = box(ui.nav_lifecycle, kInnerX, kCityY, kFull,
+                               kInnerY + kFull - kCityY,
+                               dusk_palette()->ground);
+    ui.lifecycle_panels[0] = pager_panel;
+    ui.lifecycle_panels[1] = title_panel;
+    ui.lifecycle_panels[2] = city_panel;
+
+    // GTA III's pager: the HUD's message device, a black handset with a lit
+    // green LCD. Here it carries the one instruction the rider needs. It is
+    // an object, not paper, so it keeps its colours in both themes.
+    //
+    // Everything on the cover is a direct child of the overlay, in canvas
+    // coordinates. The overlay already renders through clip_corner layers
+    // inside an 8 KiB render task; each level of nesting below it costs
+    // that task stack, and a deeper first draft left 1.4 KiB.
+    lv_obj_t *const cover_layer = ui.nav_lifecycle;
+    constexpr lv_color_t kPagerBody = LV_COLOR_MAKE(0x06, 0x06, 0x06);
+    constexpr lv_color_t kPagerBevel = LV_COLOR_MAKE(0x5A, 0x5A, 0x56);
+    constexpr lv_color_t kPagerLcd = LV_COLOR_MAKE(0xB4, 0xC4, 0x7A);
+    constexpr lv_color_t kPagerLcdEdge = LV_COLOR_MAKE(0x6E, 0x7E, 0x44);
+    constexpr lv_color_t kPagerInk = LV_COLOR_MAKE(0x1B, 0x24, 0x0E);
+    constexpr int kPagerW = 284;
+    constexpr int kPagerH = 60;
+    constexpr int kPagerX = MOTO_UI_CANVAS_WIDTH / 2 - kPagerW / 2;
+    constexpr int kPagerY = 92;  // the first row where the body fits the glass
+    lv_obj_t *pager = box(cover_layer, kPagerX, kPagerY, kPagerW, kPagerH,
+                          kPagerBody);
+    lv_obj_set_style_radius(pager, 10, 0);
+    lv_obj_set_style_border_color(pager, kPagerBevel, 0);
+    lv_obj_set_style_border_width(pager, 2, 0);
+    // Nine CJK glyphs, the inset and the cursor fit; the keys take the rest.
+    constexpr int kLcdW = 250;
+    constexpr int kLcdH = 44;
+    constexpr int kLcdX = kPagerX + 8;
+    static_assert(kLcdX == kLinkLcdX, "the cursor is placed from kLinkLcdX");
+    constexpr int kLcdY = kPagerY + (kPagerH - kLcdH) / 2;
+    lv_obj_t *lcd = box(cover_layer, kLcdX, kLcdY, kLcdW, kLcdH, kPagerLcd);
+    lv_obj_set_style_radius(lcd, 3, 0);
+    lv_obj_set_style_border_color(lcd, kPagerLcdEdge, 0);
+    lv_obj_set_style_border_width(lcd, 2, 0);
+    for(int i = 0; i < 2; ++i) {
+        lv_obj_t *key = box(cover_layer, kLcdX + kLcdW + 7,
+                            kPagerY + 13 + i * 20, 12, 12,
+                            LV_COLOR_MAKE(0x2A, 0x2A, 0x28));
+        lv_obj_set_style_radius(key, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_color(key, kPagerBevel, 0);
+        lv_obj_set_style_border_width(key, 1, 0);
+    }
+    // The LCD is its own light source: fixed ink, not a theme role.
+    ui.nav_lifecycle_subtitle = make_label(cover_layer, &moto_font_text_24,
+                                           kPagerInk, "请打开手机应用");
+    lv_label_set_long_mode(ui.nav_lifecycle_subtitle, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_width(ui.nav_lifecycle_subtitle, kLcdW - 2 * kLinkLcdTextX);
+    lv_obj_align_to(ui.nav_lifecycle_subtitle, lcd, LV_ALIGN_LEFT_MID,
+                    kLinkLcdTextX, 0);
+    ui.lifecycle_cursor =
+        box(cover_layer, 0, kLcdY + (kLcdH - 22) / 2, 11, 22, kPagerInk);
+    lv_obj_add_flag(ui.lifecycle_cursor, LV_OBJ_FLAG_HIDDEN);
+
+    // The pager's label: which conversation this is (PHONE LINK, READY,
+    // ROUTE), letter-spaced like the box art's credits.
+    ui.nav_lifecycle_kicker = make_text(cover_layer, &moto_font_display_18,
+                                        TextRole::OnSlab, "PHONE LINK");
+    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_kicker, px(5), 0);
+    lv_obj_align(ui.nav_lifecycle_kicker, LV_ALIGN_TOP_MID, 0, 62);
+
+    // The headline: 1.6x the largest firmware font, tight leading, tracking
+    // near zero. Two lines in every state.
+    ui.nav_lifecycle_title = make_text(cover_layer, &moto_font_display_72,
+                                       TextRole::Ink, "CONNECT\nPHONE");
     lv_obj_set_width(ui.nav_lifecycle_title, px(300));
     lv_obj_set_style_text_align(ui.nav_lifecycle_title,
                                 LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_letter_space(ui.nav_lifecycle_title, 0, 0);
     lv_obj_set_style_text_line_space(ui.nav_lifecycle_title, px(-14), 0);
-    lv_obj_align(ui.nav_lifecycle_title, LV_ALIGN_TOP_MID, 0, px(104));
+    lv_obj_align_to(ui.nav_lifecycle_title, title_panel, LV_ALIGN_CENTER, 0,
+                    0);
 
-    ui.nav_lifecycle_subtitle = make_text(
-        ui.nav_lifecycle, &moto_font_text_24, TextRole::Muted, "请打开手机应用");
-    lv_obj_set_width(ui.nav_lifecycle_subtitle, px(240));
-    lv_obj_set_style_text_align(ui.nav_lifecycle_subtitle,
-                                LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(ui.nav_lifecycle_subtitle, LV_ALIGN_TOP_MID, 0, px(268));
+    // Liberty City at dusk, cropped to its panel.
+    lv_obj_t *city = make_skyline(cover_layer, dusk_palette());
+    lv_obj_add_flag(city, LV_OBJ_FLAG_USER_1);
+    lv_obj_add_flag(city, LV_OBJ_FLAG_USER_2);
+    lv_obj_set_pos(city, kInnerX, kCityY);
+    lv_obj_set_size(city, kFull, kInnerY + kFull - kCityY);
 
-    // Status chip: the one place the state is spelled out, inverse on ink.
-    lv_obj_t *chip = lv_obj_create(ui.nav_lifecycle);
-    lv_obj_remove_style_all(chip);
-    lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(chip, px(150), px(30));
-    lv_obj_align(chip, LV_ALIGN_TOP_MID, 0, px(292));
-    lv_obj_set_style_bg_color(chip, ui.palette.slab, 0);
-    lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
-    ui.lifecycle_rules[1] = chip;
+    // The boot's loading bar, at the foot of the city; the fill is drawn over
+    // the track as its sibling.
+    constexpr int kBarX = MOTO_UI_CANVAS_WIDTH / 2 - kLinkBarWidth / 2;
+    constexpr int kBarY = 386;
+    ui.lifecycle_bar = box(cover_layer, kBarX, kBarY, kLinkBarWidth, px(12),
+                           kOutlineBlack);
+    lv_obj_set_style_border_color(ui.lifecycle_bar, kLimitFace, 0);
+    lv_obj_set_style_border_width(ui.lifecycle_bar, 2, 0);
+    ui.lifecycle_bar_fill = box(cover_layer, kBarX + 3, kBarY + 3, 0,
+                                px(12) - 6, kHudGold);
+    lv_obj_add_flag(ui.lifecycle_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.lifecycle_bar_fill, LV_OBJ_FLAG_HIDDEN);
 
-    ui.nav_lifecycle_kicker = make_text(
-        ui.nav_lifecycle, &moto_font_display_18, TextRole::OnSlab, "OFFLINE");
-    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_kicker, px(5), 0);
-    lv_obj_center(ui.nav_lifecycle_kicker);
-    lv_obj_set_parent(ui.nav_lifecycle_kicker, chip);
+    // The rings that cut the panels to the circle, over everything.
+    const auto ring = [&](int radius, int width, lv_color_t color) {
+        lv_obj_t *object = box(ui.nav_lifecycle,
+                               MOTO_UI_CANVAS_WIDTH / 2 - radius,
+                               MOTO_UI_CANVAS_HEIGHT / 2 - radius, radius * 2,
+                               radius * 2, color);
+        lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_radius(object, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_color(object, color, 0);
+        lv_obj_set_style_border_width(object, width, 0);
+        return object;
+    };
+    ui.lifecycle_cover[1] = ring(kDialRadius, kGap, ui.palette.accent);
+    ring(MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_WIDTH / 2 - kDialRadius,
+         ui.palette.frame);
 
     ui.nav_lifecycle_timer = lv_timer_create(lifecycle_tick, 40, nullptr);
     ui.nav_success_timer = lv_timer_create(connection_success_timeout,
@@ -3255,6 +3609,8 @@ void clear_lean_peaks() {
     ui.lean_peak_right = 0.0F;
     if(ui.lean_max_l != nullptr) lv_label_set_text(ui.lean_max_l, "L --");
     if(ui.lean_max_r != nullptr) lv_label_set_text(ui.lean_max_r, "R --");
+    // The held peak segments go dark with the numbers.
+    schedule_lean_motion();
 }
 
 void draw_lean_progress(lv_event_t *event) {
@@ -3282,6 +3638,7 @@ void lean_press_tick(lv_timer_t *) {
     if(show != ui.lean_progress_visible || show) {
         if(show && !ui.lean_progress_visible) {
             ui.lean_progress_visible = true;
+            lv_obj_remove_flag(ui.lean_progress, LV_OBJ_FLAG_HIDDEN);
         }
         lv_obj_invalidate(ui.lean_progress);
     }
@@ -3302,7 +3659,9 @@ void lean_release_event(lv_event_t *event) {
     ui.lean_press_elapsed_ms = 0;
     ui.lean_progress_visible = false;
     lv_timer_pause(ui.lean_press_timer);
-    if(ui.lean_progress != nullptr) lv_obj_invalidate(ui.lean_progress);
+    if(ui.lean_progress != nullptr) {
+        lv_obj_add_flag(ui.lean_progress, LV_OBJ_FLAG_HIDDEN);
+    }
     if(lv_event_get_code(event) == LV_EVENT_PRESS_LOST) return;
     if(elapsed >= 3000) {
         // Countdown starts on release; the sensor capture request fires when
@@ -3425,12 +3784,17 @@ void draw_lean_marks_layer(lv_layer_t *layer) {
             pt(cx + sx * (major ? 223.0 : 218.0),
                cy + sy * (major ? 223.0 : 218.0)),
         };
+        // A fast flick can stretch a horizon strip into the casing; it
+        // repaints the ticks it reaches, not the whole protractor.
+        if(!clip_touches_segment(layer, pts[0], pts[1], 3)) continue;
         draw_segment(layer, ui.palette.on_accent, major ? 3 : 2, LV_OPA_COVER,
                      pts, 2);
     }
     // The zero reference: the only mark that is a bar rather than a tick.
     lv_point_precise_t zero[2] = {pt(cx, cy - 223.0), pt(cx, cy - 198.0)};
-    draw_segment(layer, ui.palette.route, 5, LV_OPA_COVER, zero, 2);
+    if(clip_touches_segment(layer, zero[0], zero[1], 4)) {
+        draw_segment(layer, ui.palette.route, 5, LV_OPA_COVER, zero, 2);
+    }
 }
 
 // The lean page is an artificial horizon, not a bar graph. The bike is the
@@ -3453,14 +3817,11 @@ void apply_debug_hidden() {
             lv_obj_remove_flag(ui.lean_marks, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    // The Lean page's disc stays hidden whatever the mask: the scene owns that
+    // paper (create_lean_page). This runs on every theme change, and showing
+    // the disc here put it back under the scene for good.
     if(ui.page_discs[MOTO_UI_PAGE_LEAN] != nullptr) {
-        if((g_debug_hidden & MOTO_UI_DBG_HIDE_CHROME) != 0) {
-            lv_obj_add_flag(ui.page_discs[MOTO_UI_PAGE_LEAN],
-                            LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_remove_flag(ui.page_discs[MOTO_UI_PAGE_LEAN],
-                               LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_add_flag(ui.page_discs[MOTO_UI_PAGE_LEAN], LV_OBJ_FLAG_HIDDEN);
     }
     if(ui.page_frames[MOTO_UI_PAGE_LEAN] != nullptr) {
         if((g_debug_hidden & MOTO_UI_DBG_HIDE_CHROME) != 0) {
@@ -3477,80 +3838,107 @@ void draw_lean_marks(lv_event_t *event) {
     draw_lean_marks_layer(lv_event_get_layer(event));
 }
 
+// The scene's paper disc ends at the casing's inner edge.
+constexpr int kLeanSceneRadius = kDialCasingOuter - kDialCasingWidth;
+
+// LVGL fills a circle-radius background through a radius mask on every row,
+// even for a strip deep inside the circle, and the scene's paper sits under
+// every dirty area of this page. Where the strip is inside the disc the
+// corner cannot show, so the fill is a plain rectangle.
+void lean_scene_draw_task(lv_event_t *event) {
+    lv_draw_task_t *task = lv_event_get_draw_task(event);
+    if(lv_draw_task_get_type(task) != LV_DRAW_TASK_TYPE_FILL) return;
+    lv_draw_fill_dsc_t *fill = lv_draw_task_get_fill_dsc(task);
+    if(fill == nullptr || fill->base.part != LV_PART_MAIN ||
+       fill->base.layer == nullptr) {
+        return;
+    }
+    if(clip_inside_radius(fill->base.layer, kLeanSceneRadius - 1)) {
+        fill->radius = 0;
+    }
+}
+
 void draw_lean_scene(lv_event_t *event) {
     lv_layer_t *layer = lv_event_get_layer(event);
-    // No attitude yet is still a valid composition: draw the horizon level and
-    // let the number read "--". Hiding the whole scene was what made the page
-    // look like a different product whenever the IMU had not produced a sample
-    // (or the board was on the bench).
-    const double lean = ui.lean_has ? static_cast<double>(ui.lean_deg) : 0.0;
-    // Right lean tilts the world left: the horizon's right end rises.
-    const double a = -lean * kPi / 180.0;
-    const double cx = MOTO_UI_CANVAS_WIDTH / 2.0;
-    const double cy = MOTO_UI_CANVAS_HEIGHT / 2.0;
-    const double ux = std::cos(a);
-    const double uy = std::sin(a);
-    const double nx = -std::sin(a);
-    const double ny = std::cos(a);
-    const double horizon = 74.0;
-    const auto at = [&](double along, double down, double &x, double &y) {
-        x = cx + ux * along + nx * down;
-        y = cy + uy * along + ny * down;
+    // No attitude yet is still a valid composition: the arc is dark and the
+    // NO IMU plate takes the numeral's place. Hiding the whole scene was what
+    // made the page look like a different product whenever the IMU had not
+    // produced a sample (or the board was on the bench).
+    const float lean = ui.lean_has ? ui.lean_deg : 0.0F;
+    // Each dirty area calls this once. LVGL clips every draw to the area, but
+    // a draw that cannot touch it still costs its setup, so elements outside
+    // the area are skipped here.
+    const lv_area_t &clip = layer->_clip_area;
+    const auto touches = [&](const lv_area_t &box) {
+        return box.x1 <= clip.x2 && box.x2 >= clip.x1 && box.y1 <= clip.y2 &&
+               box.y2 >= clip.y1;
+    };
+    // Profiling buckets (`ui dbg`): sun = arc, hero = numeral.
+    const auto clock_now = [] {
+        return (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock()
+                                                              : 0;
     };
 
-    // The sun is a half disc whose flat edge is the horizon. It orbits the
-    // centre with the world instead of spinning in place.
     if((g_debug_hidden & MOTO_UI_DBG_HIDE_SUN) == 0) {
-        const std::uint64_t started =
-            (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
-        double sx, sy;
-        at(-122.0, horizon, sx, sy);
-        lv_draw_arc_dsc_t arc;
-        lv_draw_arc_dsc_init(&arc);
-        arc.center = {static_cast<int32_t>(std::lround(sx)),
-                      static_cast<int32_t>(std::lround(sy))};
-        arc.rounded = 0;
-        arc.start_angle =
-            static_cast<lv_value_precise_t>(a * 180.0 / kPi + 180.0);
-        arc.end_angle =
-            static_cast<lv_value_precise_t>(a * 180.0 / kPi + 360.0);
-        arc.width = 60;
-        arc.radius = 30;
-        arc.color = ui.palette.outline;
-        arc.opa = LV_OPA_COVER;
-        lv_draw_arc(layer, &arc);
-        arc.width = 54;
-        arc.radius = 27;
-        arc.color = ui.palette.coral;
-        lv_draw_arc(layer, &arc);
-        if(started != 0) {
+        const std::uint64_t started = clock_now();
+        const LeanArcState arc =
+            lean_arc_state(lean, ui.lean_peak_left, ui.lean_peak_right);
+        lv_draw_arc_dsc_t dsc;
+        lv_draw_arc_dsc_init(&dsc);
+        dsc.center = {MOTO_UI_CANVAS_WIDTH / 2, MOTO_UI_CANVAS_HEIGHT / 2};
+        dsc.radius = kLeanArcOuter;
+        dsc.width = kLeanArcOuter - kLeanArcInner;
+        dsc.rounded = 0;
+        dsc.opa = LV_OPA_COVER;
+        // LVGL counts from three o'clock; the arc from twelve.
+        const auto stroke = [&](double from, double to, lv_color_t color) {
+            if(to - from < 0.05) return;
+            dsc.color = color;
+            dsc.start_angle = static_cast<lv_value_precise_t>(from + 270.0);
+            dsc.end_angle = static_cast<lv_value_precise_t>(to + 270.0);
+            lv_draw_arc(layer, &dsc);
+        };
+        bool drew = false;
+        for(int s = 0; s < 2; ++s) {
+            const int side = s == 0 ? -1 : 1;
+            for(int i = 1; i <= kLeanArcSegments; ++i) {
+                if(!touches(lean_arc_segment_area(side, i))) continue;
+                drew = true;
+                const int lit = std::clamp(
+                    arc.lit[s] - (i - 1) * kLeanArcQuarters, 0,
+                    kLeanArcQuarters);
+                const lv_color_t on = i >= kLeanArcHotFrom
+                                          ? ui.palette.gauge_hot
+                                          : ui.palette.route;
+                const lv_color_t off = i == arc.peak[s] ? ui.palette.hud
+                                                        : ui.palette.gauge_off;
+                double from, to;
+                lean_arc_angles(side, i, from, to);
+                // The lit part starts at the segment's inner end: next to
+                // zero on either side.
+                const double split = (to - from) * lit / kLeanArcQuarters;
+                if(side > 0) {
+                    stroke(from, from + split, on);
+                    stroke(from + split, to, off);
+                } else {
+                    stroke(to - split, to, on);
+                    stroke(from, to - split, off);
+                }
+            }
+        }
+        if(started != 0 && drew) {
             g_debug_stats.sun_us +=
-                static_cast<std::uint32_t>(g_debug_clock() - started);
+                static_cast<std::uint32_t>(clock_now() - started);
             ++g_debug_stats.sun_draws;
         }
     }
 
-    // One datum line, cased so it survives crossing the numeral.
-    if((g_debug_hidden & MOTO_UI_DBG_HIDE_HORIZON) == 0) {
-        const std::uint64_t started =
-            (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
-        double hx1, hy1, hx2, hy2;
-        at(-kLeanHorizonHalfSpan, horizon, hx1, hy1);
-        at(kLeanHorizonHalfSpan, horizon, hx2, hy2);
-        lv_point_precise_t line[2] = {pt(hx1, hy1), pt(hx2, hy2)};
-        draw_segment(layer, ui.palette.outline, 11, LV_OPA_COVER, line, 2);
-        draw_segment(layer, ui.palette.ink, 5, LV_OPA_COVER, line, 2);
-        if(started != 0) {
-            g_debug_stats.horizon_us +=
-                static_cast<std::uint32_t>(g_debug_clock() - started);
-            ++g_debug_stats.horizon_draws;
-        }
-    }
-
+    const lv_area_t hero_area = ui.lean_text[0] != '\0'
+                                    ? lean_hero_area(ui.lean_text)
+                                    : lv_area_t{0, 0, -1, -1};
     if(ui.lean_has && ui.lean_text[0] != '\0' &&
-       (g_debug_hidden & MOTO_UI_DBG_HIDE_HERO) == 0) {
-        const std::uint64_t started =
-            (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock() : 0;
+       (g_debug_hidden & MOTO_UI_DBG_HIDE_HERO) == 0 && touches(hero_area)) {
+        const std::uint64_t started = clock_now();
         lv_draw_label_dsc_t label;
         lv_draw_label_dsc_init(&label);
         label.text = ui.lean_text;
@@ -3558,40 +3946,10 @@ void draw_lean_scene(lv_event_t *event) {
         label.color = ui.palette.hud;
         label.align = LV_TEXT_ALIGN_LEFT;
         label.opa = LV_OPA_COVER;
-        const int halo_width =
-            (g_debug_hidden & MOTO_UI_DBG_HIDE_HALO) != 0 ? 0 : px(5);
-        label.outline_stroke_width = halo_width;
-        label.outline_stroke_color = ui.palette.outline;
-        label.outline_stroke_opa =
-            halo_width > 0 ? LV_OPA_COVER : LV_OPA_TRANSP;
-        lv_point_t size;
-        lv_text_get_size(&size, ui.lean_text, &moto_font_hero_176, 0, 0,
-                        LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        lv_area_t area;
-        area.x1 = static_cast<int32_t>(std::lround(cx - size.x / 2.0));
-        area.y1 = static_cast<int32_t>(
-            std::lround(cy + kLeanHeroLiftPx - size.y / 2.0));
-        area.x2 = area.x1 + size.x - 1;
-        area.y2 = area.y1 + size.y - 1;
-        // The window covers the drawn digits (cap height above the baseline),
-        // not the font's full line box, so it does not eat the sky above.
-        const lv_font_t *hero = &moto_font_hero_176;
-        lv_draw_rect_dsc_t window;
-        lv_draw_rect_dsc_init(&window);
-        window.bg_color = ui.palette.ground;
-        window.bg_opa = LV_OPA_COVER;
-        window.radius = 0;
-        lv_area_t window_area = area;
-        window_area.x1 -= kLeanHeroWindowPad;
-        window_area.x2 += kLeanHeroWindowPad;
-        window_area.y2 = area.y2 - hero->base_line + kLeanHeroWindowPad;
-        window_area.y1 = window_area.y2 - hero->line_height * 7 / 8 -
-                         2 * kLeanHeroWindowPad;
-        lv_draw_rect(layer, &window, &window_area);
-        lv_draw_label(layer, &label, &area);
+        lv_draw_label(layer, &label, &hero_area);
         if(started != 0) {
             g_debug_stats.hero_us +=
-                static_cast<std::uint32_t>(g_debug_clock() - started);
+                static_cast<std::uint32_t>(clock_now() - started);
             ++g_debug_stats.hero_draws;
         }
     }
@@ -3631,20 +3989,25 @@ void create_lean_page() {
 
     ui.lean_marks = make_draw_canvas(page, draw_lean_marks);
     ui.lean_scene = make_draw_canvas(page, draw_lean_scene);
-    // The scene owns its paper. An opaque, disc-clipped layer lets LVGL skip
-    // everything below it (the page disc) when only the horizon moves; a
-    // transparent full-screen layer used to force a whole-page repaint on
-    // every lift update. 414 px reaches the paper edge under the casing; the
-    // frame is moved above the scene below, so the casing stays on top.
-    lv_obj_set_size(ui.lean_scene, 414, 414);
+    // The scene owns its paper. An opaque disc lets LVGL skip everything
+    // below it when only the horizon moves; a transparent full-screen layer
+    // used to force a whole-page repaint on every lift update. It ends at the
+    // casing's inner edge, so the frame and protractor can sit below it and
+    // a dirty area inside the paper never visits them: on the board each
+    // object an area has to walk is part of the fixed per-area cost that
+    // dominates this page.
+    lv_obj_set_size(ui.lean_scene, kLeanSceneRadius * 2, kLeanSceneRadius * 2);
     lv_obj_center(ui.lean_scene);
     lv_obj_set_style_radius(ui.lean_scene, LV_RADIUS_CIRCLE, 0);
     // clip_corner is unnecessary: the scene's content (horizon, sun, hero) is
     // inside the circle. Turning it off avoids a rounded clip mask on every
-    // dirty strip. The background itself is still the rounded style.
+    // dirty strip.
     lv_obj_set_style_clip_corner(ui.lean_scene, false, 0);
     lv_obj_set_style_bg_color(ui.lean_scene, ui.palette.ground, 0);
     lv_obj_set_style_bg_opa(ui.lean_scene, LV_OPA_COVER, 0);
+    lv_obj_add_flag(ui.lean_scene, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    lv_obj_add_event_cb(ui.lean_scene, lean_scene_draw_task,
+                        LV_EVENT_DRAW_TASK_ADDED, nullptr);
     // The scene owns the Lean page's paper: hide the page disc underneath so
     // LVGL does not repaint it (and the frame rings) on every horizon update.
     if(ui.page_discs[MOTO_UI_PAGE_LEAN] != nullptr) {
@@ -3652,59 +4015,71 @@ void create_lean_page() {
                         LV_OBJ_FLAG_HIDDEN);
     }
 
-    // The rider point. It rides the rim at the current angle, so the value has
-    // a place on the dial as well as a number.
-    ui.lean_blip = lv_obj_create(page);
-    lv_obj_remove_style_all(ui.lean_blip);
-    lv_obj_clear_flag(ui.lean_blip, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.lean_blip, 14, 14);
-    lv_obj_set_style_radius(ui.lean_blip, LV_RADIUS_CIRCLE, 0);
-    // The rider point is "happening now": HUD orange, which reads on the
-    // black casing and on either band.
-    lv_obj_set_style_bg_color(ui.lean_blip, ui.palette.route, 0);
-    lv_obj_set_style_bg_opa(ui.lean_blip, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(ui.lean_blip, kOutlineBlack, 0);
-    lv_obj_set_style_border_width(ui.lean_blip, 3, 0);
-    lv_obj_add_flag(ui.lean_blip, LV_OBJ_FLAG_HIDDEN);
-
     // The hero is drawn inside draw_lean_scene, not as a label: a separate
     // transparent label forced LVGL to build and composite an extra layer for
     // every dirty strip. The number is part of the same scene layer now.
 
+    // Liberty City at dusk along the bottom, as on the other tool pages. It
+    // sits above the scene's paper (the scene is this page's disc). The
+    // casing here is drawn below the scene, so a strip of casing over the
+    // bottom band trims the towers' feet; the arc and the numeral never
+    // dirty that band, so LVGL never visits it while the bike leans.
+    lv_obj_t *city = make_skyline(page, nullptr);
+    lv_obj_set_y(city, kPageSkylineDrop);
+    lv_obj_t *casing = lv_obj_create(page);
+    lv_obj_remove_style_all(casing);
+    lv_obj_clear_flag(casing, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(casing, LV_OBJ_FLAG_SCROLLABLE);
+    constexpr int kCasingBandTop = 296;
+    lv_obj_set_pos(casing, 0, kCasingBandTop);
+    lv_obj_set_size(casing, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT - kCasingBandTop);
+    lv_obj_add_event_cb(casing, draw_instrument_frame, LV_EVENT_DRAW_MAIN,
+                        nullptr);
+
+    // The side peaks flank the numeral, each beside its half of the arc.
+    // Centred at x 82 and 384: a new value dirties only the label, which
+    // stays inside the casing.
     ui.lean_max_l_plate =
         make_plate(page, "L --", 90, 26, &ui.lean_max_l);
-    lv_obj_set_pos(ui.lean_max_l_plate, px(76), px(72));
+    lv_obj_align(ui.lean_max_l_plate, LV_ALIGN_CENTER, 82 - 233,
+                 kLeanHeroLiftPx);
     ui.lean_max_r_plate =
         make_plate(page, "R --", 90, 26, &ui.lean_max_r);
-    lv_obj_set_pos(ui.lean_max_r_plate, px(188), px(72));
+    lv_obj_align(ui.lean_max_r_plate, LV_ALIGN_CENTER, 384 - 233,
+                 kLeanHeroLiftPx);
 
+    // Without attitude the plate takes the numeral's place.
     ui.lean_state = make_plate(page, "NO IMU", 120, 30, &ui.lean_state_text);
-    lv_obj_align(ui.lean_state, LV_ALIGN_CENTER, 0, px(78));
+    lv_obj_align(ui.lean_state, LV_ALIGN_CENTER, 0, kLeanHeroLiftPx);
     lv_obj_add_flag(ui.lean_state, LV_OBJ_FLAG_HIDDEN);
 
+    // Full-screen, so it stays hidden until a press shows it: a visible
+    // canvas is visited by every dirty area even when it draws nothing.
     ui.lean_progress = make_draw_canvas(page, draw_lean_progress);
+    lv_obj_add_flag(ui.lean_progress, LV_OBJ_FLAG_HIDDEN);
 
     // One status slot: CAL / countdown / result / IMU POLL / LOG FULL / LOG
-    // DIRTY. It sits
-    // below the hero and above nothing else, so it never competes with the
-    // horizon (v2 r1 §6.2).
+    // DIRTY. It sits under the top of the arc and above the numeral, so it
+    // never competes with the bike (v2 r1 §6.2).
     ui.lean_status_plate = make_plate(page, "", 150, 56, &ui.lean_status_text);
-    lv_obj_align(ui.lean_status_plate, LV_ALIGN_CENTER, 0, 130);
+    lv_obj_align(ui.lean_status_plate, LV_ALIGN_CENTER, 0, -122);
     lv_obj_set_name_static(ui.lean_status_plate, "moto-lean-status");
     lv_obj_set_style_text_align(ui.lean_status_text, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(ui.lean_status_text, -4, 0);
     lv_obj_add_flag(ui.lean_status_plate, LV_OBJ_FLAG_HIDDEN);
 
-    // Static chrome lives above the scene so the scene's dirty region never
-    // touches it. The blip is above the casing; frame and marks are below it
-    // but above the horizon.
-    lv_obj_move_foreground(ui.page_frames[MOTO_UI_PAGE_LEAN]);
-    lv_obj_move_foreground(ui.lean_marks);
-    lv_obj_move_foreground(ui.lean_blip);
+    // Frame and protractor stay below the scene, outside its disc.
 
     ui.lean_press_timer = lv_timer_create(lean_press_tick, 30, nullptr);
     lv_timer_pause(ui.lean_press_timer);
     ui.lean_status_timer = lv_timer_create(lean_status_tick, 100, nullptr);
+
+    ui.lean_display = lv_obj_get_display(page);
+    if(ui.lean_display != nullptr) {
+        lv_display_add_event_cb(ui.lean_display, lean_refresh_start,
+                                LV_EVENT_REFR_START, nullptr);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4162,17 +4537,11 @@ void moto_ui_gta::show_boot_screen(void) {
     const int gap = 6;
     const int split_x = side / 2 - 40;
     const int split_y = side / 2 + 18;
-    // Dusk over the city: the cover's art panel is a poster, so it may be
-    // loud. HUD orange sky, black towers lit in the same orange.
-    static MapPalette dusk;
-    dusk = palette;
-    dusk.ground = palette.route;
-    dusk.building = kOutlineBlack;
-    dusk.building_landmark = LV_COLOR_MAKE(0x6A, 0x30, 0x10);
+    const MapPalette *dusk = dusk_palette();
     const Panel panels[] = {
         {0, 0, split_x, split_y, palette.background},
         {split_x + gap, 0, side - split_x - gap, split_y, palette.slab},
-        {0, split_y + gap, side, side - split_y - gap, dusk.ground},
+        {0, split_y + gap, side, side - split_y - gap, dusk->ground},
     };
     for(const Panel &panel : panels) {
         lv_obj_t *box = lv_obj_create(grid);
@@ -4222,7 +4591,7 @@ void moto_ui_gta::show_boot_screen(void) {
                         nullptr);
     // The city panel along the bottom: the same skyline the pages carry,
     // lifted so it stands on the panel's floor.
-    lv_obj_t *city = make_skyline(grid, &dusk);
+    lv_obj_t *city = make_skyline(grid, dusk);
     lv_obj_add_flag(city, LV_OBJ_FLAG_USER_1);
     lv_obj_set_pos(city, -(MOTO_UI_CANVAS_WIDTH / 2 - kDialRadius),
                    -(MOTO_UI_CANVAS_HEIGHT / 2 - kDialRadius) - 6);
@@ -4401,13 +4770,29 @@ void apply_theme_colors() {
         lv_obj_invalidate(ui.lean_scene);
     }
     if(ui.nav_lifecycle != nullptr) {
-        lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.ground, 0);
+        lv_obj_set_style_bg_color(ui.nav_lifecycle, ui.palette.frame, 0);
     }
-    if(ui.lifecycle_rules[1] != nullptr) {
-        lv_obj_set_style_bg_color(ui.lifecycle_rules[1], ui.palette.slab, 0);
+    // The cover's gutter and its paper panels; the dusk panel and the pager
+    // are the same in both themes.
+    if(ui.lifecycle_cover[0] != nullptr) {
+        lv_obj_set_style_bg_color(ui.lifecycle_cover[0], ui.palette.accent, 0);
     }
-    if(ui.lifecycle_slash != nullptr) {
-        lv_obj_set_style_bg_color(ui.lifecycle_slash, ui.palette.accent, 0);
+    if(ui.lifecycle_cover[1] != nullptr) {
+        lv_obj_set_style_border_color(ui.lifecycle_cover[1],
+                                      ui.palette.accent, 0);
+    }
+    if(ui.lifecycle_panels[0] != nullptr) {
+        lv_obj_set_style_bg_color(ui.lifecycle_panels[0],
+                                  ui.palette.background, 0);
+    }
+    if(ui.lifecycle_panels[1] != nullptr) {
+        lv_obj_set_style_bg_color(ui.lifecycle_panels[1], ui.palette.ground,
+                                  0);
+    }
+    // The Connected headline's gold follows the paper too.
+    if(ui.nav_lifecycle_title != nullptr &&
+       ui.lifecycle_visual == LifecycleVisual::Connected) {
+        lv_obj_set_style_text_color(ui.nav_lifecycle_title, ui.palette.hud, 0);
     }
 
     for(std::uint8_t i = 0; i < ui.nav_building_footprint_count; ++i) {
