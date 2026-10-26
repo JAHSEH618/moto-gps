@@ -573,6 +573,27 @@ Error validate(const GnssInput& value) {
   return Error::None;
 }
 
+Error validate(const PerformanceRun& value) {
+  if (value.state != PerformanceRunState::Armed &&
+      value.state != PerformanceRunState::Running &&
+      value.state != PerformanceRunState::Finished) {
+    return Error::InvalidEnum;
+  }
+  // The same table SettingsState allows; a target outside it is a bug.
+  if (value.target_kph != 50 && value.target_kph != 60 &&
+      value.target_kph != 100) {
+    return Error::OutOfRange;
+  }
+  // Armed carries no time, and a finished run has a run behind it.
+  if (value.state == PerformanceRunState::Armed && value.elapsed_ms != 0) {
+    return Error::OutOfRange;
+  }
+  if (value.state != PerformanceRunState::Armed && value.run_id == 0) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -728,6 +749,12 @@ BytesResult encode_payload(const T& value) {
     writer.u16(value.fix_age_ms);
     writer.u16(value.speed_cmps);
     writer.u16(value.speed_accuracy_cmps);
+  } else if constexpr (std::is_same_v<T, PerformanceRun>) {
+    writer.u8(static_cast<std::uint8_t>(value.state));
+    writer.u16(value.target_kph);
+    writer.u32(value.run_id);
+    writer.u32(value.elapsed_ms);
+    writer.u32(value.best_ms);
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -1610,6 +1637,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::SettingsState;
         } else if constexpr (std::is_same_v<T, GnssInput>) {
           return MessageType::GnssInput;
+        } else if constexpr (std::is_same_v<T, PerformanceRun>) {
+          return MessageType::PerformanceRun;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1714,6 +1743,26 @@ MessageResult decode_gnss_input(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool PerformanceRun::operator==(const PerformanceRun& rhs) const noexcept {
+  return std::tie(state, target_kph, run_id, elapsed_ms, best_ms) ==
+         std::tie(rhs.state, rhs.target_kph, rhs.run_id, rhs.elapsed_ms,
+                  rhs.best_ms);
+}
+
+MessageResult decode_performance_run(ByteView payload) {
+  Reader reader(payload);
+  PerformanceRun value;
+  if (begin_payload(reader)) {
+    value.state = static_cast<PerformanceRunState>(reader.u8());
+    value.target_kph = reader.u16();
+    value.run_id = reader.u32();
+    value.elapsed_ms = reader.u32();
+    value.best_ms = reader.u32();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -1736,6 +1785,8 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_settings_state(payload);
     case MessageType::GnssInput:
       return decode_gnss_input(payload);
+    case MessageType::PerformanceRun:
+      return decode_performance_run(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

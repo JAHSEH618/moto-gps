@@ -101,6 +101,11 @@ class PhoneNavBridge {
   static void music_command(moto_music_command_t command, void* context);
   static void demo_changed(uint8_t enabled, void* context);
   static void home_shortcut(void* context);
+  // The 0-100 clock's transitions, on the LVGL (render) task.
+  static void performance_changed(const moto_ui_performance_run_t* run,
+                                  void* context);
+  // Sends the newest PerformanceRun if one is waiting. Render task only.
+  void send_pending_performance();
 
   void consume_navigation(const moto::ble::NavigationSnapshot& input);
   moto::ble::AckStatus consume_geometry(
@@ -179,6 +184,10 @@ class PhoneNavBridge {
   // Newest valid sample waiting for the render task, and the 10 Hz clock.
   moto::ble::AttitudeSample pending_attitude_{};
   bool attitude_pending_ = false;
+  // The device's 0-100 clock as last reported; re-sent after each handshake
+  // to a phone that shows it (CapabilityPerformanceRun).
+  moto::ble::PerformanceRun last_performance_{};
+  bool performance_pending_ = false;
   std::uint64_t last_attitude_queued_ms_ = 0;
   std::uint16_t next_command_id_ = 1;
   bool link_active_ = false;
@@ -206,6 +215,9 @@ class PhoneNavBridge {
     // sent by the render task, because the BLE sender may block and the
     // sensor task reads the IMU every 4.4 ms.
     RenderAttitude = 1U << 5U,
+    // Send the newest PerformanceRun: raised from inside an LVGL call, sent
+    // by the render task once it is outside it.
+    RenderPerformance = 1U << 6U,
   };
   std::atomic<std::uint32_t> pending_render_flags_{0};
 #ifdef ESP_PLATFORM

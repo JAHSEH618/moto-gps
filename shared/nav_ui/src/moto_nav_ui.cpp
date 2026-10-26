@@ -58,6 +58,8 @@ struct Dispatch {
     void *calibration_context = nullptr;
     moto_lean_clear_peaks_callback_t clear_peaks_callback = nullptr;
     void *clear_peaks_context = nullptr;
+    moto_ui_performance_callback_t performance_callback = nullptr;
+    void *performance_context = nullptr;
 };
 
 Dispatch d;
@@ -99,6 +101,8 @@ void install_callbacks() {
                                                    d.calibration_context);
         moto_ui_gta::set_clear_peaks_callback(d.clear_peaks_callback,
                                               d.clear_peaks_context);
+        moto_ui_gta::set_performance_callback(d.performance_callback,
+                                              d.performance_context);
     } else {
         moto_ui_classic::set_page_change_callback(d.page_callback,
                                                   d.page_context);
@@ -160,6 +164,7 @@ extern "C" void moto_nav_ui_set_boot_theme(moto_ui_theme_t theme) {
 
 extern "C" void moto_nav_ui_show_boot_screen(void) {
     d.live = false;
+    moto_ui_battery::set_live(false);
     if(backend_for(d.boot_theme) == Backend::Classic) {
         moto_ui_gta::teardown();
         moto_ui_classic::show_boot_screen();
@@ -171,6 +176,7 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
 
 extern "C" void moto_nav_ui_show_power_off_screen(void) {
     d.live = false;
+    moto_ui_battery::set_live(false);
     if(d.active == Backend::Classic) {
         moto_ui_classic::show_power_off_screen();
     } else {
@@ -193,6 +199,7 @@ extern "C" void moto_nav_ui_create(void) {
         moto_ui_gta::create();
     }
     d.live = true;
+    moto_ui_battery::set_live(true);
 }
 
 extern "C" void moto_nav_ui_set_theme(moto_ui_theme_t theme) {
@@ -355,6 +362,13 @@ extern "C" void moto_nav_ui_set_clear_peaks_callback(
     install_callbacks();
 }
 
+extern "C" void moto_nav_ui_set_performance_callback(
+    moto_ui_performance_callback_t callback, void *context) {
+    d.performance_callback = callback;
+    d.performance_context = context;
+    install_callbacks();
+}
+
 extern "C" void moto_nav_ui_set_lean_cal_state(moto_ui_lean_cal_state_t state,
                                                uint8_t value) {
     // Only the GTA tree has a Lean page; its post is atomics-only, so it is
@@ -370,6 +384,11 @@ extern "C" void moto_nav_ui_set_lean_flags(uint8_t cal_unverified,
     g_flag_full.store(log_full);
     g_flag_dirty.store(log_dirty);
     moto_ui_gta::set_lean_flags(cal_unverified, imu_poll, log_full, log_dirty);
+}
+
+extern "C" void moto_nav_ui_set_battery(moto_ui_power_source_t source,
+                                        uint8_t percent) {
+    moto_ui_battery::post(source, percent);
 }
 
 extern "C" void moto_nav_ui_show_home_error(void) {

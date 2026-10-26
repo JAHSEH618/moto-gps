@@ -62,6 +62,20 @@ void board_port_display_totals(uint64_t *render_us, uint32_t *frames);
 /** GPIO3/SYS_OUT is high while the case PWR key is physically held. */
 bool board_port_power_button_pressed(void);
 
+/** Supply and battery as the AXP2101 reports them. */
+typedef struct {
+    bool vbus;            /* USB power is present */
+    bool battery_present; /* a cell is connected */
+    bool charging;        /* current flows into the cell */
+    uint8_t percent;      /* fuel gauge; meaningful only with battery_present */
+} board_power_t;
+
+/**
+ * Read the PMIC's supply status and fuel gauge. Three register reads on the
+ * shared I2C bus; call it every few seconds, not per frame.
+ */
+esp_err_t board_port_read_power(board_power_t *out);
+
 /**
  * Request AXP2101 software power-off. Keep a deep-sleep fallback in the caller
  * for the USB-powered case until all three supply combinations are bench-tested.

@@ -157,6 +157,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) int16_t lateralMilliG;
 @end
 
+/// The round screen's 0-100 clock (message 0x19). It owns the clock; the
+/// phone shows what it measured. state: 0 armed, 1 running, 2 finished.
+@interface MotoBLEPerformanceRun : NSObject
+@property(nonatomic, readonly) uint8_t state;
+@property(nonatomic, readonly) uint16_t targetKph;
+@property(nonatomic, readonly) uint32_t runID;
+@property(nonatomic, readonly) uint32_t elapsedMilliseconds;
+@property(nonatomic, readonly) uint32_t bestMilliseconds;
+@end
+
 /// One successfully decoded transport message, or one valid partial/duplicate
 /// frame. Sequence and ACK metadata stay attached to the shared decoder output.
 @interface MotoBLEInboundMessage : NSObject
@@ -168,6 +178,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, nullable) MotoBLEHeartbeat *heartbeat;
 @property(nonatomic, readonly, nullable) MotoBLEAcknowledgement *acknowledgement;
 @property(nonatomic, readonly, nullable) MotoBLEAttitudeSample *attitudeSample;
+@property(nonatomic, readonly, nullable) MotoBLEPerformanceRun *performanceRun;
 @property(nonatomic, readonly, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 

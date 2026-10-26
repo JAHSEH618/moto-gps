@@ -120,6 +120,7 @@ enum class MessageType : std::uint8_t {
   HomeLocation = 0x16,
   SettingsState = 0x17,
   GnssInput = 0x18,
+  PerformanceRun = 0x19,
   DeviceCommand = 0x20,
 };
 
@@ -293,6 +294,9 @@ enum Capability : std::uint32_t {
   // was taken. Without this bit the phone sends none and the device ages the
   // snapshot speed from its arrival.
   CapabilityGnssInput = 1U << 12U,
+  // Phone->device: the phone shows the device's 0-100 runs. Only a phone that
+  // advertises this is sent PerformanceRun, so an older app never sees 0x19.
+  CapabilityPerformanceRun = 1U << 13U,
 };
 
 struct ConnectionStatus {
@@ -714,6 +718,34 @@ struct GnssInput {
   bool operator==(const GnssInput& rhs) const noexcept;
 };
 
+enum class PerformanceRunState : std::uint8_t {
+  // Waiting at a standstill; the next roll-away starts the clock.
+  Armed = 0,
+  Running = 1,
+  // The target was reached; elapsed_ms is the time.
+  Finished = 2,
+};
+
+inline constexpr std::size_t kPerformanceRunPayloadSize = 16;
+
+// Device->phone. The round screen owns the 0-100 clock and the phone shows
+// what it measured, so the two numbers can never disagree. Sent on every state
+// change and after each handshake, to a phone that advertises
+// CapabilityPerformanceRun; no Ack, the next state replaces a lost one. While
+// Running the phone ticks its own display from elapsed_ms at arrival.
+struct PerformanceRun {
+  PerformanceRunState state = PerformanceRunState::Armed;
+  std::uint16_t target_kph = 100;
+  // Bumps when a run starts; zero before the first one since power-on.
+  std::uint32_t run_id = 0;
+  // Running: time so far when sent. Finished: the run's time. Armed: zero.
+  std::uint32_t elapsed_ms = 0;
+  // Best time since power-on; zero when there is none.
+  std::uint32_t best_ms = 0;
+
+  bool operator==(const PerformanceRun& rhs) const noexcept;
+};
+
 using Message = std::variant<ConnectionStatus,                             Heartbeat,
                              Ack,
                              NavigationSnapshot,
@@ -725,6 +757,7 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              HomeLocation,
                              SettingsState,
                              GnssInput,
+                             PerformanceRun,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;

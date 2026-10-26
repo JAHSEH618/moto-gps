@@ -312,7 +312,10 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                         moto::ble::CapabilityMapScene |
                         // Asks the device for AttitudeSample (0x15) at 10 Hz;
                         // ESP32BLECentral already decodes and expires it.
-                        moto::ble::CapabilityAttitudeTelemetry;
+                        moto::ble::CapabilityAttitudeTelemetry |
+                        // Asks for the device's 0-100 runs (0x19), shown on
+                        // the race page.
+                        moto::ble::CapabilityPerformanceRun;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(storage->maximum_frame_size);
@@ -452,6 +455,17 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @implementation MotoBLEAttitudeSample
 @end
 
+@interface MotoBLEPerformanceRun ()
+@property(nonatomic, readwrite) uint8_t state;
+@property(nonatomic, readwrite) uint16_t targetKph;
+@property(nonatomic, readwrite) uint32_t runID;
+@property(nonatomic, readwrite) uint32_t elapsedMilliseconds;
+@property(nonatomic, readwrite) uint32_t bestMilliseconds;
+@end
+
+@implementation MotoBLEPerformanceRun
+@end
+
 @interface MotoBLEAcknowledgement ()
 @property(nonatomic, readwrite) uint16_t acknowledgedSequence;
 @property(nonatomic, readwrite) uint8_t status;
@@ -469,6 +483,7 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @property(nonatomic, readwrite, nullable) MotoBLEHeartbeat *heartbeat;
 @property(nonatomic, readwrite, nullable) MotoBLEAcknowledgement *acknowledgement;
 @property(nonatomic, readwrite, nullable) MotoBLEAttitudeSample *attitudeSample;
+@property(nonatomic, readwrite, nullable) MotoBLEPerformanceRun *performanceRun;
 @property(nonatomic, readwrite, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -770,6 +785,18 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
     value.longitudinalMilliG = attitude->longitudinal_mg;
     value.lateralMilliG = attitude->lateral_mg;
     inbound.attitudeSample = value;
+    return inbound;
+  }
+
+  const auto *run = std::get_if<moto::ble::PerformanceRun>(&decoded.value);
+  if (run != nullptr) {
+    MotoBLEPerformanceRun *value = [[MotoBLEPerformanceRun alloc] init];
+    value.state = static_cast<uint8_t>(run->state);
+    value.targetKph = run->target_kph;
+    value.runID = run->run_id;
+    value.elapsedMilliseconds = run->elapsed_ms;
+    value.bestMilliseconds = run->best_ms;
+    inbound.performanceRun = value;
     return inbound;
   }
 

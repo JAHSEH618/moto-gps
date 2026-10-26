@@ -345,6 +345,7 @@ void PhoneNavBridge::install_ui_callbacks() {
   moto_nav_ui_set_music_command_callback(music_command, this);
   moto_nav_ui_set_demo_change_callback(demo_changed, this);
   moto_nav_ui_set_home_callback(home_shortcut, this);
+  moto_nav_ui_set_performance_callback(performance_changed, this);
 }
 
 bool PhoneNavBridge::start_renderer() {
@@ -504,6 +505,58 @@ void PhoneNavBridge::send_pending_attitude() {
   sender(message, 0, sender_context);
 }
 
+void PhoneNavBridge::performance_changed(const moto_ui_performance_run_t* run,
+                                        void* context) {
+  if (run == nullptr) return;
+  auto* bridge = static_cast<PhoneNavBridge*>(context);
+  {
+    const std::lock_guard<std::mutex> lock(bridge->state_mutex_);
+    moto::ble::PerformanceRun& value = bridge->last_performance_;
+    switch (run->state) {
+      case MOTO_UI_RUN_RUNNING:
+        value.state = moto::ble::PerformanceRunState::Running;
+        break;
+      case MOTO_UI_RUN_FINISHED:
+        value.state = moto::ble::PerformanceRunState::Finished;
+        break;
+      case MOTO_UI_RUN_ARMED:
+      default:
+        value.state = moto::ble::PerformanceRunState::Armed;
+        break;
+    }
+    value.target_kph = run->target_kph;
+    value.run_id = run->run_id;
+    value.elapsed_ms =
+        value.state == moto::ble::PerformanceRunState::Armed ? 0
+                                                             : run->elapsed_ms;
+    value.best_ms = run->best_ms;
+    bridge->performance_pending_ = true;
+  }
+  // Raised from inside the LVGL call that fed the speed; the render task
+  // sends it once that call has returned.
+  bridge->request_render(RenderPerformance);
+}
+
+void PhoneNavBridge::send_pending_performance() {
+  moto::ble::PerformanceRun run;
+  SendCallback sender = nullptr;
+  void* sender_context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!performance_pending_ || sender_ == nullptr || !link_active_ ||
+        (phone_capabilities_ & moto::ble::CapabilityPerformanceRun) == 0U) {
+      return;
+    }
+    performance_pending_ = false;
+    run = last_performance_;
+    sender = sender_;
+    sender_context = sender_context_;
+  }
+  // No Ack: the next transition replaces a lost one, and each handshake
+  // re-sends the current state.
+  sender(moto::ble::Message{run}, 0, sender_context);
+}
+
 void PhoneNavBridge::fill_demo_snapshot(moto::nav::NavSnapshot& output,
                                         std::uint64_t elapsed_ms) {
   constexpr std::uint64_t kArrivalHoldMs = 2'200;
@@ -650,6 +703,13 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
             phone_session_id_ = value.session_id;
             phone_capabilities_ = value.capabilities;
             home_revision_ = 0;
+            // A phone that shows the 0-100 clock gets its current state now,
+            // not at the next run.
+            if ((value.capabilities &
+                 moto::ble::CapabilityPerformanceRun) != 0U) {
+              performance_pending_ = true;
+              request_render(RenderPerformance);
+            }
             switch (value.state) {
               case moto::ble::ConnectionState::Ready:
                 ui_phone_connection_ = MOTO_UI_PHONE_ONLINE;
@@ -1245,12 +1305,12 @@ void PhoneNavBridge::render_pending() {
     }
   }
 
-  if ((requested & RenderAttitude) != 0U) {
-    send_pending_attitude();
-    if ((requested & ~static_cast<std::uint32_t>(RenderAttitude)) == 0U) {
-      return;
-    }
-  }
+  if ((requested & RenderPerformance) != 0U) send_pending_performance();
+  constexpr std::uint32_t kSendOnly =
+      static_cast<std::uint32_t>(RenderAttitude) |
+      static_cast<std::uint32_t>(RenderPerformance);
+  if ((requested & RenderAttitude) != 0U) send_pending_attitude();
+  if ((requested & ~kSendOnly) == 0U) return;
 
   // Projection is the expensive part of a motion frame (hundreds of map
   // points and trigonometry), but it does not call LVGL. Keep it outside the

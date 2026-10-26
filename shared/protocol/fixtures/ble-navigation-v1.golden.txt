@@ -9,6 +9,8 @@
 # together and the old shape is now rejected as trailing bytes.
 # GnssInput (0x18) is additive: it is gated on CapabilityGnssInput, and no
 # existing payload moved.
+# PerformanceRun (0x19) is additive: the device sends it only to a phone that
+# advertises CapabilityPerformanceRun.
 connection.payload=01010101017f00000078563412b900e803
 connection.frame=b701010301000000110001010101017f00000078563412b900e8035469
 navigation.payload=0103020007029300a61062bf040302012a0000007801000039300000fc030000340800006d380000e3013200a32326007d00000ce4b89ce995bfe5ae89e8a19712e5898de696b9e8b7afe58fa3e58fb3e8bdac
@@ -19,3 +21,4 @@ attitude.payload=0178563412b80b06ffcefe4102
 home.payload=01020103000000d09b2f024027fb06
 settings.payload=01034101283c001f83ff010105000000
 gnss.payload=0103785634124001f5052800
+performance.payload=01026400030000000613000002120000

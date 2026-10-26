@@ -60,6 +60,18 @@ constexpr std::uint8_t kAxp2101LongPressShutdownMask = 0x02;
 constexpr std::uint8_t kAxp2101LongPressRestartMask = 0x01;
 constexpr std::uint8_t kAxp2101KeyTimingRegister = 0x27;
 constexpr std::uint8_t kAxp2101PowerOffTimingMask = 0x0C;
+// Supply and fuel gauge (AXP2101 datasheet; register map as XPowersLib uses
+// it). Not yet read against a fitted cell on this board.
+constexpr std::uint8_t kAxp2101Status1Register = 0x00;
+constexpr std::uint8_t kAxp2101VbusGoodMask = 0x20;
+constexpr std::uint8_t kAxp2101BatteryPresentMask = 0x08;
+constexpr std::uint8_t kAxp2101Status2Register = 0x01;
+constexpr std::uint8_t kAxp2101ChargingDirection = 0x01;  // bits 6:5 = 01
+constexpr std::uint8_t kAxp2101GaugeControlRegister = 0x18;
+constexpr std::uint8_t kAxp2101GaugeEnableMask = 0x08;
+constexpr std::uint8_t kAxp2101BatteryDetectRegister = 0x68;
+constexpr std::uint8_t kAxp2101BatteryDetectMask = 0x01;
+constexpr std::uint8_t kAxp2101BatteryPercentRegister = 0xA4;
 lv_display_t* display = nullptr;
 esp_lcd_panel_handle_t panel = nullptr;
 i2c_master_dev_handle_t pmic = nullptr;
@@ -835,9 +847,49 @@ esp_err_t initialize_power_control() {
 
   ESP_LOGI(kTag,
            "PWR ready: GPIO3 hold 3 s software off, AXP2101 hold 4 s hard off");
+
+  // The battery ring needs the fuel gauge and the cell detector. Set only
+  // these two bits: the same registers hold the charger enables. A failure
+  // costs the ring, not the boot.
+  const auto set_bits = [](std::uint8_t reg, std::uint8_t mask) {
+    std::uint8_t value = 0;
+    esp_err_t result = read_pmic_register(reg, &value);
+    if (result == ESP_OK && (value & mask) != mask) {
+      result = write_pmic_register(reg, static_cast<std::uint8_t>(value | mask));
+    }
+    return result;
+  };
+  const esp_err_t gauge =
+      set_bits(kAxp2101GaugeControlRegister, kAxp2101GaugeEnableMask);
+  const esp_err_t detect =
+      set_bits(kAxp2101BatteryDetectRegister, kAxp2101BatteryDetectMask);
+  if (gauge != ESP_OK || detect != ESP_OK) {
+    ESP_LOGW(kTag, "AXP2101 fuel gauge setup failed: gauge %s, detect %s",
+             esp_err_to_name(gauge), esp_err_to_name(detect));
+  }
   return ESP_OK;
 }
 }  // namespace
+
+extern "C" esp_err_t board_port_read_power(board_power_t* out) {
+  if (out == nullptr) return ESP_ERR_INVALID_ARG;
+  if (pmic == nullptr) return ESP_ERR_INVALID_STATE;
+  std::uint8_t status1 = 0;
+  std::uint8_t status2 = 0;
+  std::uint8_t percent = 0;
+  ESP_RETURN_ON_ERROR(read_pmic_register(kAxp2101Status1Register, &status1),
+                      kTag, "AXP2101 status read failed");
+  ESP_RETURN_ON_ERROR(read_pmic_register(kAxp2101Status2Register, &status2),
+                      kTag, "AXP2101 charge status read failed");
+  ESP_RETURN_ON_ERROR(
+      read_pmic_register(kAxp2101BatteryPercentRegister, &percent), kTag,
+      "AXP2101 fuel gauge read failed");
+  out->vbus = (status1 & kAxp2101VbusGoodMask) != 0;
+  out->battery_present = (status1 & kAxp2101BatteryPresentMask) != 0;
+  out->charging = ((status2 >> 5) & 0x03) == kAxp2101ChargingDirection;
+  out->percent = percent;
+  return ESP_OK;
+}
 
 extern "C" esp_err_t board_port_init(void) {
   if (display != nullptr) {

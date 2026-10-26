@@ -654,6 +654,83 @@ void test_performance_and_lean_pages_render_attitude() {
 }
 
 
+// The phone shows the round screen's 0-100 runs (PerformanceRun, 0x19), so
+// every transition of the device clock is reported: armed, started, finished,
+// and armed again after a deliberate stop.
+std::vector<moto_ui_performance_run_t> performance_reports;
+void record_performance(const moto_ui_performance_run_t *run, void *) {
+  performance_reports.push_back(*run);
+}
+
+void test_the_launch_clock_reports_each_run() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  performance_reports.clear();
+  moto_nav_ui_set_performance_callback(record_performance, nullptr);
+  moto_ui_state_t state = base_state();
+  state.page = MOTO_UI_PAGE_PERFORMANCE;
+  state.speed_kph = 0;
+  moto_nav_ui_set_state(&state);
+  pump(10);
+  // A page that is merely shown reports nothing new.
+  CHECK(performance_reports.empty());
+
+  state.speed_kph = 8;
+  moto_nav_ui_set_state(&state);
+  CHECK(performance_reports.size() == 1U);
+  if (performance_reports.size() != 1U) return;
+  CHECK(performance_reports[0].state == MOTO_UI_RUN_RUNNING);
+  CHECK(performance_reports[0].target_kph == 100);
+  const std::uint32_t first_run = performance_reports[0].run_id;
+  CHECK(first_run > 0U);
+  CHECK(performance_reports[0].elapsed_ms == 0U);
+
+  pump(100);  // 500 ms of LVGL ticks
+  state.speed_kph = 60;
+  moto_nav_ui_set_state(&state);
+  // Speeding up mid-run is not a transition.
+  CHECK(performance_reports.size() == 1U);
+  pump(100);
+  state.speed_kph = 101;
+  moto_nav_ui_set_state(&state);
+  CHECK(performance_reports.size() == 2U);
+  if (performance_reports.size() != 2U) return;
+  const moto_ui_performance_run_t done = performance_reports[1];
+  CHECK(done.state == MOTO_UI_RUN_FINISHED);
+  CHECK(done.run_id == first_run);
+  CHECK(done.elapsed_ms >= 1'000U && done.elapsed_ms < 1'200U);
+  CHECK(done.best_ms == done.elapsed_ms || done.best_ms < done.elapsed_ms);
+
+  // A stop rearms only once it has lasted 1.5 s.
+  state.speed_kph = 0;
+  moto_nav_ui_set_state(&state);
+  pump(100);
+  moto_nav_ui_set_state(&state);
+  CHECK(performance_reports.size() == 2U);
+  pump(240);
+  moto_nav_ui_set_state(&state);
+  CHECK(performance_reports.size() == 3U);
+  if (performance_reports.size() == 3U) {
+    CHECK(performance_reports[2].state == MOTO_UI_RUN_ARMED);
+    CHECK(performance_reports[2].elapsed_ms == 0U);
+    CHECK(performance_reports[2].best_ms == done.best_ms);
+  }
+
+  // The next roll-away is a new run.
+  state.speed_kph = 3;
+  moto_nav_ui_set_state(&state);
+  CHECK(performance_reports.size() == 4U);
+  if (performance_reports.size() == 4U) {
+    CHECK(performance_reports[3].run_id == first_run + 1U);
+  }
+
+  moto_nav_ui_set_performance_callback(nullptr, nullptr);
+  state.speed_kph = 0;
+  moto_nav_ui_set_state(&state);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  pump(1100);
+}
+
 int lean_calibration_requests = 0;
 int lean_peak_clears = 0;
 
@@ -1242,6 +1319,8 @@ void dump_review_frames(const char *dir) {
   const char *page_names[] = {"nav", "perf", "lean", "speedg", "compass", "music"};
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  // The battery ring is reviewed on every page: 62% on the battery.
+  moto_nav_ui_set_battery(MOTO_UI_POWER_BATTERY, 62);
   pump(300);
 
   moto_ui_state_t state = base_state();
@@ -1411,6 +1490,33 @@ void dump_review_frames(const char *dir) {
 
   moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
   moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+
+  // The two other ring states, on the Lean page of each family's look.
+  moto_nav_ui_set_state(&state);
+  const struct {
+    const char *name;
+    moto_ui_power_source_t source;
+    std::uint8_t percent;
+  } batteries[] = {
+      {"usb", MOTO_UI_POWER_EXTERNAL, 100},
+      {"low", MOTO_UI_POWER_BATTERY, 15},
+  };
+  for (const auto &battery : batteries) {
+    moto_nav_ui_set_battery(battery.source, battery.percent);
+    for (const ThemeCase &theme : themes) {
+      moto_nav_ui_set_theme(theme.theme);
+      moto_nav_ui_set_page(MOTO_UI_PAGE_LEAN);
+      pump(1100);
+      char path[512];
+      std::snprintf(path, sizeof(path), "%s/battery-%s-%s.ppm", dir,
+                    battery.name, theme.name);
+      write_ppm_to(path);
+    }
+  }
+  moto_nav_ui_set_battery(MOTO_UI_POWER_UNKNOWN, 0);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  pump(60);
 }
 
 void render_demo_frame() {
@@ -1654,6 +1760,109 @@ void test_one_swipe_moves_one_page_even_after_a_rebuild() {
 }
 
 
+// The battery ring sits on the bezel outside the band, on every page of both
+// interfaces (DESIGN_V2 §2.9): green from twelve o'clock clockwise over a dim
+// track, red at 20% and below, and on USB the charging bolt in a gap at
+// twelve. Samples sit on the ring's centre line, r = 227.
+std::uint16_t to565(lv_color_t color) { return lv_color_to_u16(color); }
+
+void test_battery_ring_follows_the_power_reading() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  pump(1100);
+  const Frame before = capture();
+  const std::uint16_t bezel_right = pixel_at(460, 233);
+  const std::uint16_t before_band = pixel_at(450, 233);
+  CHECK(bezel_right == rgb565(0x00, 0x00, 0x00));
+  lv_obj_t *ring = lv_obj_find_by_name(lv_layer_top(), "moto-battery-ring");
+  CHECK(ring != nullptr);
+
+  const lv_color_t green = lv_color_hex(0x30D158);
+  const lv_color_t red = lv_color_hex(0xFF453A);
+  const lv_color_t black = lv_color_hex(0x000000);
+  const std::uint16_t green_track = to565(lv_color_mix(green, black, 77));
+  const std::uint16_t red_track = to565(lv_color_mix(red, black, 77));
+
+  // 60% on the battery: three o'clock (25%) and six (50%) are filled, nine
+  // (75%) is track.
+  moto_nav_ui_set_battery(MOTO_UI_POWER_BATTERY, 60);
+  pump(60);
+  CHECK(pixel_at(460, 233) == to565(green));
+  CHECK(pixel_at(233, 460) == to565(green));
+  CHECK(pixel_at(6, 233) == green_track);
+  // The ring is the bezel, r 224..232 out to the glass edge, with a 2 px
+  // black seam (r 222, 223) against the band. The band itself is untouched.
+  CHECK(pixel_at(457, 233) == to565(green));
+  CHECK(pixel_at(465, 233) == to565(green));
+  CHECK(pixel_at(456, 233) == rgb565(0x00, 0x00, 0x00));
+  CHECK(pixel_at(455, 233) == rgb565(0x00, 0x00, 0x00));
+  CHECK(pixel_at(450, 233) == before_band);
+
+  // A swipe still reaches the page underneath.
+  lv_test_indev_create_all();
+  swipe(320, 180);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_SPEED);
+  swipe(180, 320);
+  CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_NAVIGATION);
+  lv_test_indev_delete_all();
+  pump(1100);
+  // The ring is on every page: the Speed·G page carries it too.
+  moto_nav_ui_set_page(MOTO_UI_PAGE_LEAN);
+  pump(60);
+  CHECK(pixel_at(460, 233) == to565(green));
+  moto_nav_ui_set_page(MOTO_UI_PAGE_NAVIGATION);
+  pump(1100);
+
+  // 15%: red, and three o'clock is now track; one o'clock (8%) is filled.
+  moto_nav_ui_set_battery(MOTO_UI_POWER_BATTERY, 15);
+  pump(60);
+  CHECK(pixel_at(460, 233) == red_track);
+  CHECK(has_color_within(347, 36, to565(red), 1));
+
+  // USB with no battery fitted: a full green ring, open at twelve round the
+  // bolt. Low charge does not turn a charging ring red.
+  moto_nav_ui_set_battery(MOTO_UI_POWER_EXTERNAL, 100);
+  pump(60);
+  CHECK(pixel_at(460, 233) == to565(green));
+  CHECK(pixel_at(6, 233) == to565(green));
+  CHECK(has_color_within(233, 6, to565(green), 1));
+  CHECK(pixel_at(240, 6) == rgb565(0x00, 0x00, 0x00));
+  CHECK(pixel_at(226, 6) == rgb565(0x00, 0x00, 0x00));
+  moto_nav_ui_set_battery(MOTO_UI_POWER_EXTERNAL, 10);
+  pump(60);
+  CHECK(has_color_within(347, 36, to565(green), 1));
+  CHECK(pixel_at(460, 233) == green_track);
+
+  // Both families: the Original tree carries the same ring.
+  moto_nav_ui_set_theme(MOTO_UI_THEME_OFFICIAL);
+  pump(1100);
+  CHECK(has_color_within(347, 36, to565(green), 1));
+  CHECK(has_color_within(233, 6, to565(green), 1));
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  pump(1100);
+
+  // No reading, no ring, and nothing left behind.
+  moto_nav_ui_set_battery(MOTO_UI_POWER_UNKNOWN, 0);
+  pump(60);
+  CHECK(pixel_at(460, 233) == bezel_right);
+  CHECK(capture().hash == before.hash);
+
+  // A second create() keeps the ring and its reading.
+  moto_nav_ui_set_battery(MOTO_UI_POWER_EXTERNAL, 10);
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  pump(1100);
+  CHECK(lv_obj_find_by_name(lv_layer_top(), "moto-battery-ring") == ring);
+  CHECK(has_color_within(347, 36, to565(green), 1));
+  moto_nav_ui_set_battery(MOTO_UI_POWER_UNKNOWN, 0);
+  pump(60);
+  CHECK(pixel_at(460, 233) == bezel_right);
+}
+
 // Six MapRoadClass values cross the wire; each must keep its own stroke. One
 // horizontal road per class, sampled on its centre line, in both GTA papers.
 void test_every_road_class_has_its_own_stroke() {
@@ -1685,11 +1894,11 @@ void test_every_road_class_has_its_own_stroke() {
   };
   const Paper papers[] = {
       {MOTO_UI_THEME_GTA_DAY,
-       {rgb565(0xD2, 0xAD, 0x6A), rgb565(0xF7, 0xF5, 0xEF),
+       {rgb565(0xF3, 0x4D, 0xAA), rgb565(0xF7, 0xF5, 0xEF),
         rgb565(0xEF, 0xEC, 0xE4), rgb565(0xD6, 0xD2, 0xC8),
         rgb565(0xB4, 0xB0, 0xA6), rgb565(0x8E, 0x8A, 0x82)}},
       {MOTO_UI_THEME_GTA_NIGHT,
-       {rgb565(0xD2, 0xAD, 0x6A), rgb565(0xF2, 0xEE, 0xE4),
+       {rgb565(0xF3, 0x4D, 0xAA), rgb565(0xF2, 0xEE, 0xE4),
         rgb565(0xD6, 0xD2, 0xC8), rgb565(0xB4, 0xB0, 0xA6),
         rgb565(0x8E, 0x8A, 0x82), rgb565(0x5E, 0x5B, 0x55)}},
   };
@@ -1728,17 +1937,17 @@ void ride_gg(moto_ui_state_t &state, float lateral, float longitudinal,
   }
 }
 
-// Gold inside the friction circle only: the live "x.xx G" label above it is
-// gold too, and its pixel count changes with the digits.
-int count_gold_in_plot() {
-  const std::uint16_t gold = rgb565(0xD2, 0xAD, 0x6A);
+// Pink inside the friction circle only: the live "x.xx G" label above it is
+// pink too, and its pixel count changes with the digits.
+int count_pink_in_plot() {
+  const std::uint16_t pink = rgb565(0xF3, 0x4D, 0xAA);
   const int cx = kWidth / 2;
   const int cy = kHeight / 2 + 3;
   int count = 0;
   for (int y = cy - 132; y <= cy + 132; ++y) {
     for (int x = cx - 132; x <= cx + 132; ++x) {
       if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > 132 * 132) continue;
-      if (pixel_at(x, y) == gold) ++count;
+      if (pixel_at(x, y) == pink) ++count;
     }
   }
   return count;
@@ -1758,8 +1967,8 @@ void test_speed_g_page_plots_g_and_keeps_the_envelope() {
   CHECK(dot != nullptr);
   if (dot == nullptr) return;
   capture();
-  const int gold_at_rest = count_gold_in_plot();
-  CHECK(gold_at_rest == 0);
+  const int pink_at_rest = count_pink_in_plot();
+  CHECK(pink_at_rest == 0);
 
   // A right-hand sweeper: lateral G to the right, a little drive and brake.
   ride_gg(state, 1.0F, 0.45F, 60);
@@ -1769,14 +1978,14 @@ void test_speed_g_page_plots_g_and_keeps_the_envelope() {
   CHECK(!lv_obj_has_flag(dot, LV_OBJ_FLAG_HIDDEN));
   const int32_t dot_x = lv_obj_get_x(dot) + lv_obj_get_width(dot) / 2;
   CHECK(dot_x > kWidth / 2 + 60);  // 1 g is 85 px right of centre
-  CHECK(count_gold_in_plot() > 40);
+  CHECK(count_pink_in_plot() > 40);
 
   // Back upright: the dot returns, the envelope stays.
   ride_gg(state, 0.0F, 0.0F, 120);
   capture();
   const int32_t settled_x = lv_obj_get_x(dot) + lv_obj_get_width(dot) / 2;
   CHECK(std::abs(settled_x - kWidth / 2) < 6);
-  CHECK(count_gold_in_plot() > 40);
+  CHECK(count_pink_in_plot() > 40);
 
   // A two-second hold clears the envelope.
   lv_obj_t *page = lv_obj_find_by_name(lv_screen_active(), "moto-gg-page");
@@ -1787,7 +1996,7 @@ void test_speed_g_page_plots_g_and_keeps_the_envelope() {
     lv_obj_send_event(page, LV_EVENT_RELEASED, nullptr);
     ride_gg(state, 0.0F, 0.0F, 10);
     capture();
-    CHECK(count_gold_in_plot() == 0);
+    CHECK(count_pink_in_plot() == 0);
   }
 
   // No IMU: no dot, the NO IMU plate instead.
@@ -1942,6 +2151,8 @@ int main(int argc, char **argv) {
   test_every_page_paints_its_own_surface();
   test_official_theme_swaps_in_the_classic_interface();
   test_every_road_class_has_its_own_stroke();
+  test_battery_ring_follows_the_power_reading();
+  test_the_launch_clock_reports_each_run();
 
   // Visual check runs while the instrument is still alive; the terminal
   // screens below delete the whole widget tree.

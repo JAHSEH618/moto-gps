@@ -11,6 +11,7 @@ void emit_page_change(moto_ui_page_t page);
 void emit_music_command(moto_music_command_t command);
 void emit_demo_change(bool enabled);
 void emit_home_shortcut();
+void emit_performance_run(const moto_ui_performance_run_t& run);
 int phone_nav_bridge_apply_count();
 int phone_nav_bridge_home_error_count();
 int phone_nav_bridge_board_lock_count();

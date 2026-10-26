@@ -133,6 +133,31 @@ typedef enum {
     MOTO_UI_LEAN_CAL_FAIL_RANGE = 5,
 } moto_ui_lean_cal_state_t;
 
+/* The 0-100 page's clock. The round screen owns it; the phone shows it. */
+typedef enum {
+    MOTO_UI_RUN_ARMED = 0,    /* at a standstill, waiting to roll away */
+    MOTO_UI_RUN_RUNNING = 1,
+    MOTO_UI_RUN_FINISHED = 2, /* the target was reached */
+} moto_ui_run_state_t;
+
+typedef struct {
+    moto_ui_run_state_t state;
+    uint16_t target_kph;
+    uint32_t run_id;     /* bumps when a run starts; 0 before the first */
+    uint32_t elapsed_ms; /* RUNNING: so far; FINISHED: the time; ARMED: 0 */
+    uint32_t best_ms;    /* best since the tree was built; 0 when none */
+} moto_ui_performance_run_t;
+
+typedef void (*moto_ui_performance_callback_t)(
+    const moto_ui_performance_run_t *run, void *context);
+
+/* Where the board's power comes from, for the battery ring on the bezel. */
+typedef enum {
+    MOTO_UI_POWER_UNKNOWN = 0,  /* no PMIC reading: no ring */
+    MOTO_UI_POWER_BATTERY = 1,  /* running on the battery */
+    MOTO_UI_POWER_EXTERNAL = 2, /* USB in: charging, charged, or no battery */
+} moto_ui_power_source_t;
+
 typedef struct {
     moto_ui_page_t page;
     moto_ui_mode_t mode;
@@ -254,11 +279,22 @@ void moto_nav_ui_set_lean_calibration_callback(
     moto_lean_calibration_callback_t callback, void *context);
 void moto_nav_ui_set_clear_peaks_callback(
     moto_lean_clear_peaks_callback_t callback, void *context);
+/** Every state change of the 0-100 clock: armed, started, finished. Called on
+    the LVGL task, inside the call that fed the speed; GTA tree only (the
+    original interface has no 0-100 page). */
+void moto_nav_ui_set_performance_callback(
+    moto_ui_performance_callback_t callback, void *context);
 /* Thread-safe posts: stored as atomics and applied on the LVGL task. */
 void moto_nav_ui_set_lean_cal_state(moto_ui_lean_cal_state_t state,
                                     uint8_t value);
 void moto_nav_ui_set_lean_flags(uint8_t cal_unverified, uint8_t imu_poll,
                                 uint8_t log_full, uint8_t log_dirty);
+/** The battery ring on the bezel, outside the band, on every page of both
+    interfaces (DESIGN_V2 §2.9). `percent` is the charge, clamped to 100; on USB
+    with no battery fitted pass 100. Unlike the other mutators it survives
+    create() and theme switches, and is hidden on the boot and power-off
+    screens. Thread-safe post, applied on the LVGL task within 200 ms. */
+void moto_nav_ui_set_battery(moto_ui_power_source_t source, uint8_t percent);
 
 /* Test/debug only: the page container. The geometry gate walks this subtree to
    prove every visible object is registered in ui_geometry_manifest.txt. */

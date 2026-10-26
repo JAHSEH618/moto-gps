@@ -185,6 +185,7 @@ final class ESP32BLECentral: NSObject {
     var onSnapshotChange: ((BLEDeviceSnapshot) -> Void)?
     var onDeviceCommand: ((MotoBLEDeviceCommand) -> BLECommandDisposition)?
     var onAttitudeSample: ((MotoBLEAttitudeSample) -> Void)?
+    var onPerformanceRun: ((MotoBLEPerformanceRun) -> Void)?
     /// The phone's current compass heading, read for every navigation
     /// snapshot sent while the bike is too slow for a GNSS course.
     var compassHeadingDeg: (() -> Double?)?
@@ -1584,6 +1585,8 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
             guard let command = inbound.deviceCommand else {
                 if let attitude = inbound.attitudeSample {
                     onAttitudeSample?(attitude)
+                } else if let run = inbound.performanceRun {
+                    onPerformanceRun?(run)
                 }
                 return
             }

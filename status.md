@@ -941,3 +941,40 @@ nothing has run on the board or on a real iPhone. The gains come from
 simulation. The one-way clock cannot see the shortest transit, and the
 round-trip TIME_SYNC (§12) is still open. Location only runs while navigating,
 so outside navigation there is no speed at all.
+
+## 2026-10-26T19:40:00+09:00 — Battery ring, neon pink, and the race board
+
+**Battery ring** (DESIGN_V2 §2.9). The bezel is now Apple's battery ring on
+every page of both interfaces: r 224–232 out to the glass edge with a 2 px black
+seam against the band, green `#30D158` from twelve clockwise over a 30% track,
+red `#FF453A` at 20% and below on the battery, and on USB a ±4° gap at twelve
+for the Apple Watch charging bolt. USB without a cell is a full ring with the
+bolt (the rider's choice); no PMIC reading draws nothing. One object on LVGL's
+top layer (`moto_nav_ui_battery.cpp`), so theme switches never rebuild it;
+`moto_nav_ui_set_battery()` posts from any task. LVGL arc angles are whole
+degrees in this build: a 3.6° gap was truncated to 3° and let the round cap
+touch the bolt, which the render test caught. Firmware reads AXP2101
+0x00/0x01/0xA4 every 5 s from the PWR task; init sets only the gauge (0x18
+bit3) and detect (0x68 bit0) bits.
+
+**Neon pink.** No gold on either surface: the phone's GTA accent/HUD are
+`#F34DAA` by night and `#AA1068` by day (contrast measured, every surface AA),
+and every gold on the round screen is `#F34DAA`.
+
+**0-100 to the phone.** `PerformanceRun` (0x19) reports each transition of the
+device's launch clock to a phone that advertises bit 13, and the state again
+after each handshake.
+
+**Race board** (MENU → 08). An accumulated logbook in the phone's
+`RaceLog.json`: every 0-100 run, time at each 5° of lean, deepest lean, G maxima
+and the G-G envelope, per day, shown for today / 7 days / all with Swift
+Charts. Designed with the bolder pass (impeccable) and hallmark's disciplines:
+one hero per sheet, the system's own devices (band header, `MotoSegment`, ink
+slabs, the friction circle), recorded values only.
+
+**Verification:** native 17/17 (render suite with the ring, pink and 0-100
+report tests; `battery_ring_tests`; protocol + golden; bridge), Swift package
+55/55, firmware builds (0x37cba0, 42% of app0 free), iOS builds for the
+simulator and was reviewed in Liberty Day and Night with a DEBUG fixture.
+**Not verified:** nothing has run on the board or a real iPhone; the AXP2101
+register reads have never seen a fitted cell.

@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "tlog_logger.hpp"
+#include "battery_ring.hpp"
 
 #include "driver/i2c_master.h"
 #include "esp_flash.h"
@@ -45,6 +46,9 @@ static TaskHandle_t g_task_power = nullptr;
 // Bench-only lean sweep: a repeatable 40 Hz UI load for the page frame-rate
 // measurement. Zero means off.
 static volatile std::uint32_t g_ui_bench_lean_until_ms = 0;
+// `ui battery`: while set, the PWR task stops posting PMIC readings so the
+// bench value stays on the ring.
+static volatile bool g_ui_bench_battery = false;
 static std::uint64_t g_dbg_render_us0 = 0;
 static std::uint32_t g_dbg_frames0 = 0;
 
@@ -350,6 +354,24 @@ void serial_command_task(void* context) {
                      heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
       } else {
         ESP_LOGW(kTag, "ui theme: LVGL lock timeout");
+      }
+    } else if (std::strncmp(line, "ui battery ", 11) == 0) {
+      // Bench-only: preview the bezel ring without a cell. `ui battery 37`
+      // (on the battery), `ui battery usb 37` (charging), `ui battery auto`
+      // (back to the PMIC).
+      const char* arg = line + 11;
+      if (std::strcmp(arg, "auto") == 0) {
+        g_ui_bench_battery = false;
+        ESP_LOGI(kTag, "ui battery: PMIC readings resume");
+      } else {
+        const bool usb = std::strncmp(arg, "usb", 3) == 0;
+        const int percent = std::atoi(usb ? arg + 3 : arg);
+        g_ui_bench_battery = true;
+        moto_nav_ui_set_battery(
+            usb ? MOTO_UI_POWER_EXTERNAL : MOTO_UI_POWER_BATTERY,
+            static_cast<std::uint8_t>(std::clamp(percent, 0, 100)));
+        ESP_LOGI(kTag, "ui battery %s%d%%", usb ? "usb " : "",
+                 std::clamp(percent, 0, 100));
       }
     } else if (std::strncmp(line, "ui bench lean", 13) == 0) {
       const int seconds = std::atoi(line + 13);
@@ -694,9 +716,29 @@ void power_button_task(void*) {
   // otherwise the tail of the power-on press is counted as a new 3-second
   // hold and the freshly booted unit switches itself off.
   bool released_once = false;
+  // The bezel ring (DESIGN_V2 §2.9). The gauge moves by a percent every few
+  // minutes, so five seconds is plenty and keeps the shared I2C bus quiet.
+  constexpr std::uint64_t kBatteryPollMs = 5'000;
+  std::uint64_t battery_polled_ms = 0;
+  bool battery_logged = false;
   while (true) {
     const std::uint64_t now_ms =
         static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
+    if (battery_polled_ms == 0 || now_ms - battery_polled_ms >= kBatteryPollMs) {
+      battery_polled_ms = now_ms;
+      board_power_t power{};
+      const bool ok = board_port_read_power(&power) == ESP_OK;
+      const moto::device::BatteryRing ring = moto::device::battery_ring(
+          ok, power.vbus, power.battery_present, power.percent);
+      if (!g_ui_bench_battery) moto_nav_ui_set_battery(ring.source, ring.percent);
+      if (!battery_logged) {
+        // Once, so the first boot with a cell says what the gauge saw.
+        battery_logged = true;
+        ESP_LOGI(kTag, "power: read=%d vbus=%d battery=%d charging=%d gauge=%u%%",
+                 ok ? 1 : 0, power.vbus ? 1 : 0, power.battery_present ? 1 : 0,
+                 power.charging ? 1 : 0, static_cast<unsigned>(power.percent));
+      }
+    }
     if (!board_port_power_button_pressed()) {
       if (!released_once) {
         released_once = true;

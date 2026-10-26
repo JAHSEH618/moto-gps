@@ -195,6 +195,7 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x16` | HomeLocation | phone→device | when the home address changes, and after every handshake |
 | `0x17` | SettingsState | both ways | when settings or the theme change, and after every handshake |
 | `0x18` | GnssInput | phone→device | one per Core Location fix (about 1 Hz), no ACK |
+| `0x19` | PerformanceRun | device→phone | every state change of the 0-100 clock and after each handshake; only to a phone that advertises bit13, no ACK |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -218,7 +219,8 @@ touch commands, bit5 music commands, bit6 command ACK, bit7 map scene,
 bit8 attitude telemetry, bit9 home location, bit10 device settings, bit11 compass heading (the
 device understands NavigationSnapshot's HeadingCompass flag; the phone sets that flag only for
 a peer that advertises this bit, because an older firmware rejects unknown flags), bit12 GNSS
-input (the device takes `0x18`).
+input (the device takes `0x18`), bit13 performance run (advertised by the phone: it shows the
+round screen's 0-100 results, so the device sends it `0x19`).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -576,6 +578,25 @@ The phone stamps at encode and sends at once; it does not keep a fix for a later
 old fix is useless). In a session that has delivered GnssInput the device stops using
 NavigationSnapshot's speed; after a disconnect it learns the offset again.
 
+### 6.14 PerformanceRun (`0x19`, fixed 16 bytes)
+
+The round screen owns the 0-100 clock and the phone records what it measured, so the two
+numbers cannot disagree. The device sends one on every state change (armed, started,
+finished) and re-sends the current state after a handshake from a phone that advertises
+bit13; a lost one is replaced by the next, so there is no ACK.
+
+```text
+u8  revision
+u8  state                0 Armed (stopped, waiting to roll away), 1 Running, 2 Finished
+u16 target_kph           50 / 60 / 100, the same table as SettingsState
+u32 run_id               bumps on every start; 0 before the first one
+u32 elapsed_ms           Running: time so far when sent; Finished: the result; Armed: must be 0
+u32 best_ms              best since power-on; 0 when there is none
+```
+
+Running and Finished carry a non-zero `run_id`. The re-send after a handshake repeats the
+last Finished state; the phone deduplicates on `(run_id, elapsed_ms)` and records it once.
+
 ## 7. Display Snapshot to the shared NavSnapshot
 
 The adapter must do value conversion and must not operate on `moto_ui_state_t` directly. The
@@ -673,6 +694,12 @@ GnssInput payload (speed and accuracy, phone_monotonic_ms=0x12345678, fix age 32
 
 ```text
 0103785634124001f5052800
+```
+
+PerformanceRun payload (Finished, 0-100, run_id=3, 4.870 s, best 4.610 s):
+
+```text
+01026400030000000613000002120000
 ```
 
 The machine-readable complete vectors are authoritative in the fixture. Changing any v1 byte

@@ -17,6 +17,8 @@ void* music_callback_context = nullptr;
 moto_demo_change_callback_t demo_callback = nullptr;
 void* demo_callback_context = nullptr;
 moto_home_shortcut_callback_t home_callback = nullptr;
+moto_ui_performance_callback_t performance_callback = nullptr;
+void* performance_callback_context = nullptr;
 void* home_callback_context = nullptr;
 int apply_count = 0;
 int home_error_count = 0;
@@ -178,6 +180,13 @@ extern "C" void moto_nav_ui_set_home_callback(
   home_callback_context = context;
 }
 
+extern "C" void moto_nav_ui_set_performance_callback(
+    moto_ui_performance_callback_t callback, void* context) {
+  const std::lock_guard<std::mutex> lock(probe_mutex);
+  performance_callback = callback;
+  performance_callback_context = context;
+}
+
 extern "C" void moto_nav_ui_show_home_error(void) {
   const std::lock_guard<std::mutex> lock(probe_mutex);
   ++home_error_count;
@@ -283,6 +292,20 @@ void emit_demo_change(bool enabled) {
   if (callback == nullptr) return;
   const std::lock_guard<std::recursive_mutex> lock(board_mutex);
   callback(enabled ? 1U : 0U, context);
+}
+
+void emit_performance_run(const moto_ui_performance_run_t& run) {
+  moto_ui_performance_callback_t callback = nullptr;
+  void* context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(probe_mutex);
+    callback = performance_callback;
+    context = performance_callback_context;
+  }
+  if (callback == nullptr) return;
+  // The real tree calls it from inside an LVGL call, under the board lock.
+  const std::lock_guard<std::recursive_mutex> lock(board_mutex);
+  callback(&run, context);
 }
 
 void emit_home_shortcut() {

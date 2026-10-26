@@ -167,6 +167,7 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x16` | HomeLocation | 手机→设备 | 家地址变化时，以及每次握手后 |
 | `0x17` | SettingsState | 双向 | 设置或主题变化时，以及每次握手后 |
 | `0x18` | GnssInput | 手机→设备 | 每个 Core Location fix 一条（约 1 Hz），无 ACK |
+| `0x19` | PerformanceRun | 设备→手机 | 0-100 计时每次状态变化，以及每次握手后；手机声明 bit13 时才发，无 ACK |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -189,7 +190,8 @@ u16 heartbeat_interval_ms  >=250
 bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene、
 bit8 attitude telemetry、bit9 home location、bit10 device settings、
 bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标志；手机只对
-声明了它的对端置该位，旧固件会拒绝未知标志）、bit12 GNSS input（设备接收 `0x18`）。
+声明了它的对端置该位，旧固件会拒绝未知标志）、bit12 GNSS input（设备接收 `0x18`）、
+bit13 performance run（手机声明：它要显示圆屏的 0-100 成绩，设备才发 `0x19`）。
 
 `0x16`、`0x17` 与 `0x18` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
 根本不认识这些类型，而不是收到后忽略。
@@ -521,6 +523,24 @@ u16 speed_accuracy_cmps  cm/s，一倍标准差；无 has_speed_accuracy 时必�
 手机端在编码时打戳并立刻发送，不缓存到下一次会话（一个旧 fix 没有用）。收到过
 GnssInput 的会话里，设备不再使用 NavigationSnapshot 的速度；断开后重新学习偏移。
 
+### 6.14 PerformanceRun (`0x19`, 固定 16 字节)
+
+0-100 由圆屏计时，手机只记录圆屏测到的时间，两块屏的数字因此不会不一致。设备在每次
+状态变化（就绪、起步、完成）时发送，并在手机握手（声明 bit13）后补发当前状态；丢一条
+由下一条状态替代，所以没有 ACK。
+
+```text
+u8  revision
+u8  state                0 Armed（停稳待起步）、1 Running、2 Finished
+u16 target_kph           50 / 60 / 100，与 SettingsState 的表一致
+u32 run_id               每次起步加一；第一次起步之前为 0
+u32 elapsed_ms           Running：发出时已用时间；Finished：成绩；Armed：必须为 0
+u32 best_ms              本次开机以来的最佳；没有时为 0
+```
+
+Running 与 Finished 的 `run_id` 不能为 0。握手后的补发会重复上一条 Finished，手机按
+`(run_id, elapsed_ms)` 去重，只记一次成绩。
+
 ## 7. Display Snapshot 到共享 NavSnapshot
 
 适配器必须做值转换，不得直接操作 `moto_ui_state_t`。推荐映射如下：
@@ -610,6 +630,12 @@ GnssInput payload（速度与精度、phone_monotonic_ms=0x12345678、fix_age 32
 
 ```text
 0103785634124001f5052800
+```
+
+PerformanceRun payload（Finished、0-100、run_id=3、4.870 s、最佳 4.610 s）：
+
+```text
+01026400030000000613000002120000
 ```
 
 机器可读的完整向量以 fixture 为准。修改任何 v1 字节都应先解释兼容性影响，并由

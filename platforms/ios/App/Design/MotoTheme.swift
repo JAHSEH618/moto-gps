@@ -9,7 +9,7 @@ import UIKit
 /// (Original). The rider picks the theme once; the phone wears what the round
 /// screen shows. See DESIGN.md → "Theme switch".
 enum MotoThemeName: String, CaseIterable, Identifiable {
-    /// Liberty City after dark: true black, box-art white, HUD gold.
+    /// Liberty City after dark: true black, box-art white, neon pink HUD.
     case night
     /// The cover's white field: newsprint paper, black ink, readable in sun.
     case day
@@ -121,7 +121,7 @@ struct MotoPalette {
     let onSlab: Color
     let accent: Color
     /// Text and glyphs on top of `accent`. Differs per theme because the
-    /// accent fill does: black on night gold, paper on day gold.
+    /// accent fill does: black on night pink, paper on day pink.
     let onAccent: Color
     /// Route stroke. Not the UI accent, so the line reads as data instead of
     /// as chrome.
@@ -133,8 +133,9 @@ struct MotoPalette {
     /// by night and black by day. Original uses white, as its round screen does.
     var band = Color(hex: 0xF2EEE4)
     var onBand = Color(hex: 0x0A0A0A)
-    /// HUD numeral colour. GTA III prints its readouts in colour (the clock in
-    /// gold), never in plain white; by day the paper needs black ink instead.
+    /// HUD numeral colour. GTA prints its readouts in colour, never in plain
+    /// white; here that colour is the handlebar band's neon pink. By day the
+    /// paper needs black ink instead.
     var hud: Color? = nil
     /// Radar map. Land is the road colour: streets are the gaps between
     /// blocks, which is how GTA III's radar draws a city. Two block tones split
@@ -146,9 +147,10 @@ struct MotoPalette {
     var mapPark = Color(hex: 0x28311F)
 
     /// Liberty Night — GTA III's HUD on true black. Ink is the box-art white;
-    /// the accent is the HUD clock gold, link the money steel-blue, route the
-    /// health orange, ok the armour olive. Each lifted until it clears AA on
-    /// black: ink 17.1:1, muted 7.8, gold 9.4, route 7.9, link 7.9, abort 6.1.
+    /// the accent is neon pink, the round screen's band (`#F34DAA`), so the
+    /// phone and the handlebar wear one accent. Link is the money steel-blue,
+    /// route the health orange, ok the armour olive. Each clears AA on black:
+    /// ink 17.1:1, muted 7.8, pink 6.1, route 7.9, link 7.9, abort 6.1.
     static let night = MotoPalette(
         bg: Color(hex: 0x0A0A0A),
         surface: Color(hex: 0x141414),
@@ -159,7 +161,7 @@ struct MotoPalette {
         inkMuted: Color(hex: 0xA8A294),
         slab: Color(hex: 0x000000),
         onSlab: Color(hex: 0xF2EEE4),
-        accent: Color(hex: 0xD2AD6A),
+        accent: Color(hex: 0xF34DAA),
         onAccent: Color(hex: 0x0A0A0A),
         route: Color(hex: 0xF08A3C),
         link: Color(hex: 0x86A6CF),
@@ -168,12 +170,14 @@ struct MotoPalette {
         // The cover's panel gutters: white bands on black.
         band: Color(hex: 0xF2EEE4),
         onBand: Color(hex: 0x0A0A0A),
-        hud: Color(hex: 0xD2AD6A)
+        hud: Color(hex: 0xF34DAA)
     )
 
     /// Liberty Day — the cover's white field for sunlight: newsprint paper and
-    /// black ink. The HUD hues are darkened until they read as text on paper:
-    /// ink 16.0:1, muted 7.9, gold 5.6, route 4.7, link 6.4, abort 6.0.
+    /// black ink. The HUD hues are darkened until they read as text on paper;
+    /// neon does not survive sun, so the pink is the band's hue at text
+    /// strength: ink 16.0:1, muted 7.9, pink 6.0 (4.7 on surface-2), route 4.7,
+    /// link 6.4, abort 6.0.
     static let day = MotoPalette(
         bg: Color(hex: 0xEFECE4),
         surface: Color(hex: 0xE4E0D6),
@@ -184,7 +188,7 @@ struct MotoPalette {
         inkMuted: Color(hex: 0x4B463E),
         slab: Color(hex: 0x111111),
         onSlab: Color(hex: 0xEFECE4),
-        accent: Color(hex: 0x7A5718),
+        accent: Color(hex: 0xAA1068),
         onAccent: Color(hex: 0xEFECE4),
         route: Color(hex: 0xB04716),
         link: Color(hex: 0x35567F),
@@ -508,7 +512,7 @@ extension DeviceSettingsTheme {
         case .official: return "项目最初的黑底白线界面"
         case .auto: return "跟随手机所在地的日出与日落切换"
         case .day: return "Liberty City 白天：白纸黑字，强光下也看得清"
-        case .night: return "Liberty City 夜间：纯黑底、HUD 金色"
+        case .night: return "Liberty City 夜间：纯黑底、霓虹粉 HUD"
         }
     }
 }

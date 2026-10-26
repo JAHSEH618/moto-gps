@@ -26,9 +26,11 @@ The two GTA themes share geometry, spacing, type scale, and the circle motif. On
 ## Color
 
 The GTA themes are GTA III's Liberty City (2001): the cover's black field and
-white panel gutters, and the HUD's own colours — clock gold, money steel-blue,
-health orange, armour olive — each lifted (night) or darkened (day) until it
-clears AA as text. All values are exact; no gradients on data surfaces. Phone
+white panel gutters, and the HUD's own colours — money steel-blue, health
+orange, armour olive — each lifted (night) or darkened (day) until it clears AA
+as text. The phone's accent is **neon pink**, the handlebar band's `#F34DAA`,
+not GTA III's clock gold: one accent on both surfaces, and no gold anywhere on
+the phone (2026-10-26, rider's call). All values are exact; no gradients on data surfaces. Phone
 and round screen share the tokens (`MotoPalette.night/.day`,
 `kGtaNightPalette/kGtaDayPalette`).
 
@@ -41,8 +43,8 @@ and round screen share the tokens (`MotoPalette.night/.day`,
 | `line` | `#333333` | 1px rules |
 | `ink` | `#F2EEE4` | box-art white: text |
 | `ink-muted` | `#A8A294` | secondary text, labels |
-| `hud` | `#D2AD6A` | HUD numerals (clock gold), with a hard 3pt black drop |
-| `accent` | `#D2AD6A` | primary button, active selection |
+| `hud` | `#F34DAA` | HUD numerals (neon pink, the handlebar band), with a hard 3pt black drop |
+| `accent` | `#F34DAA` | primary button, active selection |
 | `route` | `#F08A3C` | route stroke, rider markers on the round screen (health orange) |
 | `link` | `#86A6CF` | BLE link, GPS fix (money steel-blue) |
 | `ok` | `#A5B97A` | completed (armour olive) |
@@ -59,7 +61,7 @@ and round screen share the tokens (`MotoPalette.night/.day`,
 | `line` | `ink @ 24%` | 1px rules — heavier so they survive glare |
 | `ink` / `hud` | `#111111` | text and numerals; no drop shadow by day |
 | `ink-muted` | `#4B463E` | secondary text only, never below 15pt |
-| `accent` | `#7A5718` | dark HUD gold: works as text (5.6:1) and as a fill under paper type |
+| `accent` | `#AA1068` | the band's pink at text strength: works as text (6.0:1, 4.7 on `surface-2`) and as a fill under paper type |
 | `route` | `#B04716` (phone) / `#F08A3C` (round-screen map, on grey) | route |
 | `link` | `#35567F` | BLE link, GPS fix |
 | `ok` | `#4A5C2A` | completed |
@@ -79,13 +81,13 @@ in both themes.
 |---|---|---|
 | Night `ink` on `bg` | 17.1:1 | AAA |
 | Night `ink-muted` on `bg` | 7.8:1 | AAA |
-| Night `hud`/`accent` on `bg` | 9.4:1 | AAA |
+| Night `hud`/`accent` on `bg` | 6.1:1 | AA |
 | Night `route` / `link` on `bg` | 7.9:1 | AAA |
 | Night `abort` on `bg` | 6.1:1 | AA |
-| Night `onAccent` on `accent` | 9.4:1 | AAA |
+| Night `onAccent` on `accent` | 6.1:1 | AA |
 | Day `ink` on `bg` | 16.0:1 | AAA |
 | Day `ink-muted` on `bg` | 7.9:1 | AAA |
-| Day `accent` on `bg` (and paper on `accent`) | 5.6:1 | AA |
+| Day `accent` on `bg` (and paper on `accent`) | 6.0:1 | AA |
 | Day `route` on `bg` | 4.7:1 | AA |
 | Day `link` on `bg` | 6.4:1 | AA |
 | Day `abort` on `bg` | 6.0:1 | AA |
@@ -173,10 +175,10 @@ No texture inside the circle in either GTA theme — GTA III's radar is flat, an
 | Rules | 1px default, 2px after a block that ends a group. Never 0.5px, never shadowed. |
 | Map content | Radar draws blocks and streets in `ink` at 10–22%: a minimap silhouette, not a blank disc. |
 | Rider | A chunky arrow, not a dot. Heading is part of the readout. |
-| Dusk skyline (round screen) | Liberty City at dusk along the bottom of the launch, compass, lean and music pages and the waiting screen: two rows of towers, far row lighter, gold lamps by night, pale print greys with paper windows by day. Frame, not data: it sits between the paper disc and the casing and below every reading, and is static. Not on navigation (the map is the world). |
+| Dusk skyline (round screen) | Liberty City at dusk along the bottom of the launch, compass, lean and music pages and the waiting screen: two rows of towers, far row lighter, neon pink lamps by night, pale print greys with paper windows by day. Frame, not data: it sits between the paper disc and the casing and below every reading, and is static. Not on navigation (the map is the world). |
 | HUD labels (round screen) | State labels (`LAUNCH`, `L`/`R` maxima, `CAL`, `NO IMU`, music source) are cased HUD type with no box, as GTA III's HUD never boxes a label. Counter slabs (`BEST`, `KM/H`) keep their block. |
-| Boot (round screen) | A GTA III loading screen in hard cuts, no fades: bezel black, then the box-art panel grid (radar with route and rider, safehouse, the city under a HUD-orange dusk sky) at 80 ms, the cream MOTO / GPS logo cased in black with a hard drop at 380 ms, then a gold loading bar stepping eight times from 520 ms. It measures the 1.25 s boot hold and claims nothing else. |
-| Link cover (round screen) | The waiting screens (CONNECT / LINKING / LINKED / READY TO RIDE / BUILDING ROUTE) are the same box art: a 6 px `band` gutter frames three panels — GTA III's pager (black handset, lit green LCD carrying the Chinese instruction, kicker `PHONE LINK` / `READY` / `ROUTE` above it), the two-line headline on the paper, and the city under a HUD-orange dusk sky. A pager cursor blinks while the cover waits on the rider; the boot's gold bar steps (eight steps, a beat full, again) while it waits on the system. `PHONE LINKED` turns HUD gold by night. The pager and dusk panel keep their colours in both themes. |
+| Boot (round screen) | A GTA III loading screen in hard cuts, no fades: bezel black, then the box-art panel grid (radar with route and rider, safehouse, the city under a HUD-orange dusk sky) at 80 ms, the cream MOTO / GPS logo cased in black with a hard drop at 380 ms, then a neon pink loading bar stepping eight times from 520 ms. It measures the 1.25 s boot hold and claims nothing else. |
+| Link cover (round screen) | The waiting screens (CONNECT / LINKING / LINKED / READY TO RIDE / BUILDING ROUTE) are the same box art: a 6 px `band` gutter frames three panels — GTA III's pager (black handset, lit green LCD carrying the Chinese instruction, kicker `PHONE LINK` / `READY` / `ROUTE` above it), the two-line headline on the paper, and the city under a HUD-orange dusk sky. A pager cursor blinks while the cover waits on the rider; the boot's pink bar steps (eight steps, a beat full, again) while it waits on the system. `PHONE LINKED` turns neon pink by night. The pager and dusk panel keep their colours in both themes. |
 
 ## Reference grammar (what we copied, and from where)
 
@@ -287,6 +289,11 @@ page is a different readout of the same instrument.
   second track ring and no arc inside the disc.
 - The band colour is brand, not state. It does not change between day and
   night and is never used for warnings.
+- **The bezel is the battery ring** (2026-10-26, the rider's call; DESIGN_V2
+  §2.9): Apple's ring in Apple's green, r 224–232 outside the band with a 2 px
+  black seam, on every page of both interfaces. It is the one exception to
+  "no second track ring" and "the bezel never changes", and it is data, so it
+  is allowed a state colour (red at 20% and below) that the band is not.
 
 ### 2. Numbers are posters
 
@@ -325,7 +332,7 @@ appears only where the map is the content. The bezel never changes.
 | Page | One idea |
 |---|---|
 | Navigation | The map is the screen. Distance is the only large number; the maneuver glyph and the limit sign are the only props. |
-| Lean | **A race lean gauge.** A segmented arc across the top, twelve 5° segments a side to 60°, fills to the lean in quarter degrees: HUD orange, HUD red past 45°, and the segment holding each side's peak keeps its unlit part in clock gold. The unsigned `42°` is the poster in the middle, `L`/`R` peaks beside it, Liberty City at dusk underneath. No horizon and no bike figure: the arc is the scale and the number is the reading. |
+| Lean | **A race lean gauge.** A segmented arc across the top, twelve 5° segments a side to 60°, fills to the lean in quarter degrees: HUD orange, HUD red past 45°, and the segment holding each side's peak keeps its unlit part in neon pink. The unsigned `42°` is the poster in the middle, `L`/`R` peaks beside it, Liberty City at dusk underneath. No horizon and no bike figure: the arc is the scale and the number is the reading. |
 | Speed | The band is the speedometer: cream fills clockwise from twelve, magenta is what is left. |
 | Compass | A rose on the band, a giant cardinal in the middle, the bearing in magenta beneath. |
 | Launch (0–100) | A stopwatch, a shift strip, and the best time. Nothing else. |
@@ -374,6 +381,25 @@ phone screen read as the instrument rather than as a styled form.
 
 Prose is set in the reading face (PingFang) at `.body` with 3pt line spacing —
 never in mono, never in a tracked caps label.
+
+### Race board (MENU → 08 赛道看板)
+
+A logbook, not a live display: the handlebar is the live instrument. It
+accumulates what the round screen measured while the phone listened, per day,
+and shows today / 7 days / all (`MotoSegment`):
+
+| Section | Poster | Chart |
+|---|---|---|
+| 0-100 | the best time at `display-xl` (the sheet's one hero), `BEST` in `accent` | every run in order as an ink line, the best point in `accent`, the average as a dashed rule |
+| Lean | the deepest lean at `display-lg`, left and right on slabs | time per 5° bin, left mirrored against right, `route` (HUD orange), `abort` from 45°; the ±5° upright share as a line of text, because upright time would flatten every corner |
+| G | the largest combined G at `display-lg` | the friction circle's envelope over the scope (casing, then `accent`), and accelerating / braking / left / right maxima on slabs |
+
+Counters are ink slabs; the one state colour is `accent`. Every number is a
+recorded one (`RaceLog` in `MotoNavigationCore`, `RaceLog.json` on the phone):
+an empty scope says so instead of drawing zeros, the 0-100 times are the
+round screen's (PerformanceRun, 0x19) and never re-timed on the phone, and
+the time line says telemetry, not riding, because a connected screen parked on
+a bench counts too. Clearing the log asks first.
 
 ## Do / Don't
 

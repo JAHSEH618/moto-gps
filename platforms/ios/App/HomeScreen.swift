@@ -11,6 +11,7 @@ struct HomeScreen: View {
     @Binding var showsGatewaySettings: Bool
     @Binding var showsMapDownloads: Bool
     @Binding var showsDataUse: Bool
+    @Binding var showsRaceTelemetry: Bool
     let openSystemSettings: () -> Void
 
     @Environment(\.motoPalette) private var palette
@@ -469,7 +470,26 @@ struct HomeScreen: View {
                     beginSettingHome()
                 }
             }
+
+            // One level under the menu, like the theme: the race instruments
+            // are their own page, not a section of the device sheet.
+            numberedAction(
+                "08", title: "赛道看板", detail: raceDetail,
+                symbol: "gauge.with.dots.needle.67percent", tint: palette.accent,
+                identifier: "race-telemetry-button"
+            ) { showsRaceTelemetry = true }
         }
+    }
+
+    /// The recorded best 0-100 when there is one; otherwise what the board
+    /// collects.
+    private var raceDetail: String {
+        _ = model.raceLogRevision
+        let summary = model.raceLog.summary(.all, now: Date())
+        if let best = summary.bestRun {
+            return String(format: "0-%d 最佳 %.2f 秒 · 共 %d 次", best.targetKph, best.seconds, summary.runs.count)
+        }
+        return "累积 0-100、倾角与 G 值记录"
     }
 
     // MARK: - Pieces

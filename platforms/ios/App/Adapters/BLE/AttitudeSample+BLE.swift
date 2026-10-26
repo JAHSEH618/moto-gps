@@ -15,3 +15,18 @@ extension AttitudeSample {
         )
     }
 }
+
+extension DevicePerformanceRun {
+    /// `nil` for a state this app does not know; the shared decoder already
+    /// refuses one, so this only guards a future bridge.
+    init?(_ run: MotoBLEPerformanceRun) {
+        guard let state = State(rawValue: run.state) else { return nil }
+        self.init(
+            state: state,
+            targetKph: Int(run.targetKph),
+            runID: run.runID,
+            elapsedMilliseconds: run.elapsedMilliseconds,
+            bestMilliseconds: run.bestMilliseconds
+        )
+    }
+}

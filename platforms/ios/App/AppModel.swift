@@ -9,6 +9,15 @@ final class AppModel: ObservableObject {
     /// Latest IMU sample from the device. Cleared on disconnect and expired by
     /// age, so a stalled link cannot leave a plausible lean on screen.
     @Published private(set) var attitude = AttitudeTelemetry()
+    /// Everything the round screen has measured while this phone listened,
+    /// per day: 0-100 runs, time at each lean, the G-G envelope. It changes at
+    /// the telemetry rate, so the dashboard follows `raceLogRevision`, which
+    /// moves at most every two seconds.
+    private(set) var raceLog = RaceLogFile.load()
+    @Published private(set) var raceLogRevision = 0
+    private var raceLogPublishedAt = Date.distantPast
+    private var raceLogSavedAt = Date.distantPast
+    private var raceLogPersists = true
     @Published private(set) var navigationFailure: String?
     @Published private(set) var isNavigationActive = false
     @Published private(set) var isDemoActive = false
@@ -74,9 +83,19 @@ final class AppModel: ObservableObject {
             self.device = snapshot
             if case .connected = snapshot.connection { return }
             self.attitude.clear()
+            self.publishRaceLog(force: true)
         }
         bluetooth.onAttitudeSample = { [weak self] sample in
-            self?.attitude.receive(AttitudeSample(sample), at: Date())
+            guard let self else { return }
+            let value = AttitudeSample(sample)
+            let now = Date()
+            self.attitude.receive(value, at: now)
+            self.raceLog.record(value, at: now)
+            self.publishRaceLog(now: now)
+        }
+        bluetooth.onPerformanceRun = { [weak self] run in
+            guard let self, let value = DevicePerformanceRun(run) else { return }
+            if self.raceLog.record(value, at: Date()) { self.publishRaceLog(force: true) }
         }
         bluetooth.compassHeadingDeg = { [weak liveLocation] in
             liveLocation?.compassHeadingDeg
@@ -372,6 +391,64 @@ final class AppModel: ObservableObject {
     func currentAttitude(at now: Date = Date()) -> AttitudeSample? {
         attitude.sample(at: now)
     }
+
+    func clearRaceLog() {
+        raceLog.clear()
+        publishRaceLog(force: true)
+    }
+
+    /// Publishes the log at most every two seconds and writes it at most every
+    /// thirty; a new run, a disconnect or a clear does both at once.
+    private func publishRaceLog(now: Date = Date(), force: Bool = false) {
+        if force || now.timeIntervalSince(raceLogPublishedAt) >= 2 {
+            raceLogPublishedAt = now
+            raceLogRevision &+= 1
+        }
+        if raceLogPersists, force || now.timeIntervalSince(raceLogSavedAt) >= 30 {
+            raceLogSavedAt = now
+            RaceLogFile.save(raceLog)
+        }
+    }
+
+    #if DEBUG
+    /// Screenshot harness only (`--moto-race-fixture`): six days of synthetic
+    /// rides, fed through the same `record` calls as the device's samples, so
+    /// the dashboard can be reviewed in the simulator. Kept in memory and never
+    /// compiled into a release build, so no invented number can ship.
+    func startRaceFixture() {
+        raceLogPersists = false
+        var log = RaceLog()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let runTimes: [[UInt32]] = [[5_420, 5_180], [5_050], [], [4_980, 4_870, 5_120], [4_760], [4_830, 4_610]]
+        var runID: UInt32 = 0
+        for (offset, times) in runTimes.enumerated() {
+            let day = calendar.date(byAdding: .day, value: offset - 5, to: today)!
+                .addingTimeInterval(18 * 3_600)
+            let depth = 30 + Double(offset) * 3.5
+            for step in 0..<6_000 {
+                let t = Double(step) * 0.1
+                let lean = depth * sin(t / 6.0) * (0.55 + 0.45 * sin(t / 37.0))
+                log.record(AttitudeSample(
+                    monotonicMilliseconds: UInt32(step * 100),
+                    leanCentiDegrees: Int16(lean * 100),
+                    pitchCentiDegrees: 0,
+                    longitudinalMilliG: Int16((0.32 + 0.02 * Double(offset)) * 1_000 * sin(t / 9.0)
+                                              - (t.truncatingRemainder(dividingBy: 47) < 2 ? 520 : 0)),
+                    lateralMilliG: Int16(-lean / 60.0 * 1_000)
+                ), at: day.addingTimeInterval(t), calendar: calendar)
+            }
+            for time in times {
+                runID += 1
+                log.record(DevicePerformanceRun(state: .finished, targetKph: 100, runID: runID,
+                                                elapsedMilliseconds: time, bestMilliseconds: time),
+                           at: day.addingTimeInterval(Double(runID) * 60))
+            }
+        }
+        raceLog = log
+        publishRaceLog(force: true)
+    }
+    #endif
 
     func selectPlace(_ place: PlaceSearchResult) {
         guard !isUpdatingGateway else { return }

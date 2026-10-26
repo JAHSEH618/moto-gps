@@ -146,6 +146,16 @@ GnssInput gnss_fixture() {
   return value;
 }
 
+PerformanceRun performance_fixture() {
+  PerformanceRun value;
+  value.state = PerformanceRunState::Finished;
+  value.target_kph = 100;
+  value.run_id = 3;
+  value.elapsed_ms = 4'870;
+  value.best_ms = 4'610;
+  return value;
+}
+
 SettingsState settings_fixture() {
   SettingsState value;
   value.theme = SettingsTheme::Night;
@@ -311,6 +321,7 @@ void dump_golden() {
   const Bytes home = encode_or_fail(Message{home_fixture()});
   const Bytes settings = encode_or_fail(Message{settings_fixture()});
   const Bytes gnss = encode_or_fail(Message{gnss_fixture()});
+  const Bytes performance = encode_or_fail(Message{performance_fixture()});
   std::cout << "connection.payload=" << hex(ByteView(connection)) << '\n';
   std::cout << "connection.frame="
             << frame_hex(fragment_or_fail(MessageType::ConnectionStatus, 1,
@@ -328,6 +339,7 @@ void dump_golden() {
   std::cout << "home.payload=" << hex(ByteView(home)) << '\n';
   std::cout << "settings.payload=" << hex(ByteView(settings)) << '\n';
   std::cout << "gnss.payload=" << hex(ByteView(gnss)) << '\n';
+  std::cout << "performance.payload=" << hex(ByteView(performance)) << '\n';
 }
 
 void test_uuid_contract() {
@@ -381,6 +393,7 @@ void test_all_message_round_trips() {
       Message{home_fixture()},
       Message{settings_fixture()},
       Message{gnss_fixture()},
+      Message{performance_fixture()},
       Message{command_fixture()},
   };
   for (const Message& message : messages) {
@@ -451,6 +464,7 @@ void test_golden_vectors() {
   const Bytes home = encode_or_fail(Message{home_fixture()});
   const Bytes settings = encode_or_fail(Message{settings_fixture()});
   const Bytes gnss = encode_or_fail(Message{gnss_fixture()});
+  const Bytes performance = encode_or_fail(Message{performance_fixture()});
 
   CHECK(expected.at("connection.payload") == hex(ByteView(connection)));
   CHECK(expected.at("connection.frame") ==
@@ -467,6 +481,7 @@ void test_golden_vectors() {
   CHECK(expected.at("home.payload") == hex(ByteView(home)));
   CHECK(expected.at("settings.payload") == hex(ByteView(settings)));
   CHECK(expected.at("gnss.payload") == hex(ByteView(gnss)));
+  CHECK(expected.at("performance.payload") == hex(ByteView(performance)));
 }
 
 void test_attitude_sample_validation() {
@@ -562,6 +577,44 @@ void test_gnss_input() {
   Bytes trailing = encoded;
   trailing.push_back(0);
   CHECK(!decode_message(MessageType::GnssInput, ByteView(trailing)).ok());
+}
+
+// The device owns the 0-100 clock; the phone only shows it. Armed carries no
+// time, a run in progress or finished has an id, and the target is the
+// settings table.
+void test_performance_run() {
+  CHECK(static_cast<std::uint8_t>(MessageType::PerformanceRun) == 0x19);
+  CHECK(CapabilityPerformanceRun == (1U << 13U));
+
+  const Bytes encoded = encode_or_fail(Message{performance_fixture()});
+  CHECK(encoded.size() == kPerformanceRunPayloadSize);
+  const MessageResult decoded =
+      decode_message(MessageType::PerformanceRun, ByteView(encoded));
+  CHECK(decoded.ok());
+  if (decoded.ok()) {
+    CHECK(std::get<PerformanceRun>(decoded.value) == performance_fixture());
+  }
+
+  PerformanceRun armed;
+  CHECK(encode_message(Message{armed}).ok());
+  armed.elapsed_ms = 10;
+  CHECK(!encode_message(Message{armed}).ok());
+
+  PerformanceRun running = performance_fixture();
+  running.state = PerformanceRunState::Running;
+  running.elapsed_ms = 1'200;
+  CHECK(encode_message(Message{running}).ok());
+  running.run_id = 0;
+  CHECK(!encode_message(Message{running}).ok());
+
+  PerformanceRun odd_target = performance_fixture();
+  odd_target.target_kph = 80;
+  CHECK(!encode_message(Message{odd_target}).ok());
+
+  Bytes unknown_state = encoded;
+  unknown_state[1] = 3;
+  CHECK(!decode_message(MessageType::PerformanceRun, ByteView(unknown_state))
+             .ok());
 }
 
 void test_settings_state() {
@@ -888,6 +941,7 @@ int main(int argc, char** argv) {
   test_home_location_validation();
   test_settings_state();
   test_gnss_input();
+  test_performance_run();
   test_fragmentation_and_reassembly();
   test_full_map_scene_budget_and_reassembly();
   test_crc_duplicate_gap_conflict_and_timeout();

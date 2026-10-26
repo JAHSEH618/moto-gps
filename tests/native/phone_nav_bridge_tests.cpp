@@ -982,6 +982,81 @@ void test_attitude_uplink_is_gated_and_paced() {
   CHECK(sender.samples.empty());
 }
 
+struct PerformanceSenderContext {
+  std::vector<moto::ble::PerformanceRun> runs;
+};
+
+bool record_performance_sender(const moto::ble::Message& message,
+                               std::uint8_t, void* context) {
+  auto* sender = static_cast<PerformanceSenderContext*>(context);
+  if (const auto* run = std::get_if<moto::ble::PerformanceRun>(&message)) {
+    sender->runs.push_back(*run);
+  }
+  return true;
+}
+
+// The round screen owns the 0-100 clock and the phone shows it: each
+// transition goes to a phone that advertises CapabilityPerformanceRun, and
+// every handshake re-sends the current state.
+void test_performance_runs_reach_a_phone_that_shows_them() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  bridge.install_ui_callbacks();
+  PerformanceSenderContext sender;
+  bridge.set_sender(record_performance_sender, &sender);
+
+  moto_ui_performance_run_t run{};
+  run.state = MOTO_UI_RUN_RUNNING;
+  run.target_kph = 100;
+  run.run_id = 1;
+
+  // A phone without the capability is never sent the type.
+  bridge.on_link_state(true);
+  phone_ready(bridge, moto::ble::CapabilityNavigation, 40);
+  moto::test::emit_performance_run(run);
+  pump(bridge);
+  CHECK(sender.runs.empty());
+
+  // One that asks gets the clock as it stands, at the handshake.
+  phone_ready(bridge, moto::ble::CapabilityPerformanceRun, 41);
+  CHECK(sender.runs.size() == 1U);
+  if (!sender.runs.empty()) {
+    CHECK(sender.runs.back().state ==
+          moto::ble::PerformanceRunState::Running);
+    CHECK(sender.runs.back().run_id == 1U);
+  }
+
+  run.state = MOTO_UI_RUN_FINISHED;
+  run.elapsed_ms = 4'870;
+  run.best_ms = 4'870;
+  moto::test::emit_performance_run(run);
+  pump(bridge);
+  CHECK(sender.runs.size() == 2U);
+  if (sender.runs.size() == 2U) {
+    const moto::ble::PerformanceRun& done = sender.runs.back();
+    CHECK(done.state == moto::ble::PerformanceRunState::Finished);
+    CHECK(done.elapsed_ms == 4'870U);
+    CHECK(done.best_ms == 4'870U);
+    CHECK(done.target_kph == 100);
+  }
+
+  // Off the link nothing is sent; the next session starts from the newest.
+  bridge.on_link_state(false);
+  run.state = MOTO_UI_RUN_ARMED;
+  run.elapsed_ms = 0;
+  moto::test::emit_performance_run(run);
+  pump(bridge);
+  CHECK(sender.runs.size() == 2U);
+  bridge.on_link_state(true);
+  phone_ready(bridge, moto::ble::CapabilityPerformanceRun, 42);
+  CHECK(sender.runs.size() == 3U);
+  if (sender.runs.size() == 3U) {
+    CHECK(sender.runs.back().state == moto::ble::PerformanceRunState::Armed);
+    CHECK(sender.runs.back().best_ms == 4'870U);
+  }
+}
+
 void test_imu_attitude_reaches_the_lean_page() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
@@ -1239,6 +1314,7 @@ int main() {
   test_parked_compass_heading_reaches_the_compass_page();
   test_imu_attitude_reaches_the_lean_page();
   test_attitude_uplink_is_gated_and_paced();
+  test_performance_runs_reach_a_phone_that_shows_them();
   test_home_location_projects_onto_the_radar();
   test_phone_speed_reaches_the_lean_estimator();
   test_gnss_input_places_the_fix_on_the_device_clock();

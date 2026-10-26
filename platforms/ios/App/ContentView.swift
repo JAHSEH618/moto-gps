@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var showsMapDownloads = false
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
+    @State private var showsRaceTelemetry = false
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
@@ -35,6 +36,7 @@ struct ContentView: View {
                 showsGatewaySettings: $showsGatewaySettings,
                 showsMapDownloads: $showsMapDownloads,
                 showsDataUse: $showsDataUse,
+                showsRaceTelemetry: $showsRaceTelemetry,
                 openSystemSettings: openSystemSettings
             )
             .navigationDestination(for: MotoScreen.self) { screen in
@@ -65,6 +67,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsDataUse) { DataUseView() }
         .sheet(isPresented: $showsGatewaySettings) { GatewaySettingsView(model: model) }
+        .sheet(isPresented: $showsRaceTelemetry) {
+            RaceDashboardView(model: model) { showsRaceTelemetry = false }
+                .motoTheme(theme)
+        }
         #if DEBUG
         // Screenshot harness: the device sheet is two taps in, and holding a
         // simulator while a UI test drives taps is a lot of machinery for a
@@ -79,6 +85,9 @@ struct ContentView: View {
                 showsDataUse = true
             } else if arguments.contains("--moto-open-gateway") {
                 showsGatewaySettings = true
+            } else if arguments.contains("--moto-open-race") {
+                if arguments.contains("--moto-race-fixture") { model.startRaceFixture() }
+                showsRaceTelemetry = true
             } else if arguments.contains("--moto-open-maps")
                         || arguments.contains("--moto-open-city-search") {
                 showsMapDownloads = true

@@ -167,6 +167,13 @@ target_include_directories(speed_fusion_tests PRIVATE
 )
 target_compile_features(speed_fusion_tests PRIVATE cxx_std_17)
 
+add_executable(battery_ring_tests battery_ring_tests.cpp)
+target_include_directories(battery_ring_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+  "${CMAKE_CURRENT_LIST_DIR}/../../shared/nav_ui/include"
+)
+target_compile_features(battery_ring_tests PRIVATE cxx_std_17)
+
 add_executable(ams_codec_tests
   ams_codec_tests.cpp
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main/ams_codec.cpp"
@@ -219,6 +226,7 @@ add_test(NAME attitude_estimator_tests COMMAND attitude_estimator_tests)
 add_test(NAME lean_estimator_tests COMMAND lean_estimator_tests)
 add_test(NAME speed_fusion_tests COMMAND speed_fusion_tests)
 add_test(NAME ams_codec_tests COMMAND ams_codec_tests)
+add_test(NAME battery_ring_tests COMMAND battery_ring_tests)
 
 add_executable(mount_basis_tests
   mount_basis_tests.cpp

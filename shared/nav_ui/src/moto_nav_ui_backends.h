@@ -42,6 +42,8 @@ void set_demo_change_callback(moto_demo_change_callback_t callback,
 void set_home_callback(moto_home_shortcut_callback_t callback, void *context);
 void set_lean_calibration_callback(moto_lean_calibration_callback_t callback,
                                    void *context);
+void set_performance_callback(moto_ui_performance_callback_t callback,
+                              void *context);
 void set_clear_peaks_callback(moto_lean_clear_peaks_callback_t callback,
                               void *context);
 void set_lean_cal_state(moto_ui_lean_cal_state_t state, uint8_t value);
@@ -60,6 +62,14 @@ void show_home_error(void);
     so the other backend can take the screen. */
 void teardown(void);
 }  // namespace moto_ui_gta
+
+// The battery ring. It belongs to neither backend: it sits on LVGL's top layer
+// above whichever tree is live, so the dispatcher only says when the
+// instrument is up (create) and when a terminal screen takes over.
+namespace moto_ui_battery {
+void set_live(bool live);
+void post(moto_ui_power_source_t source, uint8_t percent);
+}  // namespace moto_ui_battery
 
 // The upstream interface. It knows nothing about attitude, settings, home or
 // lean calibration; it shows navigation, speed, compass and music, in that

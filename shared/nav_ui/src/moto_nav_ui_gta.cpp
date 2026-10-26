@@ -81,8 +81,9 @@ struct MapPalette {
     // residential, service, other). The wire carries all six; collapsing them
     // to three bands threw the hierarchy away.
     lv_color_t road_class[6];
-    // Poster-scale numerals. GTA III prints its HUD readouts in colour (the
-    // clock in gold), never plain white; by day the paper needs black ink.
+    // Poster-scale numerals. GTA prints its HUD readouts in colour, never
+    // plain white: here the neon pink the phone wears too. By day the paper
+    // needs black ink.
     lv_color_t hud;
     // The Lean arc: an unlit segment, and a lit one past 45 degrees.
     lv_color_t gauge_off;
@@ -115,7 +116,7 @@ constexpr MapPalette kGtaDayPalette = {
     LV_COLOR_MAKE(0x11, 0x11, 0x11),  // counter slab
     LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),
     {
-        LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // motorway: HUD clock gold
+        LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // motorway: neon pink
         LV_COLOR_MAKE(0xF7, 0xF5, 0xEF),  // primary
         LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // secondary
         LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // residential
@@ -128,8 +129,9 @@ constexpr MapPalette kGtaDayPalette = {
 };
 
 // GTA III, Liberty City at night: true black, box-art white type, and the
-// HUD's own colours: clock gold, money steel-blue, health orange. The band is
-// white, like the cover's panel gutters.
+// HUD's colours: neon pink (the phone's accent; it replaced the clock gold),
+// money steel-blue, health orange. The band is white, like the cover's panel
+// gutters.
 constexpr MapPalette kGtaNightPalette = {
     LV_COLOR_MAKE(0x00, 0x00, 0x00),
     LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // BLACK paper
@@ -145,28 +147,29 @@ constexpr MapPalette kGtaNightPalette = {
     LV_COLOR_MAKE(0xA8, 0xA2, 0x94),
     LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // band: white gutter
     LV_COLOR_MAKE(0x86, 0xA6, 0xCF),  // HUD STEEL BLUE (money)
-    LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // HUD CLOCK GOLD: the sun
+    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // NEON PINK: the sun
     LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // map type
     LV_COLOR_MAKE(0x00, 0x00, 0x00),  // halo = bezel, the inverse of ink
     LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // black on a white plate
     LV_COLOR_MAKE(0x00, 0x00, 0x00),  // counter slab
     LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),
     {
-        LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // motorway: HUD clock gold
+        LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // motorway: neon pink
         LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // primary
         LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // secondary
         LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // residential
         LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // service
         LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: into the dark
     },
-    LV_COLOR_MAKE(0xD2, 0xAD, 0x6A),  // hud numerals: clock gold
+    LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // hud numerals: neon pink
     LV_COLOR_MAKE(0x2A, 0x2A, 0x2A),  // gauge off: unlit glass
     LV_COLOR_MAKE(0xFF, 0x4B, 0x3A),  // gauge hot: HUD red
 };
 
-// Frame colours shared by both themes. Gold is the HUD clock: the boot card's
-// rules, never a data colour. The casing is the HUD's hard black.
-constexpr lv_color_t kHudGold = LV_COLOR_MAKE(0xD2, 0xAD, 0x6A);
+// Frame colours shared by both themes. Neon pink is the HUD's own colour, the
+// one the phone wears: the loading bars, never a data colour. The casing is
+// the HUD's hard black.
+constexpr lv_color_t kHudPink = LV_COLOR_MAKE(0xF3, 0x4D, 0xAA);
 constexpr lv_color_t kOutlineBlack = LV_COLOR_MAKE(0x0A, 0x0A, 0x0A);
 
 // One resolver for a theme name and the phone's day/night flag. AUTO has no
@@ -536,6 +539,10 @@ struct Ui {
     void *lean_calibration_context = nullptr;
     moto_lean_clear_peaks_callback_t lean_clear_callback = nullptr;
     void *lean_clear_context = nullptr;
+    moto_ui_performance_callback_t perf_callback = nullptr;
+    void *perf_context = nullptr;
+    std::uint32_t perf_run_id = 0;
+    std::uint32_t perf_best_ms = 0;
     lv_obj_t *lean_status_plate = nullptr;
     lv_obj_t *lean_status_text = nullptr;
     lv_obj_t *lean_progress = nullptr;
@@ -1190,7 +1197,7 @@ void draw_skyline(lv_event_t *event) {
     const int reach = lv_obj_has_flag(object, LV_OBJ_FLAG_USER_1) ? 240 : 210;
     // A caller's own palette (the boot's dusk) is drawn as given: towers in
     // its building tones, lamps in its sky. Otherwise, by night the city is
-    // lit in clock gold on near-black towers; by day it is a print, two pale
+    // lit in neon pink on near-black towers; by day it is a print, two pale
     // greys on the newsprint with paper windows, so it never outweighs the
     // ink numerals above it.
     const bool night = lv_color_luminance(palette.ground) < 128;
@@ -2232,8 +2239,8 @@ void apply_lifecycle_content(LifecycleVisual visual) {
     lv_label_set_text(ui.nav_lifecycle_title, title);
     lv_label_set_text(ui.nav_lifecycle_subtitle, message);
     ui.lifecycle_message = message;
-    // The one moment the cover celebrates: the headline turns HUD gold by
-    // night (ink by day, where gold would not read on newsprint).
+    // The one moment the cover celebrates: the headline turns neon pink by
+    // night (ink by day, where neon would not read on newsprint).
     lv_obj_set_style_text_color(ui.nav_lifecycle_title,
                                 visual == LifecycleVisual::Connected
                                     ? ui.palette.hud
@@ -2597,6 +2604,23 @@ void perf_publish_best() {
 }
 
 // Runs on the LVGL thread, so it can read the retained state without a lock.
+// The phone shows these runs (PerformanceRun, 0x19). Only transitions are
+// reported; the phone ticks its own display while a run is in progress.
+void perf_report(std::uint32_t elapsed_ms) {
+    if(ui.perf_callback == nullptr) return;
+    moto_ui_performance_run_t run{};
+    switch(ui.perf_state) {
+        case Ui::PerfState::Armed: run.state = MOTO_UI_RUN_ARMED; break;
+        case Ui::PerfState::Running: run.state = MOTO_UI_RUN_RUNNING; break;
+        case Ui::PerfState::Launched: run.state = MOTO_UI_RUN_FINISHED; break;
+    }
+    run.target_kph = kPerfTargetKph;
+    run.run_id = ui.perf_run_id;
+    run.elapsed_ms = run.state == MOTO_UI_RUN_ARMED ? 0 : elapsed_ms;
+    run.best_ms = ui.perf_best_ms;
+    ui.perf_callback(&run, ui.perf_context);
+}
+
 void perf_tick(lv_timer_t *) {
     if(ui.perf_timer == nullptr || !ui.live) return;
     if(ui.perf_state != Ui::PerfState::Running) return;
@@ -2616,13 +2640,19 @@ void update_performance(const moto_ui_state_t *state) {
             if(speed >= 1) {
                 ui.perf_state = Ui::PerfState::Running;
                 ui.perf_run_start_ms = now;
+                ++ui.perf_run_id;
                 perf_set_elapsed(0);
+                perf_report(0);
             }
             break;
         case Ui::PerfState::Running:
             if(speed >= kPerfTargetKph) {
-                const std::uint32_t centis =
-                    lv_tick_elaps(ui.perf_run_start_ms) / 10U;
+                const std::uint32_t elapsed_ms =
+                    lv_tick_elaps(ui.perf_run_start_ms);
+                const std::uint32_t centis = elapsed_ms / 10U;
+                if(ui.perf_best_ms == 0 || elapsed_ms < ui.perf_best_ms) {
+                    ui.perf_best_ms = elapsed_ms;
+                }
                 ui.perf_last_centis = centis;
                 if(ui.perf_best_centis == 0 || centis < ui.perf_best_centis) {
                     ui.perf_best_centis =
@@ -2646,6 +2676,7 @@ void update_performance(const moto_ui_state_t *state) {
                     }
                 }
                 ui.perf_state = Ui::PerfState::Launched;
+                perf_report(elapsed_ms);
             } else {
                 perf_set_elapsed(lv_tick_elaps(ui.perf_run_start_ms) / 10U);
             }
@@ -2660,6 +2691,7 @@ void update_performance(const moto_ui_state_t *state) {
                           kPerfRearmStillMs) {
                     ui.perf_state = Ui::PerfState::Armed;
                     ui.perf_still_since_ms = 0;
+                    perf_report(0);
                     if(ui.perf_delta != nullptr) {
                         lv_label_set_text(ui.perf_delta, "");
                     }
@@ -2691,7 +2723,7 @@ constexpr int kLeanHeroLiftPx = -10;
 // Arc: twelve 5-degree segments a side, 0 to 60 degrees, filled to the
 // lean in quarter degrees, so the scale moves every frame and not in 5-degree
 // steps. Lit is HUD orange, past 45 degrees HUD red; the segment holding each
-// side's peak keeps its unlit part in clock gold.
+// side's peak keeps its unlit part in neon pink.
 // Radii keep the box of two neighbouring segments inside kLeanDirtyRadius
 // (LVGL joins neighbours into one area): on a diagonal that box's corner
 // sits about 8 % outside the arc.
@@ -3457,7 +3489,7 @@ void create_navigation_page() {
     lv_obj_set_style_border_color(ui.lifecycle_bar, kLimitFace, 0);
     lv_obj_set_style_border_width(ui.lifecycle_bar, 2, 0);
     ui.lifecycle_bar_fill = box(cover_layer, kBarX + 3, kBarY + 3, 0,
-                                px(12) - 6, kHudGold);
+                                px(12) - 6, kHudPink);
     lv_obj_add_flag(ui.lifecycle_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ui.lifecycle_bar_fill, LV_OBJ_FLAG_HIDDEN);
 
@@ -4087,7 +4119,7 @@ void create_lean_page() {
 // the right), longitudinal G up the middle (accelerating up, braking down),
 // rings at 0.5 / 1.0 / 1.5 g. The live dot is HUD orange like every "rider
 // now" mark; the envelope, the most the ride has asked of the tyres in each of
-// 16 directions, is drawn in HUD gold. Speed is a counter slab, small.
+// 16 directions, is drawn in neon pink. Speed is a counter slab, small.
 
 constexpr int kGgCentreDy = 3;             // circle centre below the canvas centre
 constexpr int kGgRadius = 128;             // 1.5 g
@@ -4215,7 +4247,7 @@ void draw_gg_plot(lv_event_t *event) {
         const double r = ui.gg_envelope[i] * kGgPxPerG;
         corner[i] = pt(cx + std::cos(angle) * r, cy - std::sin(angle) * r);
     }
-    // Casing first, all of it, then the gold: interleaving the two let each
+    // Casing first, all of it, then the pink: interleaving the two let each
     // edge's casing cut the end of the one before, and the line read dashed.
     for(int pass = 0; pass < 2; ++pass) {
         for(int i = 0; i < kGgSectors; ++i) {
@@ -4643,7 +4675,7 @@ void moto_ui_gta::show_boot_screen(void) {
     lv_obj_remove_style_all(fill);
     lv_obj_set_pos(fill, 3, 3);
     lv_obj_set_size(fill, 0, px(12) - 6);
-    lv_obj_set_style_bg_color(fill, kHudGold, 0);
+    lv_obj_set_style_bg_color(fill, kHudPink, 0);
     lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
     lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
     ui.boot_bar = bar;
@@ -4789,7 +4821,7 @@ void apply_theme_colors() {
         lv_obj_set_style_bg_color(ui.lifecycle_panels[1], ui.palette.ground,
                                   0);
     }
-    // The Connected headline's gold follows the paper too.
+    // The Connected headline's pink follows the paper too.
     if(ui.nav_lifecycle_title != nullptr &&
        ui.lifecycle_visual == LifecycleVisual::Connected) {
         lv_obj_set_style_text_color(ui.nav_lifecycle_title, ui.palette.hud, 0);
@@ -5020,6 +5052,12 @@ void moto_ui_gta::set_lean_calibration_callback(
     moto_lean_calibration_callback_t callback, void *context) {
     ui.lean_calibration_callback = callback;
     ui.lean_calibration_context = context;
+}
+
+void moto_ui_gta::set_performance_callback(
+    moto_ui_performance_callback_t callback, void *context) {
+    ui.perf_callback = callback;
+    ui.perf_context = context;
 }
 
 void moto_ui_gta::set_clear_peaks_callback(
