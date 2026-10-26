@@ -7,6 +7,7 @@ struct HomeScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var homeStore: HomeLocationStore
     @Binding var showsDeviceDetails: Bool
+    @Binding var showsThemeSettings: Bool
     @Binding var showsGatewaySettings: Bool
     @Binding var showsMapDownloads: Bool
     @Binding var showsDataUse: Bool
@@ -111,16 +112,14 @@ struct HomeScreen: View {
 
     // MARK: - Hero
 
+    /// The GTA III cover: framed panels in thick band-colour gutters, each
+    /// panel one bold image — the radar, the logo block, the safehouse, the
+    /// verb. The command bar sits under the cover, on plain paper.
     private var hero: some View {
         VStack(alignment: .leading, spacing: MotoMetrics.s4) {
-            MotoRadar(
-                size: MotoMetrics.RadarSize.hero,
-                route: [],
-                showsHome: homeStore.isSet
-            )
-            .frame(maxWidth: .infinity)
-
-            wordmark
+            cover
+                // Full bleed: the cover runs to both screen edges.
+                .padding(.horizontal, -MotoMetrics.s4)
 
             commandBar
 
@@ -129,18 +128,86 @@ struct HomeScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.top, MotoMetrics.s5)
+        .padding(.top, MotoMetrics.s3)
+    }
+
+    private let coverGutter: CGFloat = 5
+
+    private var cover: some View {
+        VStack(spacing: coverGutter) {
+            HStack(spacing: coverGutter) {
+                coverPanel(palette.surface2) {
+                    MotoRadar(
+                        size: 196,
+                        route: [],
+                        showsHome: homeStore.isSet,
+                        homeOffset: homeRadarOffset
+                    )
+                    .padding(MotoMetrics.s3)
+                }
+                VStack(spacing: coverGutter) {
+                    coverPanel(palette.slab) { logoBlock }
+                    coverPanel(palette.surface) { homeButton }
+                }
+                // The side column is a fixed strip, as on the cover; the
+                // radar panel takes the rest.
+                .frame(width: 132)
+            }
+            coverPanel(palette.surface, alignment: .leading) {
+                wordmark.padding(MotoMetrics.s4)
+            }
+        }
+        .padding(coverGutter)
+        .background(palette.band)
+    }
+
+    private func coverPanel<Content: View>(
+        _ fill: Color,
+        alignment: Alignment = .center,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+            .background(fill)
+    }
+
+    /// The cover's logo block: the name stacked in the wordmark face, white on
+    /// black, the way GTA III sets its title in a panel of its own.
+    private var logoBlock: some View {
+        VStack(alignment: .leading, spacing: -6) {
+            Text("MOTO")
+                .font(theme.wordmarkFont(size: 44, relativeTo: .largeTitle))
+            Text("GPS")
+                .font(theme.wordmarkFont(size: 44, relativeTo: .largeTitle))
+        }
+        .foregroundStyle(palette.onSlab)
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, MotoMetrics.s3)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// Home relative to the rider, north-up, 1.5 km to the rim. Equirectangular
+    /// is exact enough at radar scale.
+    private var homeRadarOffset: CGPoint? {
+        guard let home = homeStore.place?.location, let rider = model.riderPoint else {
+            return nil
+        }
+        let metresPerDegree = 111_320.0
+        let east = (home.longitudeDeg - rider.longitudeDeg) * metresPerDegree
+            * cos(rider.latitudeDeg * .pi / 180)
+        let north = (home.latitudeDeg - rider.latitudeDeg) * metresPerDegree
+        let range = 1_500.0
+        return CGPoint(x: east / range, y: -north / range)
     }
 
     /// Poster line: one huge word, the Chinese verb and the claim under it.
-    /// The word owns the full width; nothing sits beside it to squeeze it.
+    /// The word owns its panel; nothing sits beside it to squeeze it.
     private var wordmark: some View {
         VStack(alignment: .leading, spacing: MotoMetrics.s3) {
-            HStack(alignment: .top, spacing: MotoMetrics.s3) {
-                MotoWordmark(text: "GO", size: 132, fill: palette.accent, outline: palette.slab)
-                Spacer(minLength: MotoMetrics.s2)
-                homeButton
-            }
+            MotoWordmark(text: "GO", size: 132, fill: palette.accent, outline: palette.slab)
             HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
                 Text("出发")
                     .font(.system(.title, weight: .heavy))
@@ -356,32 +423,40 @@ struct HomeScreen: View {
                 identifier: "device-summary-button"
             ) { showsDeviceDetails = true }
 
+            // One level under the menu: the look is chosen often enough (day
+            // rides, night rides) that it must not sit inside the device sheet.
             numberedAction(
-                "02", title: "地图与离线下载", detail: "自动加载周边，也能提前保存城市",
+                "02", title: "主题", detail: model.displayTheme.menuTitle,
+                symbol: "paintpalette", tint: palette.accent,
+                identifier: "theme-menu-button"
+            ) { showsThemeSettings = true }
+
+            numberedAction(
+                "03", title: "地图与离线下载", detail: "自动加载周边，也能提前保存城市",
                 symbol: "map", tint: palette.inkMuted,
                 identifier: "map-downloads-button"
             ) { showsMapDownloads = true }
 
             numberedAction(
-                "03", title: "演示导航", detail: "先体验一次完整流程",
+                "04", title: "演示导航", detail: "先体验一次完整流程",
                 symbol: "play", tint: palette.accent,
                 identifier: "demo-navigation-button"
             ) { model.startDemoNavigation() }
 
             numberedAction(
-                "04", title: "网关设置", detail: model.isGatewayConfigured ? "已配置" : "未配置",
+                "05", title: "网关设置", detail: model.isGatewayConfigured ? "已配置" : "未配置",
                 symbol: "slider.horizontal.3", tint: palette.inkMuted,
                 identifier: "gateway-settings-button"
             ) { showsGatewaySettings = true }
 
             numberedAction(
-                "05", title: "隐私与数据", detail: "位置、地图与遥测的使用说明",
+                "06", title: "隐私与数据", detail: "位置、地图与遥测的使用说明",
                 symbol: "hand.raised", tint: palette.inkMuted,
                 identifier: "privacy-data-button"
             ) { showsDataUse = true }
 
             numberedAction(
-                "06",
+                "07",
                 title: "家",
                 detail: homeStore.place?.name ?? "未设置 · 点这里的房子图标",
                 symbol: homeStore.isSet ? "house.fill" : "house",

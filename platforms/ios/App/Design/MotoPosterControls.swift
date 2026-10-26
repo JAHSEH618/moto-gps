@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Band plate
 
-/// The magenta plate. On the round screen the band is brand, not state: it never
+/// The band plate. On the round screen the band is brand, not state: it never
 /// changes between day and night and it is never a warning colour. It appears
 /// here for the same reason — one filled surface that says "this is chosen",
 /// carrying ink rather than white.
@@ -119,7 +119,7 @@ struct MotoToggleRow: View {
 
 // MARK: - Sheet scaffold
 
-/// Poster sheet chrome: a full-bleed magenta band carrying the title, then
+/// Poster sheet chrome: a full-bleed band (the cover gutter) carrying the title, then
 /// paper. The band is the same object as the instrument's rim — brand, not
 /// state — and it is why the sheet has no navigation bar and no large title.
 struct MotoPosterSheet<Actions: View, Content: View>: View {

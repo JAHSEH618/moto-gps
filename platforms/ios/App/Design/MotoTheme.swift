@@ -4,15 +4,15 @@ import UIKit
 
 // MARK: - Theme
 
-/// Three looks, one per round-screen family: the GTA poster by night (Vice)
-/// and by day (Heat), and the black-and-white interface this project was
-/// forked from (Original). The rider picks the theme once; the phone wears
-/// what the round screen shows. See DESIGN.md → "Theme switch".
+/// Three looks, one per round-screen family: GTA III's Liberty City by night
+/// and by day, and the black-and-white interface this project was forked from
+/// (Original). The rider picks the theme once; the phone wears what the round
+/// screen shows. See DESIGN.md → "Theme switch".
 enum MotoThemeName: String, CaseIterable, Identifiable {
-    /// Dark garage, night ride. Instrument console. Amber on near-black.
-    case vice
-    /// Daylight with glare. Poster. Near-black on sunlit paper.
-    case heat
+    /// Liberty City after dark: true black, box-art white, HUD gold.
+    case night
+    /// The cover's white field: newsprint paper, black ink, readable in sun.
+    case day
     /// The upstream look: white on true black, system type, no poster devices.
     case original
 
@@ -20,8 +20,8 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .vice: return "Vice"
-        case .heat: return "Heat"
+        case .night: return "Liberty Night"
+        case .day: return "Liberty Day"
         case .original: return "Original"
         }
     }
@@ -29,41 +29,39 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
     /// One-line description for the settings row.
     var summary: String {
         switch self {
-        case .vice: return "夜间海报 · 午夜纸面"
-        case .heat: return "日光海报 · 道路奶油"
+        case .night: return "GTA III · 夜间"
+        case .day: return "GTA III · 白天"
         case .original: return "原版 · 黑底白线"
         }
     }
 
     var palette: MotoPalette {
         switch self {
-        case .vice: return .vice
-        case .heat: return .heat
+        case .night: return .night
+        case .day: return .day
         case .original: return .original
         }
     }
 
-    /// The instrument's band. Brand, not state: identical in both themes.
     /// Dark themes drive the system chrome; the light theme must also override it.
     var colorScheme: ColorScheme {
         switch self {
-        case .vice, .original: return .dark
-        case .heat: return .light
+        case .night, .original: return .dark
+        case .day: return .light
         }
     }
 
-    /// Display weight differs per theme: the console is semi-bold, the poster is
-    /// extra-bold. Original has no bundled face: it sets numerals in the system
-    /// font, as the upstream app did.
+    /// The HUD numeral: one heavy condensed weight in both GTA themes. Original
+    /// has no bundled face: it sets numerals in the system font, as the
+    /// upstream app did.
     var displayFontName: String? {
         switch self {
-        case .vice: return "BarlowCondensed-SemiBold"
-        case .heat: return "BarlowCondensed-ExtraBold"
+        case .night, .day: return "BarlowCondensed-ExtraBold"
         case .original: return nil
         }
     }
 
-    /// Wordmark face: Anton, the closest OFL match to the GTA logo weight.
+    /// Wordmark face: Anton, the closest OFL match to the GTA III logo weight.
     /// Original sets its headings in the system face instead.
     var wordmarkFontName: String? { self == .original ? nil : "Anton-Regular" }
 
@@ -75,30 +73,29 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         return .custom(name, size: size, relativeTo: style)
     }
 
+    /// GTA III's HUD caps are wide and square, not monospaced. SF Pro Expanded
+    /// Heavy is the system face that carries that voice; Original keeps mono.
+    var usesHudCaps: Bool { self != .original }
+
+    /// The HUD's hard drop: black, offset down-right, no blur. Night only; on
+    /// the day paper ink is already black and the drop would only thicken it.
+    var hudShadow: CGFloat? { self == .night ? 3 : nil }
+
     var sweepDuration: Double {
         switch self {
-        case .vice, .original: return 4
-        case .heat: return 6
+        case .night, .original: return 4
+        case .day: return 6
         }
     }
 
-    /// Texture inside the radar circle. Heat drops scanlines because they fight glare legibility.
-    var radarTexture: RadarTexture {
-        switch self {
-        case .vice: return .scanlines(pitch: 4, opacity: 0.10)
-        // Glare on paper turns thin bands into haze; Heat carries no texture
-        // inside the circle and lets the map blocks do the work.
-        case .heat: return .none
-        // The upstream screen is flat black: no texture to imitate.
-        case .original: return .none
-        }
-    }
+    /// GTA III's radar is flat: no scanlines in either theme.
+    var radarTexture: RadarTexture { .none }
 
-    /// Body copy floor. Heat never drops secondary text below `body` size.
+    /// Body copy floor. Day never drops secondary text below `body` size.
     var minimumSecondaryTextSize: CGFloat {
         switch self {
-        case .vice, .original: return 11
-        case .heat: return 15
+        case .night, .original: return 11
+        case .day: return 15
         }
     }
 }
@@ -124,65 +121,89 @@ struct MotoPalette {
     let onSlab: Color
     let accent: Color
     /// Text and glyphs on top of `accent`. Differs per theme because the
-    /// accent fill does: near-black on amber, near-black ink on orange.
+    /// accent fill does: black on night gold, paper on day gold.
     let onAccent: Color
-    /// Route stroke. Magenta on purpose: GTA draws the line in pink, not in the
-    /// UI accent, so the line reads as data instead of as chrome.
+    /// Route stroke. Not the UI accent, so the line reads as data instead of
+    /// as chrome.
     let route: Color
     let link: Color
     let ok: Color
     let abort: Color
-    /// The instrument band and the ink on it. The GTA themes share the magenta
-    /// rim; Original replaces it with white, as its round screen does.
-    var band = Color(hex: 0xF34DAA)
-    var onBand = Color(hex: 0x17151B)
+    /// The instrument band and the ink on it: the cover's panel gutter, white
+    /// by night and black by day. Original uses white, as its round screen does.
+    var band = Color(hex: 0xF2EEE4)
+    var onBand = Color(hex: 0x0A0A0A)
+    /// HUD numeral colour. GTA III prints its readouts in colour (the clock in
+    /// gold), never in plain white; by day the paper needs black ink instead.
+    var hud: Color? = nil
+    /// Radar map. Land is the road colour: streets are the gaps between
+    /// blocks, which is how GTA III's radar draws a city. Two block tones split
+    /// lots; water and park are the only hues inside the circle.
+    var mapLand = Color(hex: 0x3A3A3A)
+    var mapBlock = Color(hex: 0x222222)
+    var mapBlock2 = Color(hex: 0x1B1B1B)
+    var mapWater = Color(hex: 0x14202E)
+    var mapPark = Color(hex: 0x28311F)
 
-    /// Vice — the instrument's night paper. The same tokens as the round screen:
-    /// midnight purple ground, sunset-cream ink, hot pink for the band and for
-    /// whatever is happening now. Body text 15.4:1, ink on accent 5.8:1.
-    static let vice = MotoPalette(
-        bg: Color(hex: 0x141024),
-        surface: Color(hex: 0x191430),
-        surface2: Color(hex: 0x211A3C),
-        line: Color(hex: 0x2A2145),
+    /// Liberty Night — GTA III's HUD on true black. Ink is the box-art white;
+    /// the accent is the HUD clock gold, link the money steel-blue, route the
+    /// health orange, ok the armour olive. Each lifted until it clears AA on
+    /// black: ink 17.1:1, muted 7.8, gold 9.4, route 7.9, link 7.9, abort 6.1.
+    static let night = MotoPalette(
+        bg: Color(hex: 0x0A0A0A),
+        surface: Color(hex: 0x141414),
+        surface2: Color(hex: 0x1D1D1D),
+        line: Color(hex: 0x333333),
         lineSoft: Color(white: 1, opacity: 0.08),
-        ink: Color(hex: 0xF6F0D7),
-        inkMuted: Color(hex: 0xB9B1C9),
-        slab: Color(hex: 0x0A0614),
-        onSlab: Color(hex: 0xF6F0D7),
-        accent: Color(hex: 0xF34DAA),
-        onAccent: Color(hex: 0x120D1C),
-        route: Color(hex: 0xFF5ACD),
-        link: Color(hex: 0x42F5D7),
-        ok: Color(hex: 0x73E6A4),
-        abort: Color(hex: 0xFF655F)
+        ink: Color(hex: 0xF2EEE4),
+        inkMuted: Color(hex: 0xA8A294),
+        slab: Color(hex: 0x000000),
+        onSlab: Color(hex: 0xF2EEE4),
+        accent: Color(hex: 0xD2AD6A),
+        onAccent: Color(hex: 0x0A0A0A),
+        route: Color(hex: 0xF08A3C),
+        link: Color(hex: 0x86A6CF),
+        ok: Color(hex: 0xA5B97A),
+        abort: Color(hex: 0xF0614A),
+        // The cover's panel gutters: white bands on black.
+        band: Color(hex: 0xF2EEE4),
+        onBand: Color(hex: 0x0A0A0A),
+        hud: Color(hex: 0xD2AD6A)
     )
 
-    /// Heat — the instrument's day paper: road cream, outline black, hot pink.
-    /// Body text 17.6:1, secondary 6.4:1, ink on accent 5.7:1.
-    /// Accent is never body-size text: hot pink on cream is 2.9:1, so it fills
-    /// plates that carry ink and nothing smaller.
-    static let heat = MotoPalette(
-        bg: Color(hex: 0xF6F0D7),
-        surface: Color(hex: 0xEFE7C9),
-        surface2: Color(hex: 0xE6DCB8),
-        line: Color(hex: 0x17151B).opacity(0.24),
-        lineSoft: Color(hex: 0x17151B).opacity(0.12),
-        ink: Color(hex: 0x17151B),
-        inkMuted: Color(hex: 0x5C4A38),
-        slab: Color(hex: 0x17151B),
-        onSlab: Color(hex: 0xF6F0D7),
-        accent: Color(hex: 0xF34DAA),
-        onAccent: Color(hex: 0x17151B),
-        route: Color(hex: 0xF34DAA),
-        link: Color(hex: 0x0E6F68),
-        ok: Color(hex: 0x1D6B3C),
-        abort: Color(hex: 0xB3241C)
+    /// Liberty Day — the cover's white field for sunlight: newsprint paper and
+    /// black ink. The HUD hues are darkened until they read as text on paper:
+    /// ink 16.0:1, muted 7.9, gold 5.6, route 4.7, link 6.4, abort 6.0.
+    static let day = MotoPalette(
+        bg: Color(hex: 0xEFECE4),
+        surface: Color(hex: 0xE4E0D6),
+        surface2: Color(hex: 0xD8D3C7),
+        line: Color(hex: 0x111111).opacity(0.24),
+        lineSoft: Color(hex: 0x111111).opacity(0.12),
+        ink: Color(hex: 0x111111),
+        inkMuted: Color(hex: 0x4B463E),
+        slab: Color(hex: 0x111111),
+        onSlab: Color(hex: 0xEFECE4),
+        accent: Color(hex: 0x7A5718),
+        onAccent: Color(hex: 0xEFECE4),
+        route: Color(hex: 0xB04716),
+        link: Color(hex: 0x35567F),
+        ok: Color(hex: 0x4A5C2A),
+        abort: Color(hex: 0xA8281C),
+        // Black bands on white: the inverse gutter, the logo panel's colour.
+        band: Color(hex: 0x111111),
+        onBand: Color(hex: 0xEFECE4),
+        // The radar stays a grey city by day, lifted so it reads on paper.
+        mapLand: Color(hex: 0xC9C5BB),
+        mapBlock: Color(hex: 0x8F8B83),
+        mapBlock2: Color(hex: 0x9C988F),
+        mapWater: Color(hex: 0x6E879F),
+        mapPark: Color(hex: 0x7D8A5B)
     )
 
     /// Original — the round screen's upstream colours on the phone: true black,
     /// warm white ink and route, graphite rules. White is the accent, so plates
-    /// carry black ink (19:1). No magenta anywhere.
+    /// carry black ink (19:1). No HUD colours anywhere.
     static let original = MotoPalette(
         bg: Color(hex: 0x050607),
         surface: Color(hex: 0x0E1012),
@@ -200,7 +221,12 @@ struct MotoPalette {
         ok: Color(hex: 0x69D494),
         abort: Color(hex: 0xFF4B43),
         band: Color(hex: 0xF3F4EF),
-        onBand: Color(hex: 0x050607)
+        onBand: Color(hex: 0x050607),
+        mapLand: Color(hex: 0x2A2D30),
+        mapBlock: Color(hex: 0x16191C),
+        mapBlock2: Color(hex: 0x121416),
+        mapWater: Color(hex: 0x101418),
+        mapPark: Color(hex: 0x16191C)
     )
 
 }
@@ -249,8 +275,13 @@ struct MotoTypography {
         return .custom(name, size: size, relativeTo: .largeTitle)
     }
 
+    /// Caps labels. The GTA themes set them in SF Pro Expanded Heavy, the
+    /// HUD's wide square caps; Original keeps the mono it shipped with.
     func mono(_ token: MotoText) -> Font {
-        .system(token.monoStyle, design: .monospaced).weight(.medium)
+        guard theme.usesHudCaps else {
+            return .system(token.monoStyle, design: .monospaced).weight(.medium)
+        }
+        return .system(token.monoStyle).weight(.heavy).width(.expanded)
     }
 
     func prose(_ token: MotoText) -> Font {
@@ -350,15 +381,15 @@ enum MotoMotion {
 // MARK: - Environment
 
 private struct MotoThemeKey: EnvironmentKey {
-    static let defaultValue = MotoThemeName.vice
+    static let defaultValue = MotoThemeName.night
 }
 
 private struct MotoPaletteKey: EnvironmentKey {
-    static let defaultValue = MotoPalette.vice
+    static let defaultValue = MotoPalette.night
 }
 
 private struct MotoTypeKey: EnvironmentKey {
-    static let defaultValue = MotoTypography(theme: .vice)
+    static let defaultValue = MotoTypography(theme: .night)
 }
 
 extension EnvironmentValues {
@@ -403,9 +434,8 @@ extension MotoPalette {
         contrast == .increased ? ink : inkMuted
     }
 
-    /// The instrument band. Brand, not state: identical in both GTA themes,
-    /// never a warning colour. Ink on it measures 5.7:1, so plates carry
-    /// `onBand` type and the band is never used for text at prose size. It is
+    /// The instrument band. Brand, not state: never a warning colour. Plates
+    /// on it carry `onBand` type (17:1 in both GTA themes). It is
     /// read statically all over the app, so it follows the live theme through
     /// `MotoAppearance` rather than through the environment.
     @MainActor static var band: Color { MotoAppearance.shared.theme.palette.band }
@@ -422,7 +452,7 @@ extension MotoPalette {
 final class MotoAppearance: ObservableObject {
     static let shared = MotoAppearance()
 
-    @Published private(set) var theme: MotoThemeName = .vice
+    @Published private(set) var theme: MotoThemeName = .night
 
     func apply(_ theme: MotoThemeName) {
         guard theme != self.theme else { return }
@@ -452,8 +482,33 @@ extension MotoThemeName {
     init(look: PhoneThemeLook) {
         switch look {
         case .original: self = .original
-        case .gtaDay: self = .heat
-        case .gtaNight: self = .vice
+        case .gtaDay: self = .day
+        case .gtaNight: self = .night
+        }
+    }
+}
+
+// MARK: - Theme menu
+
+extension DeviceSettingsTheme {
+    /// The order the theme sheet lists the choices in.
+    static let menuOrder: [DeviceSettingsTheme] = [.auto, .day, .night, .official]
+
+    var menuTitle: String {
+        switch self {
+        case .official: return "原版"
+        case .auto: return "GTA · 自动"
+        case .day: return "GTA · 白天"
+        case .night: return "GTA · 夜间"
+        }
+    }
+
+    var menuDetail: String {
+        switch self {
+        case .official: return "项目最初的黑底白线界面"
+        case .auto: return "跟随手机所在地的日出与日落切换"
+        case .day: return "Liberty City 白天：白纸黑字，强光下也看得清"
+        case .night: return "Liberty City 夜间：纯黑底、HUD 金色"
         }
     }
 }

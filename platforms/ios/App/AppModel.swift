@@ -26,9 +26,11 @@ final class AppModel: ObservableObject {
     /// What the phone wears. Derived from `displayTheme` and the ambient flag,
     /// the same inputs the round screen resolves, so the two surfaces always
     /// show the same theme.
-    @Published private(set) var phoneTheme: MotoThemeName = .vice
+    @Published private(set) var phoneTheme: MotoThemeName = .night
     @Published private(set) var showBuildings = false
     @Published private(set) var selectedPlace: PlaceSearchResult?
+    /// Latest phone fix, for the home radar's safehouse blip.
+    @Published private(set) var riderPoint: WGS84Point?
     @Published private(set) var recentPlaces: [PlaceSearchResult] = []
     @Published private(set) var isSearchingPlaces = false
     @Published private(set) var placeSearchFailure: String?
@@ -119,6 +121,7 @@ final class AppModel: ObservableObject {
             if let point {
                 self.updateAmbientNight(at: point)
             }
+            if self.riderPoint != point { self.riderPoint = point }
         }
         searchLocation.onStatusChange = { [weak self] status in
             guard let self else { return }

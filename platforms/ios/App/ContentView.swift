@@ -14,12 +14,10 @@ struct ContentView: View {
     @Environment(\.openURL) private var openURL
     @FocusState private var searchFocused: Bool
     @State private var showsDeviceDetails = false
+    @State private var showsThemeSettings = false
     @State private var showsMapDownloads = false
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
-    /// The last GTA mode the rider used, so leaving Original and coming back
-    /// to GTA restores day / night / auto instead of resetting it.
-    @State private var lastGtaTheme: DeviceSettingsTheme = .auto
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
@@ -33,6 +31,7 @@ struct ContentView: View {
                 model: model,
                 homeStore: model.homeStore,
                 showsDeviceDetails: $showsDeviceDetails,
+                showsThemeSettings: $showsThemeSettings,
                 showsGatewaySettings: $showsGatewaySettings,
                 showsMapDownloads: $showsMapDownloads,
                 showsDataUse: $showsDataUse,
@@ -55,6 +54,7 @@ struct ContentView: View {
             if active { searchFocused = false }
         }
         .sheet(isPresented: $showsDeviceDetails) { deviceDetails }
+        .sheet(isPresented: $showsThemeSettings) { themeSettings }
         .sheet(isPresented: $showsMapDownloads) {
             MapDownloadsView(
                 store: model.surroundingMap,
@@ -73,6 +73,8 @@ struct ContentView: View {
             let arguments = ProcessInfo.processInfo.arguments
             if arguments.contains("--moto-open-device-sheet") {
                 showsDeviceDetails = true
+            } else if arguments.contains("--moto-open-theme") {
+                showsThemeSettings = true
             } else if arguments.contains("--moto-open-privacy") {
                 showsDataUse = true
             } else if arguments.contains("--moto-open-gateway") {
@@ -535,7 +537,9 @@ struct ContentView: View {
                             roads: rideMap.roads,
                             buildings: rideMap.buildings,
                             progress: rideMap.progress,
-                            showsSweep: false
+                            showsSweep: false,
+                            showsHome: rideMap.home != nil,
+                            homeOffset: rideMap.home
                         )
                         VStack(alignment: .leading, spacing: 0) {
                             MotoStatCell(
@@ -676,36 +680,8 @@ struct ContentView: View {
     // MARK: - Device sheet
 
     /// Original or GTA. Picking GTA restores the GTA mode used last.
-    private var themeFamilyBinding: Binding<Bool> {
-        Binding(
-            get: { model.displayTheme == .official },
-            set: { original in
-                if original {
-                    if model.displayTheme != .official { lastGtaTheme = model.displayTheme }
-                    model.setDisplayTheme(.official)
-                } else if model.displayTheme == .official {
-                    model.setDisplayTheme(lastGtaTheme)
-                }
-            }
-        )
-    }
-
-    private var themeFootnote: String {
-        let theme = model.displayTheme == .official
-            ? "原版是项目最初的黑白界面。"
-            : "GTA 自动跟随手机所在地的日出与日落。"
-        return theme + "手机和圆屏使用同一个主题；圆屏未连接时，会在下次连接后同步。建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。"
-    }
-
-    /// Day, night or auto inside GTA.
-    private var gtaModeBinding: Binding<DeviceSettingsTheme> {
-        Binding(
-            get: { model.displayTheme == .official ? lastGtaTheme : model.displayTheme },
-            set: { mode in
-                lastGtaTheme = mode
-                model.setDisplayTheme(mode)
-            }
-        )
+    private var buildingsFootnote: String {
+        "建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。"
     }
 
     private var showBuildingsBinding: Binding<Bool> {
@@ -818,40 +794,15 @@ struct ContentView: View {
             }
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "02", text: "主题")
+                MotoSectionTitle(index: "02", text: "地图")
                 MotoPanel(padding: 0) {
-                    VStack(spacing: 0) {
-                        MotoSegment(
-                            options: [
-                                (true, "原版"),
-                                (false, "GTA"),
-                            ],
-                            selection: themeFamilyBinding,
-                            identifierPrefix: "device-theme-family"
-                        )
-                        .padding(MotoMetrics.s3)
-                        if model.displayTheme != .official {
-                            MotoRule()
-                            MotoSegment(
-                                options: [
-                                    (DeviceSettingsTheme.auto, "自动"),
-                                    (DeviceSettingsTheme.day, "白天"),
-                                    (DeviceSettingsTheme.night, "夜间"),
-                                ],
-                                selection: gtaModeBinding,
-                                identifierPrefix: "device-theme"
-                            )
-                            .padding(MotoMetrics.s3)
-                        }
-                        MotoRule()
-                        MotoToggleRow(
-                            title: "显示建筑轮廓",
-                            isOn: showBuildingsBinding,
-                            identifier: "device-buildings-toggle"
-                        )
-                    }
+                    MotoToggleRow(
+                        title: "显示建筑轮廓",
+                        isOn: showBuildingsBinding,
+                        identifier: "device-buildings-toggle"
+                    )
                 }
-                Text(themeFootnote)
+                Text(buildingsFootnote)
                     .font(.system(.footnote))
                     .foregroundStyle(palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -877,6 +828,70 @@ struct ContentView: View {
         .motoTheme(theme)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+    }
+
+    /// The theme, one level under the menu. Four flat choices instead of a
+    /// family switch with a second segment inside it: the rider taps once.
+    private var themeSettings: some View {
+        MotoPosterSheet(
+            kicker: "THEME",
+            title: "主题",
+            sheetIdentifier: "theme-settings-sheet",
+            dismissTitle: "完成",
+            dismissIdentifier: "theme-settings-done",
+            onDismiss: { showsThemeSettings = false }
+        ) {
+            VStack(spacing: 0) {
+                ForEach(Array(DeviceSettingsTheme.menuOrder.enumerated()), id: \.element) { index, option in
+                    themeOption(number: index + 1, option: option)
+                }
+            }
+            Text("手机和圆屏使用同一个主题；圆屏未连接时，会在下次连接后同步。")
+                .font(.system(.footnote))
+                .foregroundStyle(palette.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .motoTheme(theme)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func themeOption(number: Int, option: DeviceSettingsTheme) -> some View {
+        let selected = model.displayTheme == option
+        return VStack(spacing: 0) {
+            Button { model.setDisplayTheme(option) } label: {
+                HStack(spacing: MotoMetrics.s3) {
+                    MotoNumeral(
+                        value: String(format: "%02d", number),
+                        token: .displayMD,
+                        tone: selected ? .accent : .muted
+                    )
+                    .frame(width: 44, alignment: .leading)
+                    VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                        Text(option.menuTitle)
+                            .font(.system(.title3, weight: .semibold))
+                            .foregroundStyle(palette.ink)
+                        Text(option.menuDetail)
+                            .font(.system(.subheadline))
+                            .foregroundStyle(palette.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: selected ? "checkmark.square.fill" : "square")
+                        .font(.system(.title3, weight: .semibold))
+                        .foregroundStyle(selected ? palette.accent : palette.inkMuted)
+                        .accessibilityHidden(true)
+                }
+                .padding(.vertical, MotoMetrics.s3)
+                .frame(minHeight: 76)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("theme-option-\(option.rawValue)")
+            MotoRule()
+        }
     }
 
     private func statusRow(_ title: String, symbol: String, value: String, color: Color) -> some View {
@@ -1012,6 +1027,8 @@ struct ContentView: View {
         var roads: [[CGPoint]] = []
         var buildings: [[CGPoint]] = []
         var progress: Double?
+        /// Home in radar units (1 = rim), in the same projection as the route.
+        var home: CGPoint?
     }
 
     /// Route, streets and footprints share one rider-centred, north-up
@@ -1054,6 +1071,13 @@ struct ContentView: View {
         }
 
         map.route = routeOffsets.map(normalise)
+        // The route window is GCJ-02, like everything the handlebar draws, so
+        // the saved (WGS84) home is converted once before it is projected.
+        if let saved = model.homeStore.place?.location {
+            let home = ChinaCoordinateTransform.wgs84ToGCJ02(saved)
+            let point = offset(latitude: home.latitudeDeg, longitude: home.longitudeDeg)
+            map.home = CGPoint(x: point.x * scale / 0.40, y: -point.y * scale / 0.40)
+        }
         if let window {
             map.roads = window.roads.map { road in
                 road.points.map {

@@ -10,10 +10,10 @@ Visual system for the MOTO GPS phone app (`platforms/ios`) and the web shell (`p
 | Theme | Round screen | Phone | Picked as |
 |---|---|---|---|
 | **Original** | the upstream interface this project was forked from (`moto_nav_ui_classic.cpp`): true black, white route over grey roads, Montserrat, four pages | `MotoThemeName.original`: black, warm white ink, white accent and route, system type, no texture | 原版 |
-| **Vice** | GTA poster, night paper | Vice palette | GTA · 夜间, or GTA · 自动 after dark |
-| **Heat** | GTA poster, day paper | Heat palette | GTA · 白天, or GTA · 自动 in daylight |
+| **Liberty Night** | GTA III, black paper, white band | `MotoThemeName.night` | GTA · 夜间, or GTA · 自动 after dark |
+| **Liberty Day** | GTA III, newsprint paper, black band | `MotoThemeName.day` | GTA · 白天, or GTA · 自动 in daylight |
 
-The control is one setting with two levels: **原版 / GTA**, and inside GTA **自动 / 白天 / 夜间**. It lives on the device-settings sheet and is persisted on the phone, which applies its own look at once and sends `SettingsState.theme` to the handlebar (now, or on the next handshake if the link is down). There is no second, phone-only appearance switch: one choice, two surfaces, so a rider never has to set the look twice. The phone no longer follows the system's dark or light mode.
+The control is one flat list of four choices — **GTA · 自动 / GTA · 白天 / GTA · 夜间 / 原版** — on its own sheet, opened from **MENU → 02 主题** on the home screen (one level under the menu, not inside the device sheet). It is persisted on the phone, which applies its own look at once and sends `SettingsState.theme` to the handlebar (now, or on the next handshake if the link is down). There is no second, phone-only appearance switch: one choice, two surfaces, so a rider never has to set the look twice. The phone no longer follows the system's dark or light mode.
 
 Original is not a palette of the GTA tree. It is a separate widget tree with its own layout and page set; the round screen tears one tree down and builds the other when the rider crosses between Original and GTA, and replays the current page, link state, track and snapshot so the switch reads as a theme change. A request for the Performance or Lean page lands on navigation in Original, which never had those pages.
 
@@ -21,74 +21,74 @@ Original is not a palette of the GTA tree. It is a separate widget tree with its
 
 The two GTA themes share geometry, spacing, type scale, and the circle motif. Only paper band, accent, display weight, and texture change — never structure. If a component needs a different layout in the other theme, the component is wrong.
 
-**Heat is a light theme on purpose.** A dark interface behind glass in direct sun becomes a mirror: reflectance wins and the numerals disappear. Readability in daylight requires a high-luminance paper and near-black ink, which is also the palette of the poster the theme is named after. Atmosphere is sacrificed for legibility; that is the trade.
+**Liberty Day is a light theme on purpose.** A dark interface behind glass in direct sun becomes a mirror: reflectance wins and the numerals disappear. Readability in daylight requires a high-luminance paper and near-black ink, which is also the palette of the GTA III cover's white field. Atmosphere is sacrificed for legibility; that is the trade.
 
 ## Color
 
-All values are exact; no gradients on data surfaces. The phone palette is the
-handlebar instrument's palette, token for token: cream paper and outline black
-by day, midnight purple and sunset cream by night, hot pink for the band and for
-whatever is happening now. A rider looking from the bar to the phone is looking
-at one product.
+The GTA themes are GTA III's Liberty City (2001): the cover's black field and
+white panel gutters, and the HUD's own colours — clock gold, money steel-blue,
+health orange, armour olive — each lifted (night) or darkened (day) until it
+clears AA as text. All values are exact; no gradients on data surfaces. Phone
+and round screen share the tokens (`MotoPalette.night/.day`,
+`kGtaNightPalette/kGtaDayPalette`).
 
-### Vice (night paper)
-
-| Token | Value | Use |
-|---|---|---|
-| `bg` | `#141024` | app background — the instrument's midnight paper |
-| `surface` | `#191430` | panels, sheets |
-| `surface-2` | `#211A3C` | raised row, selected row background |
-| `line` | `#2A2145` | 1px rules |
-| `line-soft` | `rgba(255,255,255,0.08)` | grid, dividers inside panels |
-| `ink` | `#F6F0D7` | primary text, numerals — sunset cream |
-| `ink-muted` | `#B9B1C9` | secondary text, labels |
-| `accent` | `#F34DAA` | the band: active route, primary button, run timer |
-| `route` | `#FF5ACD` | route stroke (the night variant of the band) |
-| `link` | `#42F5D7` | BLE link, GPS fix |
-| `ok` | `#73E6A4` | completed, saved |
-| `abort` | `#FF655F` | aborted run, off-route |
-
-### Heat (day paper)
+### Liberty Night
 
 | Token | Value | Use |
 |---|---|---|
-| `bg` | `#F6F0D7` | road-cream paper |
-| `surface` | `#EFE7C9` | panels |
-| `surface-2` | `#E6DCB8` | raised row, pressed state |
-| `line` | `ink @ 24%` | 1px rules — heavier than Vice so they survive glare |
-| `line-soft` | `ink @ 12%` | dividers, halftone grid |
-| `ink` | `#17151B` | outline black: primary text, numerals |
-| `ink-muted` | `#5C4A38` | secondary text only, never below 15pt |
-| `accent` | `#F34DAA` | the band: fills and large numerals only |
-| `route` | `#F34DAA` | route stroke — same magenta as the band by day |
-| `link` | `#0E6F68` | BLE link, GPS fix |
-| `ok` | `#1D6B3C` | completed |
-| `abort` | `#B3241C` | aborted |
+| `bg` | `#0A0A0A` | app background, round-screen paper |
+| `surface` / `surface-2` | `#141414` / `#1D1D1D` | panels, raised rows, cover-grid tiles |
+| `line` | `#333333` | 1px rules |
+| `ink` | `#F2EEE4` | box-art white: text |
+| `ink-muted` | `#A8A294` | secondary text, labels |
+| `hud` | `#D2AD6A` | HUD numerals (clock gold), with a hard 3pt black drop |
+| `accent` | `#D2AD6A` | primary button, active selection |
+| `route` | `#F08A3C` | route stroke, rider markers on the round screen (health orange) |
+| `link` | `#86A6CF` | BLE link, GPS fix (money steel-blue) |
+| `ok` | `#A5B97A` | completed (armour olive) |
+| `abort` | `#F0614A` | aborted, off-route |
+| `band` | `#F2EEE4` | sheet headers, round-screen rim: the cover's white gutter |
+| map | land `#3A3A3A`, blocks `#222222`/`#1B1B1B`, water `#14202E`, park `#28311F` | radar |
 
-**The band is brand, not state.** `#F34DAA` is identical in both themes, it never
-signals a warning, and it is used for exactly one filled surface per screen.
-`onAccent` is ink in both themes — cream on magenta measures 2.8:1 and fails.
+### Liberty Day
 
-**Heat accent rule.** `#F34DAA` on paper is 2.8:1 — enough for a fill carrying
-`ink` text (5.6:1), not enough for prose, numerals below 34pt, or any 11pt label.
-Small accent-coloured text is a defect in this theme. On Vice the same magenta
-clears 5.7:1, so the rule is theme-specific even though the value is not.
+| Token | Value | Use |
+|---|---|---|
+| `bg` | `#EFECE4` | newsprint paper |
+| `surface` / `surface-2` | `#E4E0D6` / `#D8D3C7` | panels, tiles |
+| `line` | `ink @ 24%` | 1px rules — heavier so they survive glare |
+| `ink` / `hud` | `#111111` | text and numerals; no drop shadow by day |
+| `ink-muted` | `#4B463E` | secondary text only, never below 15pt |
+| `accent` | `#7A5718` | dark HUD gold: works as text (5.6:1) and as a fill under paper type |
+| `route` | `#B04716` (phone) / `#F08A3C` (round-screen map, on grey) | route |
+| `link` | `#35567F` | BLE link, GPS fix |
+| `ok` | `#4A5C2A` | completed |
+| `abort` | `#A8281C` | aborted |
+| `band` | `#111111` | sheet headers, rim: the logo panel's black |
+| map | land `#C9C5BB`, blocks `#8F8B83`/`#9C988F`, water `#6E879F`, park `#7D8A5B` | radar |
+
+**The band is brand, not state.** It never signals a warning. Marks drawn on the
+round-screen band (progress, speed sweep, protractor ticks) use the band's own
+ink (`on_accent`), so they read on white by night and on black by day; the rider
+point, compass index and zero bar are HUD orange, which reads on band and casing
+in both themes.
 
 ### Contrast (measured, sRGB relative luminance)
 
 | Pair | Ratio | Level |
 |---|---|---|
-| Vice `ink` on `bg` | 16.3:1 | AAA |
-| Vice `ink-muted` on `bg` | 9.0:1 | AAA |
-| Vice `accent` on `bg` | 5.7:1 | AA |
-| Vice `link` on `bg` | 13.5:1 | AAA |
-| Vice `abort` on `bg` | 6.4:1 | AA |
-| Heat `ink` on `bg` | 15.8:1 | AAA |
-| Heat `ink-muted` on `bg` | 7.4:1 | AAA |
-| Heat `accent` on `bg` | 2.8:1 | fails text; fills only |
-| Heat `ink` on `accent` | 5.6:1 | AA |
-| Heat `link` on `bg` | 5.3:1 | AA |
-| Heat `abort` on `bg` | 5.8:1 | AA |
+| Night `ink` on `bg` | 17.1:1 | AAA |
+| Night `ink-muted` on `bg` | 7.8:1 | AAA |
+| Night `hud`/`accent` on `bg` | 9.4:1 | AAA |
+| Night `route` / `link` on `bg` | 7.9:1 | AAA |
+| Night `abort` on `bg` | 6.1:1 | AA |
+| Night `onAccent` on `accent` | 9.4:1 | AAA |
+| Day `ink` on `bg` | 16.0:1 | AAA |
+| Day `ink-muted` on `bg` | 7.9:1 | AAA |
+| Day `accent` on `bg` (and paper on `accent`) | 5.6:1 | AA |
+| Day `route` on `bg` | 4.7:1 | AA |
+| Day `link` on `bg` | 6.4:1 | AA |
+| Day `abort` on `bg` | 6.0:1 | AA |
 | Both: `on-slab` on `slab` | 17.5:1 | AAA |
 
 `ink-muted` is never used for data in either theme; it is for labels and secondary
@@ -100,8 +100,8 @@ Two families plus the system mono. No italic anywhere in headings, labels, or da
 
 | Role | Family | Spec |
 |---|---|---|
-| Display numerals | Barlow Condensed (bundled, OFL) | 600 Vice / 800 Heat, tracking `-0.01em`, tabular |
-| Labels, units, mono meta | SF Mono (iOS) / `ui-monospace` (web) | 500–600, caps, tracking `+0.16em` |
+| Display numerals | Barlow Condensed (bundled, OFL) | 800 in both GTA themes, tracking `-0.01em`, tabular, HUD drop by night |
+| Labels, units, meta | SF Pro Expanded Heavy in GTA themes (the HUD's wide square caps; SF Mono in Original) / `ui-monospace` (web) | caps, tracking `+0.16em` |
 | Prose, Chinese | PingFang SC (iOS) / Noto Sans SC (web) | 400/600 |
 | Buttons | PingFang SC 600 or Barlow Condensed 600 caps | — |
 
@@ -128,7 +128,8 @@ Display tracking floor is `-0.02em`. Anything tighter is a defect. `Font.fixedSi
 - Radii: `0` (panels, sheets, buttons, bars), `2` (chips, inputs), `999` (dots and the live indicator only).
 - No shadows anywhere. Elevation is expressed by `surface` steps plus a 1px rule.
 - **Status band**: 54pt + safe area, 1px bottom rule, three cells (`LINK` / `FIX` / `ETA|CLOCK`), mono caps 10.
-- **Grid**: 44pt squares at 1.8% white on Night, halftone dots at 6pt on Dusk, clipped to panels — never under data.
+- **Cover**: the home hero *is* GTA III's box art — framed panels inside 5pt `band` gutters, edge to edge: the radar panel, a fixed 132pt side strip holding the MOTO / GPS logo block (Anton, `on-slab` on `slab`) and the safehouse panel, then a wide panel for GO and 出发. The command bar sits under the cover on plain paper; no other screen carries texture. Pricedown (the GTA logo face) is not used: Typodermic's free licence excludes app and device embedding.
+- **Safehouse blip**: HUD-orange house (eaves and a door, the rider arrow's size; white in Original) on a black casing at home's real bearing — north-up, 1.5 km to the rim on the home radar; in the route projection on the ride radar; on the round screen from the route window or, with no route, from the latest map window's centre, above the waiting screen (Original: on its map strip, under a route only). A home past the rim keeps its bearing and rides the rim.
 
 ## Circle motif
 
@@ -140,12 +141,12 @@ The handlebar screen is round; the phone repeats it at three sizes.
 | 176 | Active ride | the real route window, streets and footprints around the rider |
 | 44 | Status band | connection state ring |
 
-Radar chrome (GTA V reference, `docs/todo.md` 22:58): **2px `ink` outer ring**, rider as a chunky outlined arrow, route stroke in `route` magenta with a 1pt `bg` casing. Devices that ride on the ring and never float over the map:
+Radar chrome (GTA III radar): **heavy black bezel** (2.8% of the diameter) with a 1.5pt `band` line inside it, rider as a chunky outlined arrow, route stroke in `route` with a 1pt `bg` casing. The abstract hero map is a city, not a grid of lines: land is the road colour and blocks (two tones, some split into lots) sit on it, so streets are the gaps; avenues every fourth street are wider; a river with a curved shoreline and one bridge, and one park. With real data, roads are `map-land` on a `map-block-2` casing over block ground; on the round screen every road sits on a 3px dark casing layer. Devices that ride on the ring and never float over the map:
 
 | Device | Spec |
 |---|---|
-| Safehouse blip | `ink` house glyph with a `bg` outline, inside the ring at ~0.88 radius, upper-left quadrant. Present only when home is set. |
-| Compass badge | Circular `ink` badge, `bg` letter `N`, centred on the rim at twelve o'clock. |
+| Safehouse blip | `route` house with eaves and a door on a black casing, at home's bearing; past the rim it rides the rim. Present only when home is set. |
+| Compass badge | Circular cream badge (the speed-sign face) with a black `N` and edge in both themes, so it reads on the black casing by day too; it rides the rim at north's bearing. The turn glyph and distance stay inside that ring. |
 | Progress ring | **The ring is the gauge.** The completed fraction of `route_progress_m / total_distance_m` replaces that segment of the 2px rim in `accent`, starting at twelve o'clock. No second track ring: a separate arc read as a halo. Real data only; never repurposed as a health bar. |
 | Counter bar | `ink` slab with `onSlab` numerals in a corner, the way GTA parks cash. |
 
@@ -159,7 +160,7 @@ Map fill inside the circle: `surface` base, park at `ok`, water at `link`, roads
 
 The home radar draws a poster abstraction — a city that is clearly not a claim about a location. The ride radar draws the same real window and route the handlebar gets: a live route over invented streets is a lie, so real geometry replaces the grid as soon as a scene exists.
 
-Texture inside the circle only: Vice draws 1pt scanlines at 4pt pitch (`line-soft`). **Heat draws none** — thin high-frequency bands turn into haze in glare and the map stops reading as a map. Texture never overlays the rider dot or route.
+No texture inside the circle in either GTA theme — GTA III's radar is flat, and thin bands turn into haze in glare. Texture never overlays the rider dot or route.
 
 ### Poster devices (what makes it read as GTA, not as "clean dark UI")
 
@@ -172,6 +173,9 @@ Texture inside the circle only: Vice draws 1pt scanlines at 4pt pitch (`line-sof
 | Rules | 1px default, 2px after a block that ends a group. Never 0.5px, never shadowed. |
 | Map content | Radar draws blocks and streets in `ink` at 10–22%: a minimap silhouette, not a blank disc. |
 | Rider | A chunky arrow, not a dot. Heading is part of the readout. |
+| Dusk skyline (round screen) | Liberty City at dusk along the bottom of the launch, compass and music pages and the waiting screen: two rows of towers, far row lighter, gold lamps by night, pale print greys with paper windows by day. Frame, not data: it sits between the paper disc and the casing and below every reading, and is static. Not on navigation (the map is the world) or lean (the horizon is). |
+| HUD labels (round screen) | State labels (`LAUNCH`, `L`/`R` maxima, `CAL`, `NO IMU`, music source) are cased HUD type with no box, as GTA III's HUD never boxes a label. Counter slabs (`BEST`, `KM/H`) keep their block. |
+| Boot (round screen) | A GTA III loading screen in hard cuts, no fades: bezel black, then the box-art panel grid (radar with route and rider, safehouse, the city under a HUD-orange dusk sky) at 80 ms, the cream MOTO / GPS logo cased in black with a hard drop at 380 ms, then a gold loading bar stepping eight times from 520 ms. It measures the 1.25 s boot hold and claims nothing else. |
 
 ## Reference grammar (what we copied, and from where)
 
@@ -209,7 +213,7 @@ Every interactive component ships: default · pressed · focused · disabled · 
 
 | Motion | Spec |
 |---|---|
-| Radar sweep | 4s linear (Vice) / 6s (Heat), one arc, no glow |
+| Radar sweep | 4s linear (night) / 6s (day), one arc, no glow |
 | Digit change | 180ms `cubic-bezier(0.16, 1, 0.3, 1)` roll, tabular so width never jumps |
 | Sheet / navigation | 220ms ease-out |
 | Route draw | 600ms stroke-dash draw on first appearance only |
@@ -226,7 +230,7 @@ Applied, not aspirational. Each row is a check performed on the built screen.
 | Minimum text 11pt (iOS) | `micro` = `.caption2` (11pt), `label` = `.caption`; nothing smaller anywhere |
 | Dynamic Type | every role uses a text style or `relativeTo:`; no `fixedSize:` |
 | No app-specific appearance switch | theme follows the device, falls back to system appearance |
-| Adapt to light/dark | Vice + Heat are the two appearances; both audited for contrast |
+| Adapt to light/dark | Liberty Night + Liberty Day are the two appearances; both audited for contrast |
 | Increase Contrast | `line` → `ink @ 55%`, `inkMuted` → `ink` when `colorSchemeContrast == .increased` |
 | Never colour alone | every state also carries a glyph or word (`NO LINK`, `ABORTED`, `—`) |
 | Hit target ≥ 44pt | `MotoMetrics.minTapTarget`; status band 54pt, buttons 52pt |

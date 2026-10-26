@@ -729,3 +729,48 @@ white cover and wordmark are untouched.
 pre-push hook); `idf.py build` green at 0x33d1b0, 46% of the 6 MB slot free.
 Not verified: every claim above that needs a sensor, starting with the AHB
 gating handshake.
+
+## 2026-10-26T15:00:00+09:00 — AMS music, speed into Lean, home without a route, Speed·G and Liberty City
+
+**Music follows Now Playing, not Apple Music.** An iOS app cannot drive
+another app's player, so the device reads it instead: `AmsClient` is a NimBLE
+GATT client of the iPhone's Apple Media Service on the bonded link the phone
+app already opened, fed by a new `BleNavTransport` GAP observer, with the wire
+format in `ams_codec`. `PhoneNavBridge` shows the AMS state while it is
+available and offers each key to it first; the phone's Apple Music relay is the
+fallback and asks for media-library access only on the first key it receives.
+The GATT client needs the NimBLE central role in IDF 5.5; the host stack went
+to 5120 B and the BLE RX queue moved to PSRAM.
+
+**Lean gets speed, and its bias learning works.** The estimator used to get an
+empty `SpeedSample` on the bike; the phone's GPS speed from every navigation
+snapshot now reaches `LeanEstimator::step`, aged out after 2.5 s. Stillness is
+judged from the gyro's spread, since a QMI8658 sits at several dps when still
+and the old |rate| < 3 dps gate never opened the bias window. A capture
+measures afresh and keeps the basis orthonormal, the bias survives a new basis
+and a power cycle (NVS `att.gbias`, written only after 30 s parked), and an
+uncalibrated screen far from the assumed mount takes a provisional up.
+`SpeedFusion` and a `gnss_in` timestamp are still open.
+
+**Home without a route; nearby streets first.** The presenter anchors home on
+the latest map window when there is no route window, so the safehouse shows on
+the waiting screen, and the Original tree draws the same glyph. The phone's
+scene builder now picks roads nearest first with a reserved share for
+arterials, and simplifies each at 1.5 m before it uses the point budget.
+
+**GTA tree.** Speed·G replaces the speed-only page: a friction circle to
+1.5 g, a trailed live dot, a 16-sector envelope cleared by a 2 s hold, speed in
+the bottom slab. The papers are GTA III's Liberty City, the plates are cased
+HUD type, a dusk skyline sits under the casing, the boot is a hard-cut cover
+sequence, and every road is drawn on a dark casing (closing AA slice A). The
+Lean horizon now moves every frame, with rim redraws inside the casing culled.
+The phone carries the same Liberty Night / Liberty Day tokens, chosen once
+under MENU → 02 主题.
+
+**Verification:** each of the four code commits built and passed the native
+suite on its own (15/15). Swift package tests, the app size gate and the iOS
+app build passed. `idf.py build` passed at 0x379860, 42% of the 6 MB slot free.
+The first firmware build failed because the bootloader sub-build's CMake cache
+pointed at an old `~/CodeSpace/esp/esp-idf`; clearing
+`platforms/esp32/build/bootloader*` fixed it. **Not verified:** nothing in
+this section has run on the board or against a real iPhone.

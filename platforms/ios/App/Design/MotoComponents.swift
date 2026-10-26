@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Hairlines and panels
 
-/// 1px rule. Heat uses a heavier line than Vice; Increase Contrast thickens both.
+/// 1px rule. Day uses a heavier line than night; Increase Contrast thickens both.
 struct MotoRule: View {
     var axis: Axis = .horizontal
     var weight: CGFloat = MotoMetrics.hairline
@@ -81,6 +81,7 @@ struct MotoNumeral: View {
     var tone: Tone = .ink
     @Environment(\.motoPalette) private var palette
     @Environment(\.motoType) private var type
+    @Environment(\.motoTheme) private var theme
 
     enum Tone { case ink, accent, muted }
 
@@ -92,13 +93,14 @@ struct MotoNumeral: View {
             .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.6)
+            .motoHudShadow(theme.hudShadow)
             // A 76pt numeral must not reflow the screen at accessibility sizes.
             .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private var color: Color {
         switch tone {
-        case .ink: return palette.ink
+        case .ink: return palette.hud ?? palette.ink
         case .accent: return palette.accent
         case .muted: return palette.inkMuted
         }
@@ -227,6 +229,9 @@ struct MotoRadar: View {
     var showsSweep = true
     /// Draws the safehouse glyph, the way GTA marks home on the minimap.
     var showsHome = false
+    /// Where home is, in radar units: (east, south) with 1 = the rim. `nil`
+    /// with `showsHome` draws the glyph at a fixed rim position (no fix yet).
+    var homeOffset: CGPoint?
     var showsCompass = true
 
     @Environment(\.motoPalette) private var palette
@@ -249,7 +254,7 @@ struct MotoRadar: View {
 
     private var map: some View {
         ZStack {
-            Circle().fill(palette.surface)
+            Circle().fill(roads.isEmpty ? palette.mapLand : palette.mapBlock2)
             texture
             if roads.isEmpty {
                 streets
@@ -270,58 +275,96 @@ struct MotoRadar: View {
         return "路线进度百分之\(Int((progress.clamped(to: 0...1)) * 100))"
     }
 
-    /// A poster abstraction of a street grid, not a map. Enough geometry for the
-    /// circle to read as a minimap; never enough to be mistaken for navigation.
-    ///
-    /// The light theme needs heavier ink: dark-on-cream at 10% disappears, while
-    /// light-on-black at 10% reads. Same structure, different strength.
+    /// A GTA III radar abstraction of a city, not a map: never enough to be
+    /// mistaken for navigation. Land is the road colour and blocks sit on it,
+    /// so streets are the gaps; avenues are wider than side streets, a river
+    /// with a bridge splits the island, and one park breaks the grid.
     private var streets: some View {
         Canvas { context, size in
             let w = size.width
             let h = size.height
-            let roadWidth = max(1, size.width / 150)
-            var path = Path()
-            for i in 1...4 {
-                let y = h * CGFloat(i) / 5
-                path.move(to: CGPoint(x: w * 0.08, y: y))
-                path.addLine(to: CGPoint(x: w * 0.92, y: y))
-            }
-            for i in 1...3 {
-                let x = w * CGFloat(i) / 4
-                path.move(to: CGPoint(x: x, y: h * 0.10))
-                path.addLine(to: CGPoint(x: x, y: h * 0.90))
-            }
-            path.move(to: CGPoint(x: w * 0.05, y: h * 0.82))
-            path.addLine(to: CGPoint(x: w * 0.95, y: h * 0.18))
-            context.stroke(
-                path,
-                with: .color(palette.ink.opacity(roadOpacity)),
-                lineWidth: roadWidth
-            )
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(palette.mapLand))
 
-            // Blocks, not roads: the shape GTA uses to say "city".
-            let blocks: [CGRect] = [
-                CGRect(x: w * 0.10, y: h * 0.12, width: w * 0.16, height: h * 0.12),
-                CGRect(x: w * 0.33, y: h * 0.10, width: w * 0.12, height: h * 0.18),
-                CGRect(x: w * 0.60, y: h * 0.22, width: w * 0.18, height: h * 0.10),
-                CGRect(x: w * 0.12, y: h * 0.44, width: w * 0.20, height: h * 0.14),
-                CGRect(x: w * 0.55, y: h * 0.46, width: w * 0.14, height: h * 0.16),
-                CGRect(x: w * 0.30, y: h * 0.70, width: w * 0.22, height: h * 0.12),
-                CGRect(x: w * 0.66, y: h * 0.66, width: w * 0.18, height: h * 0.20)
-            ]
-            // Park and water: the two colours that make a minimap read as GTA.
-            context.fill(
-                Path(CGRect(x: w * 0.05, y: h * 0.60, width: w * 0.30, height: h * 0.26)),
-                // Original has no GTA colour code: parks read as grey blocks.
-                with: .color((theme == .original ? palette.inkMuted : palette.ok).opacity(parkOpacity))
-            )
-            context.fill(
-                Path(CGRect(x: w * 0.68, y: h * 0.02, width: w * 0.34, height: h * 0.22)),
-                with: .color((theme == .original ? palette.inkMuted : palette.link).opacity(waterOpacity))
-            )
-            for block in blocks {
-                context.fill(Path(block), with: .color(palette.ink.opacity(blockOpacity)))
+            // River: a curved channel from top-right to the right edge, the
+            // East River cut that makes the circle read as Liberty City.
+            var river = Path()
+            river.move(to: CGPoint(x: w * 0.70, y: -h * 0.02))
+            river.addCurve(to: CGPoint(x: w * 0.82, y: h * 0.58),
+                           control1: CGPoint(x: w * 0.62, y: h * 0.20),
+                           control2: CGPoint(x: w * 0.92, y: h * 0.34))
+            river.addCurve(to: CGPoint(x: w * 1.04, y: h * 0.86),
+                           control1: CGPoint(x: w * 0.74, y: h * 0.74),
+                           control2: CGPoint(x: w * 0.90, y: h * 0.84))
+            river.addLine(to: CGPoint(x: w * 1.04, y: -h * 0.02))
+            river.closeSubpath()
+
+            // Street grid: one avenue every four lots, side streets between.
+            let cells = 12
+            let cellW = w / CGFloat(cells)
+            let cellH = h / CGFloat(cells)
+            let avenue = max(3, w / 70)
+            let street = max(1.4, w / 190)
+            let lot = max(0.8, w / 420)
+            var seed: UInt32 = 0x9E3779B9
+            func next() -> UInt32 {
+                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
+                return seed
             }
+            let park = CGRect(x: w * 0.17, y: h * 0.58, width: cellW * 3, height: cellH * 2)
+            for row in 0..<cells {
+                for column in 0..<cells {
+                    let left = column % 4 == 0 ? avenue : street
+                    let top = row % 4 == 0 ? avenue : street
+                    let rect = CGRect(
+                        x: CGFloat(column) * cellW + left / 2,
+                        y: CGFloat(row) * cellH + top / 2,
+                        width: cellW - left / 2 - street / 2,
+                        height: cellH - top / 2 - street / 2
+                    )
+                    let centre = CGPoint(x: rect.midX, y: rect.midY)
+                    if river.contains(centre) || park.contains(centre) { continue }
+                    // Lots: some blocks split once, so the fabric has grain.
+                    let roll = next() % 4
+                    let tone = next() % 2 == 0 ? palette.mapBlock : palette.mapBlock2
+                    if roll == 0 {
+                        let a = CGRect(x: rect.minX, y: rect.minY,
+                                       width: rect.width * 0.55 - lot / 2, height: rect.height)
+                        let b = CGRect(x: rect.minX + rect.width * 0.55 + lot / 2, y: rect.minY,
+                                       width: rect.width * 0.45 - lot / 2, height: rect.height)
+                        context.fill(Path(a), with: .color(tone))
+                        context.fill(Path(b), with: .color(palette.mapBlock2))
+                    } else if roll == 1 {
+                        let a = CGRect(x: rect.minX, y: rect.minY,
+                                       width: rect.width, height: rect.height * 0.5 - lot / 2)
+                        let b = CGRect(x: rect.minX, y: rect.midY + lot / 2,
+                                       width: rect.width, height: rect.height * 0.5 - lot / 2)
+                        context.fill(Path(a), with: .color(palette.mapBlock2))
+                        context.fill(Path(b), with: .color(tone))
+                    } else {
+                        context.fill(Path(rect), with: .color(tone))
+                    }
+                }
+            }
+
+            // Park: one green block with a footpath, the grid's only break.
+            let parkInset = park.insetBy(dx: street, dy: street)
+            context.fill(Path(parkInset), with: .color(theme == .original ? palette.mapBlock : palette.mapPark))
+            var footpath = Path()
+            footpath.move(to: CGPoint(x: parkInset.minX, y: parkInset.maxY))
+            footpath.addQuadCurve(to: CGPoint(x: parkInset.maxX, y: parkInset.minY),
+                                  control: CGPoint(x: parkInset.midX, y: parkInset.maxY))
+            context.stroke(footpath, with: .color(palette.mapLand.opacity(0.7)), lineWidth: lot * 1.5)
+
+            // Water over the grid, with a hard shoreline rule.
+            context.fill(river, with: .color(theme == .original ? palette.mapBlock2 : palette.mapWater))
+            context.stroke(river, with: .color(palette.mapLand), lineWidth: street)
+
+            // Bridge: the avenue at row 4 carried across the river.
+            let bridgeY = 4 * cellH
+            context.fill(
+                Path(CGRect(x: w * 0.60, y: bridgeY - avenue / 2, width: w * 0.42, height: avenue)),
+                with: .color(palette.mapLand)
+            )
         }
     }
 
@@ -336,7 +379,7 @@ struct MotoRadar: View {
                     CGPoint(x: $0.x * size.width, y: $0.y * size.height)
                 })
                 path.closeSubpath()
-                context.fill(path, with: .color(palette.ink.opacity(realBuildingOpacity)))
+                context.fill(path, with: .color(palette.mapBlock))
             }
             var roadsPath = Path()
             for line in roads {
@@ -347,33 +390,32 @@ struct MotoRadar: View {
                 }
             }
             // Streets are context, not data: keep them under the route's
-            // weight so the magenta line is the loudest thing in the circle.
+            // weight so the route line is the loudest thing in the circle.
+            // Radar grammar: light road on a dark casing over the block colour.
+            let roadWidth = max(1.5, size.width / 120)
             context.stroke(
                 roadsPath,
-                with: .color(palette.ink.opacity(realRoadOpacity)),
-                style: StrokeStyle(lineWidth: max(1, size.width / 190), lineCap: .round, lineJoin: .round)
+                with: .color(palette.mapBlock2),
+                style: StrokeStyle(lineWidth: roadWidth + 2, lineCap: .round, lineJoin: .round)
+            )
+            context.stroke(
+                roadsPath,
+                with: .color(palette.mapLand),
+                style: StrokeStyle(lineWidth: roadWidth, lineCap: .round, lineJoin: .round)
             )
         }
     }
 
-    private var realBuildingOpacity: Double { theme == .heat ? 0.10 : 0.14 }
-    private var realRoadOpacity: Double { theme == .heat ? 0.34 : 0.55 }
-    private var blockOpacity: Double { theme == .heat ? 0.17 : 0.10 }
-    private var roadOpacity: Double { theme == .heat ? 0.62 : 0.24 }
-    private var parkOpacity: Double { theme == .heat ? 0.34 : 0.24 }
-    private var waterOpacity: Double { theme == .heat ? 0.30 : 0.22 }
 
+    /// GTA III's radar bezel: a heavy black ring with a thin band-colour line
+    /// inside it, so the circle reads as hardware on any ground.
     private func rings(showsInner: Bool) -> some View {
-        ZStack {
-            Circle().strokeBorder(palette.ink, lineWidth: 2)
-            if showsInner {
-                Circle()
-                    .strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
-                    .padding(size * 0.10)
-                Circle()
-                    .strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
-                    .padding(size * 0.22)
-            }
+        let bezel = max(4, size * 0.028)
+        return ZStack {
+            Circle().strokeBorder(Color.black, lineWidth: bezel)
+            Circle()
+                .strokeBorder(palette.band, lineWidth: 1.5)
+                .padding(bezel)
         }
     }
 
@@ -383,7 +425,7 @@ struct MotoRadar: View {
         case .scanlines(let pitch, let opacity):
             ScanlineTexture(pitch: pitch, color: palette.lineSoft.opacity(opacity * 6))
         case .none:
-            // Heat carries no texture inside the circle: glare turns thin bands
+            // Day carries no texture inside the circle: glare turns thin bands
             // into haze and the map stops reading as a map.
             EmptyView()
         }
@@ -441,7 +483,7 @@ struct MotoRadar: View {
                             stops: [
                                 .init(color: .clear, location: 0.00),
                                 .init(color: .clear, location: 0.1285),
-                                .init(color: palette.accent.opacity(theme == .heat ? 0.20 : 0.24), location: 0.1300),
+                                .init(color: palette.accent.opacity(theme == .day ? 0.20 : 0.24), location: 0.1300),
                                 .init(color: .clear, location: 0.1315)
                             ],
                             center: .center
@@ -465,17 +507,28 @@ struct MotoRadar: View {
             .accessibilityHidden(true)
     }
 
+    /// The safehouse: HUD-orange house on a black casing, at its real
+    /// bearing. A home past the rim keeps its bearing and rides the rim, as
+    /// GTA pins far blips to the radar edge.
     private var homeBlip: some View {
-        let radius = size * 0.44
-        let angle = 208.0 * Double.pi / 180
+        let rim = size * 0.40
+        let position: CGPoint = {
+            guard let offset = homeOffset else {
+                let angle = 208.0 * Double.pi / 180
+                return CGPoint(x: rim * cos(angle), y: rim * sin(angle))
+            }
+            let length = hypot(offset.x, offset.y)
+            let scale = length > 1 ? 1 / length : 1
+            return CGPoint(x: offset.x * scale * rim, y: offset.y * scale * rim)
+        }()
+        // The rider arrow's size, so the house reads as a house, not a speck;
+        // the same eaves-and-door glyph the round screen draws.
+        let glyph = size * 0.09
         return HomeGlyph()
-            .fill(palette.ink)
-            .frame(width: size * 0.085, height: size * 0.080)
-            .overlay(HomeGlyph().stroke(palette.bg, lineWidth: 1))
-            .offset(
-                x: CGFloat(radius * cos(angle)),
-                y: CGFloat(radius * sin(angle))
-            )
+            .fill(palette.route, style: FillStyle(eoFill: true))
+            .frame(width: glyph, height: glyph)
+            .overlay(HomeGlyph().stroke(Color.black, lineWidth: 2))
+            .offset(x: position.x, y: position.y)
             .accessibilityHidden(true)
     }
 
@@ -496,16 +549,24 @@ private extension Double {
     }
 }
 
+/// A house with overhanging eaves and a door, drawn even-odd so the door is
+/// a hole the casing shows through.
 private struct HomeGlyph: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let roofTop = CGPoint(x: rect.midX, y: rect.minY)
-        path.move(to: roofTop)
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+        let eaves = rect.minY + rect.height * 0.48
+        let wall = rect.width * 0.16
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: eaves))
+        path.addLine(to: CGPoint(x: rect.maxX - wall, y: eaves))
+        path.addLine(to: CGPoint(x: rect.maxX - wall, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + wall, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + wall, y: eaves))
+        path.addLine(to: CGPoint(x: rect.minX, y: eaves))
         path.closeSubpath()
+        let door = rect.width * 0.12
+        path.addRect(CGRect(x: rect.midX - door, y: rect.maxY - rect.height * 0.34,
+                            width: door * 2, height: rect.height * 0.34))
         return path
     }
 }
@@ -567,68 +628,10 @@ struct MotoScreenBackground: View {
         ZStack {
             palette.bg
             switch theme {
-            case .vice:
-                Canvas { context, size in
-                    let pitch: CGFloat = 44
-                    let stroke = palette.ink.opacity(0.045)
-                    var x: CGFloat = 0
-                    while x < size.width {
-                        context.fill(
-                            Path(CGRect(x: x, y: 0, width: 1, height: size.height)),
-                            with: .color(stroke)
-                        )
-                        x += pitch
-                    }
-                    var y: CGFloat = 0
-                    while y < size.height {
-                        context.fill(
-                            Path(CGRect(x: 0, y: y, width: size.width, height: 1)),
-                            with: .color(stroke)
-                        )
-                        y += pitch
-                    }
-                }
-                // The grid belongs to the hero, not to the copy. Fade it out
-                // before the first list row so text never sits on a texture.
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black, location: 0),
-                            .init(color: .black, location: 0.42),
-                            .init(color: .clear, location: 0.58)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-            case .heat:
-                Canvas { context, size in
-                    let pitch: CGFloat = 8
-                    let stroke = palette.ink.opacity(0.05)
-                    var y: CGFloat = 0
-                    while y < size.height {
-                        var x: CGFloat = 0
-                        while x < size.width {
-                            context.fill(
-                                Path(ellipseIn: CGRect(x: x, y: y, width: 1.4, height: 1.4)),
-                                with: .color(stroke)
-                            )
-                            x += pitch
-                        }
-                        y += pitch
-                    }
-                }
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black, location: 0),
-                            .init(color: .black, location: 0.42),
-                            .init(color: .clear, location: 0.58)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+            case .night, .day:
+                // The cover lives in the home hero (HomeScreen.cover) so it
+                // scrolls with the content; the screen itself is plain paper.
+                EmptyView()
             case .original:
                 // The upstream look is flat black: no grid, no dot screen.
                 EmptyView()
@@ -785,6 +788,16 @@ extension View {
     func motoOutline(_ color: Color, width: CGFloat = 2) -> some View {
         modifier(MotoOutline(color: color, width: width))
     }
+
+    /// GTA III's HUD drop: solid black, down-right, no blur. `nil` draws none.
+    @ViewBuilder
+    func motoHudShadow(_ offset: CGFloat?) -> some View {
+        if let offset {
+            shadow(color: .black, radius: 0, x: offset, y: offset)
+        } else {
+            self
+        }
+    }
 }
 
 /// All-caps wordmark. Anton + outline + a 3pt hard drop is the poster voice.
@@ -808,7 +821,7 @@ struct MotoWordmark: View {
             .motoOutline(outline, width: max(2, size * 0.035))
             // Hard drop, always dark: a shadow in the outline colour turns into
             // a smear on light fills.
-            .shadow(color: .black.opacity(0.35), radius: 0, x: size * 0.03, y: size * 0.035)
+            .shadow(color: .black.opacity(theme.hudShadow != nil ? 1 : 0.35), radius: 0, x: size * 0.03, y: size * 0.035)
             .dynamicTypeSize(...DynamicTypeSize.accessibility1)
             .accessibilityAddTraits(.isHeader)
     }
