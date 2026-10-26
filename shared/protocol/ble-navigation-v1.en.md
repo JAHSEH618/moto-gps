@@ -402,20 +402,20 @@ u32 scene_revision          non-zero; strictly increasing for a new window
 i32 view_origin_lat_e6
 i32 view_origin_lon_e6
 u16 radius_m                100..1500
-u8  road_count              0..24
-u8  building_count          0..16
+u8  road_count              0..40
+u8  building_count          0..24
 
 repeat road_count:
   u8 road_class             0 motorway, 1 primary, 2 secondary,
                             3 residential, 4 service, 5 other
-  u8 point_count            2..255; total road points in the frame <=192
+  u8 point_count            2..255; total road points in the frame <=255
   repeat point_count:
     svarint lat_delta_e6     relative to view_origin
     svarint lon_delta_e6
 
 repeat building_count:
   u8 building_class         0 generic, 1 landmark, 2 parking
-  u8 point_count            3..255; total building points in the frame <=128
+  u8 point_count            3..255; total building points in the frame <=192
   repeat point_count:
     svarint lat_delta_e6     relative to view_origin
     svarint lon_delta_e6
@@ -428,8 +428,8 @@ complete payload should carry `ACK_REQUESTED` and is Acked only after validation
 successful commit. A higher `scene_revision` atomically replaces the old window; an old
 revision, a partial packet and a CRC error all leave the screen unchanged.
 
-This encoding is usually about 1.3–2.2 KiB for 192 road points + 128 building points; under a
-185-byte GATT value that is about 8–14 protocol fragments. It must not be sent at the
+This encoding is usually about 1.8–2.9 KiB for 255 road points + 192 building points; under a
+185-byte GATT value that is about 11–18 protocol fragments. It must not be sent at the
 positioning frame rate: refreshing once after about 100 m of travel, when approaching the window
 edge or when crossing a 500 m offline tile is enough. The current data path is connected:
 the iOS `SurroundingMapStore` selects a window, which `ESP32BLECentral` sends through the shared

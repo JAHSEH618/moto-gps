@@ -10,7 +10,7 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
-# Large zero-initialised UI state (the classic interface, the theme-switch
+# Large zero-initialised UI state (both interface trees, the theme-switch
 # replay buffers) is tagged EXT_RAM_BSS_ATTR so it does not eat internal RAM.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 

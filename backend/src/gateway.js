@@ -117,10 +117,12 @@ export function clientAddress(request) {
   return remote ?? "unknown";
 }
 
-export function createRateLimiter() {
+// Hosts behind their own proxy (Cloudflare, Vercel) supply a resolver that only
+// trusts the address their platform injected, never caller-supplied headers.
+export function createRateLimiter(clientAddressOf = clientAddress) {
   const buckets = new Map();
   function rateLimit(request, category, maximumRequests, now = Date.now()) {
-    const key = `${category}:${clientAddress(request)}`;
+    const key = `${category}:${clientAddressOf(request)}`;
     let bucket = buckets.get(key);
     if (!bucket || now - bucket.startedAt >= RATE_WINDOW_MS) {
       bucket = { startedAt: now, count: 0 };
@@ -143,19 +145,23 @@ export function createRateLimiter() {
   return rateLimit;
 }
 
-export function createGateway({
+// The gateway is a function of (request, response); the http.Server below is only one
+// host for it. Serverless platforms (Vercel) call the handler directly and await it, so
+// an escaping error surfaces as a caught exception instead of an unhandled rejection.
+export function createGatewayHandler({
   provider,
   mapProvider = null,
   allowedOrigin = "http://localhost:5173",
   maximumBodyBytes = DEFAULT_MAX_BODY_BYTES,
   providerMode = "fixture",
+  clientAddressOf,
 } = {}) {
   if (!provider || typeof provider.planRoute !== "function") {
     throw new TypeError("provider.planRoute is required");
   }
-  const rateLimit = createRateLimiter();
+  const rateLimit = createRateLimiter(clientAddressOf);
 
-  return createServer(async (request, response) => {
+  return async function handleGatewayRequest(request, response) {
     const requestUrl = new URL(request.url ?? "/", "http://gateway.local");
 
     if (request.method === "OPTIONS") {
@@ -334,5 +340,9 @@ export function createGateway({
         allowedOrigin,
       );
     }
-  });
+  };
+}
+
+export function createGateway(options = {}) {
+  return createServer(createGatewayHandler(options));
 }

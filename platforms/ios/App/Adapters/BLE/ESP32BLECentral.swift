@@ -199,6 +199,40 @@ final class ESP32BLECentral: NSObject {
         #endif
     }
 
+    /// Which of the two sources the handlebar is following, twice a second at
+    /// most. A parked bike should say `compass`; `stale course` is the phone
+    /// having no fresh magnetometer reading.
+    private func traceHeading(
+        _ source: String,
+        heading: Double,
+        state: MotoNavCoreSnapshot
+    ) {
+        #if DEBUG
+        let now = Self.monotonicMs()
+        guard now >= lastHeadingTraceAtMs &+ 2_000 else { return }
+        lastHeadingTraceAtMs = now
+        print(String(
+            format: "[MotoCompass] %@ heading=%.1f course=%.1f speed=%.2f",
+            source, heading, state.headingDeg, state.speedMPS
+        ))
+        #endif
+    }
+
+    /// A message this process cannot encode is a local fault, not a link
+    /// fault: the same bytes would fail on every retry, so reconnecting would
+    /// only loop the radio. Drop that one message and keep the session.
+    private func encodeDroppingFailure(
+        _ what: String,
+        _ build: () throws -> [Data]
+    ) -> [Data]? {
+        do {
+            return try build()
+        } catch {
+            trace("\(what) refused by the codec; dropped: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     private static let restorationID = "org.example.motogps.central"
     private static let knownPeripheralKey = "MotoGPS.KnownPeripheralIdentifier"
     /// Keep the radio feed at the frozen v1 protocol ceiling of 5 Hz. The
@@ -276,6 +310,7 @@ final class ESP32BLECentral: NSObject {
     private var lastRouteGeometrySignature: RouteGeometrySignature?
     private var lastValidDeviceFrameAtMs: UInt64 = 0
     private var deviceHeartbeatTimeoutMs: UInt64 = 5_000
+    private var lastHeadingTraceAtMs: UInt64 = 0
     private var outboundFrames: [Data] = []
     private var writeWithResponseInFlight = false
     private var commandIDBySequence: [UInt16: UInt16] = [:]
@@ -646,6 +681,7 @@ final class ESP32BLECentral: NSObject {
                 lastValidDeviceFrameAtMs = Self.monotonicMs()
                 startHeartbeat()
                 if let pendingNavigationState {
+                    trace("navigation flush after handshake")
                     sendNavigationSnapshot(pendingNavigationState)
                 }
                 flushPendingMediaState()
@@ -939,9 +975,14 @@ final class ESP32BLECentral: NSObject {
         else { return }
 
         do {
-            try send(codec.encodeMediaState(makeMediaStateInput(state)))
+            guard let frames = encodeDroppingFailure("media", {
+                try codec.encodeMediaState(makeMediaStateInput(state))
+            })
+            else { return }
+            try send(frames)
         } catch {
             // Keep the immutable latest state for the next healthy session.
+            trace("media send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -955,17 +996,21 @@ final class ESP32BLECentral: NSObject {
                                           queuedFrames: outboundFrames.count)
         else { return }
 
+        guard let frames = encodeDroppingFailure("map scene", {
+            try codec.encodeMapScene(scene.makeBLEInput())
+        })
+        else { return }
+        let sequence = codec.lastEncodedSequence
+        mapSceneDelivery.queued(revision: scene.revision, sequence: sequence)
+        mapSceneFinalFrame = frames.last
         do {
-            let frames = try codec.encodeMapScene(scene.makeBLEInput())
-            let sequence = codec.lastEncodedSequence
-            mapSceneDelivery.queued(revision: scene.revision, sequence: sequence)
-            mapSceneFinalFrame = frames.last
             try send(frames)
             trace("map queued revision=\(scene.revision) roads=\(scene.roads.count) buildings=\(scene.buildings.count) frames=\(frames.count)")
             // Keep the latest complete scene so a later BLE reconnection can
             // restore the map even when the motorcycle has not moved 100 m.
         } catch {
             // Retain the newest window for a future protocol-ready session.
+            trace("map scene send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -978,12 +1023,20 @@ final class ESP32BLECentral: NSObject {
               home.revision != lastSentHomeRevision
         else { return }
 
+        guard let frames = encodeDroppingFailure("home", {
+            try codec.encodeHomeLocation(makeHomeLocationInput(home))
+        })
+        else {
+            lastSentHomeRevision = home.revision
+            return
+        }
         do {
-            try send(codec.encodeHomeLocation(makeHomeLocationInput(home)))
+            try send(frames)
             lastSentHomeRevision = home.revision
             trace("home revision=\(home.revision) set=\(home.hasHome)")
         } catch {
             // Keep the newest value for a future protocol-ready session.
+            trace("home send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -996,12 +1049,20 @@ final class ESP32BLECentral: NSObject {
               settings.revision != lastSentSettingsRevision
         else { return }
 
+        guard let frames = encodeDroppingFailure("settings", {
+            try codec.encodeSettingsState(makeSettingsStateInput(settings))
+        })
+        else {
+            lastSentSettingsRevision = settings.revision
+            return
+        }
         do {
-            try send(codec.encodeSettingsState(makeSettingsStateInput(settings)))
+            try send(frames)
             lastSentSettingsRevision = settings.revision
             trace("settings revision=\(settings.revision) theme=\(settings.theme) buildings=\(settings.showBuildings)")
         } catch {
             // Keep the newest value for a future protocol-ready session.
+            trace("settings send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -1273,11 +1334,20 @@ final class ESP32BLECentral: NSObject {
         // A course is a heading only while moving; parked, the phone's last
         // course is stale, so a device that understands it gets the compass.
         var heading = state.headingDeg
-        if state.speedMPS < Self.courseMinimumSpeedMPS || !heading.isFinite,
-           peerCapabilities & Self.compassHeadingCapability != 0,
-           let compass = compassHeadingDeg?() {
-            heading = compass
-            input.headingIsCompass = true
+        if state.speedMPS < Self.courseMinimumSpeedMPS || !heading.isFinite {
+            if peerCapabilities & Self.compassHeadingCapability != 0,
+               let compass = compassHeadingDeg?()
+            {
+                heading = compass
+                input.headingIsCompass = true
+                traceHeading("compass", heading: compass, state: state)
+            } else if peerCapabilities & Self.compassHeadingCapability != 0 {
+                // Parked with no compass reading: the handlebar keeps showing a
+                // course from whenever the bike last moved. Say so, because the
+                // symptom (a fixed offset against the system Compass app) looks
+                // like a compass bug and is not one.
+                traceHeading("stale course, no compass", heading: heading, state: state)
+            }
         }
         if heading.isFinite {
             let normalized = heading.truncatingRemainder(dividingBy: 360) + (heading < 0 ? 360 : 0)
@@ -1612,6 +1682,11 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                 )
             }
         } catch {
+            trace(
+                "inbound decode failed; bytes=\(frame.count) "
+                    + "head=\(frame.prefix(8).map { String(format: "%02x", $0) }.joined()) "
+                    + "error=\(error.localizedDescription)"
+            )
             recoverFromTransportError(error.localizedDescription)
         }
     }

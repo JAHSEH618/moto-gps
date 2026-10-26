@@ -50,10 +50,10 @@ constexpr std::size_t kMaxRoutePointsPerChunk = 24;
 constexpr std::size_t kMaxTrafficSegments = 64;
 // One replaceable, rider-centred minimap window.  The complete Jinan database
 // remains on the phone; these limits bound ESP32 RAM and LVGL object counts.
-constexpr std::size_t kMaxMapSceneRoads = 24;
-constexpr std::size_t kMaxMapSceneRoadPoints = 192;
-constexpr std::size_t kMaxMapSceneBuildings = 16;
-constexpr std::size_t kMaxMapSceneBuildingPoints = 128;
+constexpr std::size_t kMaxMapSceneRoads = 40;
+constexpr std::size_t kMaxMapSceneRoadPoints = 255;
+constexpr std::size_t kMaxMapSceneBuildings = 24;
+constexpr std::size_t kMaxMapSceneBuildingPoints = 192;
 
 struct ByteView {
   const std::uint8_t* data = nullptr;

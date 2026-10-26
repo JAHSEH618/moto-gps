@@ -15,10 +15,10 @@ constexpr std::size_t kRouteViewPointCapacity = 24;
 // One local 466 px map window: enough for a dense urban road graph without
 // turning the ESP32 snapshot into a city-wide map database. The bundled Jinan
 // verification fixture intentionally exercises both limits.
-constexpr std::size_t kRoadContextPointCapacity = 192;
-constexpr std::size_t kRoadContextPolylineCapacity = 24;
-constexpr std::size_t kBuildingContextPointCapacity = 128;
-constexpr std::size_t kBuildingContextFootprintCapacity = 16;
+constexpr std::size_t kRoadContextPointCapacity = 255;
+constexpr std::size_t kRoadContextPolylineCapacity = 40;
+constexpr std::size_t kBuildingContextPointCapacity = 192;
+constexpr std::size_t kBuildingContextFootprintCapacity = 24;
 
 enum class RoadContextClass : std::uint8_t {
   Motorway = 0,

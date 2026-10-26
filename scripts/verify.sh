@@ -89,9 +89,12 @@ verify_todo_log() {
 }
 
 build_native() {
-  cmake -S . -B build/native -DMOTO_BUILD_WEB=OFF -DMOTO_BUILD_TESTS=ON
-  cmake --build build/native --parallel 4
-  ctest --test-dir build/native --output-on-failure
+  # `set -e` does not apply to a function called from `if`, so every command
+  # that can fail has to stop the step itself: a failed compile followed by a
+  # green ctest over stale binaries is how this gate once passed a broken UI.
+  cmake -S . -B build/native -DMOTO_BUILD_WEB=OFF -DMOTO_BUILD_TESTS=ON || return 1
+  cmake --build build/native --parallel 4 || return 1
+  ctest --test-dir build/native --output-on-failure || return 1
 }
 
 test_swift() {
@@ -110,11 +113,11 @@ build_ios() {
     echo " the Ubuntu CI job cannot see)"
     return 0
   fi
-  xcodegen generate --spec platforms/ios/project.yml
+  xcodegen generate --spec platforms/ios/project.yml || return 1
   xcodebuild -project platforms/ios/MotoGPS.xcodeproj -scheme MotoGPS \
     -sdk iphonesimulator -configuration Debug \
     -derivedDataPath build/ios-verify \
-    CODE_SIGNING_ALLOWED=NO build
+    CODE_SIGNING_ALLOWED=NO build || return 1
 }
 
 # The only check that compiles the firmware at all. A shared source missing

@@ -2,11 +2,11 @@ page 0
 p|lv_obj|-|0,0-465,465|bg=ff000000/opa0|bd=ff000000/0|opa=255|r=0|-CG-
 p.0|lv_obj|-|0,0-465,465|bg=ff4e4e4a/opa255|bd=ff000000/0|opa=255|r=32767|-CGE
 p.0.0|lv_obj|-|0,0-465,465|bg=ff4e4e4a/opa255|bd=ff000000/0|opa=255|r=0|--G-
-p.0.18|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.0.19|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.0.43|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.0.44|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
-p.0.45|lv_obj|-|211,210-255,257|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
+p.0.26|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.0.27|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.0.67|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.0.68|lv_obj|-|0,0-465,465|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|--G-
+p.0.69|lv_obj|-|211,210-255,257|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 p.1|lv_label|-|78,57-388,83|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 p.2|lv_obj|-|65,223-214,362|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-
 p.3|lv_label|-|227,274-342,343|bg=ffffffff/opa0|bd=ff000000/0|opa=255|r=0|S-G-

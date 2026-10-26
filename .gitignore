@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!backend/.env.vercel.example
 build/
 build-*/
 tmp/

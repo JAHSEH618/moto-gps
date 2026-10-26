@@ -210,6 +210,41 @@ bool TlogLogger::run_selftest() {
   return true;
 }
 
+bool TlogLogger::erase_all() {
+  if (!ensure_partition()) return false;
+  flash_guard_init();
+  // Erase in 1 MiB chunks so the serial log shows progress and a partial
+  // failure leaves a clear offset. A full-partition erase is slow on QIO
+  // flash, and the user asked for a visible cleanup, not a silent hang.
+  constexpr std::uint32_t kChunk = 1U << 20U;
+  for (std::uint32_t offset = 0; offset < capacity_; offset += kChunk) {
+    const std::uint32_t length = std::min(kChunk, capacity_ - offset);
+    if (!flash_guard_take(5000)) return false;
+    const esp_err_t result = esp_partition_erase_range(
+        static_cast<const esp_partition_t*>(partition_), offset, length);
+    flash_guard_give();
+    if (result != ESP_OK) {
+      ESP_LOGE(kTag, "erase 0x%x+0x%x failed: %s",
+               static_cast<unsigned>(offset), static_cast<unsigned>(length),
+               esp_err_to_name(result));
+      return false;
+    }
+    ESP_LOGI(kTag, "erased 0x%x/0x%x", static_cast<unsigned>(offset + length),
+             static_cast<unsigned>(capacity_));
+  }
+  block_base_ = 0;
+  block_seq_ = 0;
+  seq_ = 0;
+  first_sample_seq_ = 0;
+  payload_used_ = 0;
+  wrote_session_meta_ = false;
+  block_dirty_ = false;
+  ready_ = false;
+  full_ = false;
+  dirty_ = false;
+  return true;
+}
+
 bool TlogLogger::begin(const TlogSessionInfo& session) {
   flash_guard_init();
   session_ = session;

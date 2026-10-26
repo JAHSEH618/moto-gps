@@ -870,6 +870,21 @@ void PhoneNavBridge::consume_navigation(
     phone_snapshot.heading_deg = heading_fusion_.initialized()
                                      ? heading_fusion_.heading_deg()
                                      : phone_heading_deg;
+    // The compass page is the one readout a rider can check against a second
+    // instrument, so log what the phone actually claimed: a frozen `compass=0`
+    // is a dead flag, a plausible-but-wrong value is a fusion problem.
+    const std::uint32_t now_ms = static_cast<std::uint32_t>(monotonic_ms());
+    static std::uint32_t last_heading_log_ms = 0;
+    if (now_ms - last_heading_log_ms >= 2000U) {
+      last_heading_log_ms = now_ms;
+      ESP_LOGI(kTag,
+               "heading phone=%.1f compass=%d speed=%.2f fix=%d shown=%.1f",
+               static_cast<double>(phone_heading_deg),
+               has_flag(input.flags, moto::ble::NavigationHeadingCompass) ? 1 : 0,
+               static_cast<double>(phone_speed_mps),
+               has_usable_fix ? 1 : 0,
+               static_cast<double>(phone_snapshot.heading_deg));
+    }
     phone_snapshot.horizontal_accuracy_m =
         static_cast<float>(input.accuracy_dm) / 10.0F;
     phone_snapshot.cross_track_distance_m =

@@ -27,11 +27,16 @@ struct TlogSessionInfo {
 // and is skipped by the replay.
 class TlogLogger {
  public:
+  // Erases the complete partition. Called only from app_main before the
+  // display/BLE/IMU tasks exist, after `tlog clear` set the deferred flag;
+  // the erase stalls the flash cache for seconds and must never run mid-ride.
+  bool erase_all();
   bool begin(const TlogSessionInfo& session);
   bool ready() const { return ready_; }
   bool full() const { return full_; }
-  // A sector at the append point was not erased. Recording stopped; only the
-  // host can reset the partition. Runtime never erases (DESIGN_V2 r2 §11).
+  // A sector at the append point was not erased. Recording stopped. The
+  // deferred `tlog clear` path (or a host parttool erase) resets the partition;
+  // the logger never erases a sector while a ride is running.
   bool dirty() const { return dirty_; }
 
   void append(std::uint64_t now_ms, const RawImuSample& raw,

@@ -9,6 +9,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -309,6 +310,14 @@ void serial_command_task(void* context) {
       ESP_LOGI(kTag, "FIFO enabled for A/B; restarting acquisition");
     } else if (std::strcmp(line, "sys tasks") == 0) {
       log_tasks();
+    } else if (std::strcmp(line, "tlog clear") == 0) {
+      // Deferred erase: write the flag and reboot. app_main erases the 16 MB
+      // partition before the display/BLE/IMU tasks exist, because the erase
+      // stalls the flash cache for seconds.
+      moto::device::request_tlog_clear();
+      ESP_LOGW(kTag, "tlog clear requested; rebooting to erase the partition");
+      vTaskDelay(pdMS_TO_TICKS(100));
+      esp_restart();
     } else if (std::strncmp(line, "ui page ", 8) == 0) {
       // Bench-only page switch: lets the frame-time window be attributed to a
       // page without touching the screen. The touch path stays authoritative
@@ -805,6 +814,18 @@ extern "C" void app_main(void) {
   const moto::device::DeviceSettings boot_settings =
       moto::device::load_settings();
 
+  // `tlog clear` is deferred to here: no display, BLE or IMU task exists yet,
+  // so the multi-second cache-off erase cannot drop samples or stall a frame.
+  if (moto::device::tlog_clear_requested()) {
+    ESP_LOGW(kTag, "tlog clear requested; erasing the 16 MB partition");
+    if (tlog.erase_all()) {
+      moto::device::clear_tlog_clear_request();
+      ESP_LOGI(kTag, "tlog partition erased; recording will start at 0x0");
+    } else {
+      ESP_LOGE(kTag, "tlog erase failed; the request stays for the next boot");
+    }
+  }
+
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
     ESP_LOGE(kTag, "board initialization stopped before shared UI startup: %s",
@@ -867,14 +888,11 @@ extern "C" void app_main(void) {
   static moto::nav::NavPresenter presenter;
   static PhoneNavBridge phone_bridge(presenter);
   static BleNavTransport transport;
-  // NavSnapshot contains the complete bounded roads/buildings window and is
-  // several kilobytes.  A temporary here inflates app_main's stack frame for
-  // the entire display/BSP startup call chain, which can trip the FreeRTOS
-  // main-task canary before this line is even reached.  Keep the immutable
-  // initial state in static storage just like the bridge's retained snapshots.
   g_bridge = &phone_bridge;
-  static const moto::nav::NavSnapshot initial_snapshot{};
-  presenter.update(initial_snapshot);
+  // NavPresenter's constructor already applies an empty snapshot, so no
+  // second full NavSnapshot is kept in static storage just to repaint the
+  // same zeros. The map window is several kilobytes and internal DRAM is the
+  // scarce pool; the UI state lives in PSRAM, this one does not need to.
   presenter.apply_to_lvgl();
   // Replay after create(): the tree reset clears the theme and the building
   // visibility, so applying before it would leave defaults on screen.

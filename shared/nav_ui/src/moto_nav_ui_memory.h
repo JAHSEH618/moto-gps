@@ -9,6 +9,9 @@
 // to .data, which cannot live in PSRAM. Elsewhere the tag is empty.
 #if defined(ESP_PLATFORM)
 #include "esp_attr.h"
+#if !defined(CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY)
+#warning "MOTO_UI_EXT_RAM is a no-op; enable CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY"
+#endif
 #define MOTO_UI_EXT_RAM EXT_RAM_BSS_ATTR
 #else
 #define MOTO_UI_EXT_RAM

@@ -978,3 +978,25 @@ report tests; `battery_ring_tests`; protocol + golden; bridge), Swift package
 simulator and was reviewed in Liberty Day and Night with a DEBUG fixture.
 **Not verified:** nothing has run on the board or a real iPhone; the AXP2101
 register reads have never seen a fitted cell.
+
+## 2026-10-27T00:12:57+09:00 — Map density, map-frame latency, internal RAM, and no bundled Jinan map
+
+- Map window: roads 24 → 40 polylines / 192 → 255 points; buildings 16 → 24 / 128 → 192 points, mirrored in `ble_protocol.hpp`, `nav_core.hpp`, `moto_nav_ui.h`, the iOS `OfflineMapSceneLimits` and both protocol READMEs. The encoded worst case is ~2.8 KiB, still below the 4 KiB reassembly limit.
+- Phone selection: the SQLite candidate query is nearest-first (class only breaks ties), so the 512-candidate cap can no longer spend itself on arterials and starve the streets around the rider. The in-memory selector already sorted nearest first and now fills the larger budget.
+- Map-frame latency: rebinding a road/building line no longer invalidates the full-canvas object; a scene update batches 40+ invalidations into one map invalidation. Road/building strokes are only restyled when the class changes, and hidden/visible flags are only touched when they differ. Building fills skip scanlines outside the current clip.
+- Motion frames now invalidate the union of the moved spans (old/new vertices plus each span's bounds, 24 px padding) instead of the full 466 px map. `test_map_motion_invalidates_only_the_moved_span` pins it (a 12 px route move stays under 140 × 220 px).
+- Internal RAM: both UI trees (`moto_nav_ui_gta.cpp`, `moto_nav_ui_classic.cpp`) are now zero-initialised `MOTO_UI_EXT_RAM` objects in PSRAM. The GTA `Ui` had non-zero member initialisers, which put ~10.8 KiB in internal `.data`; `reset_ui_state()` restores those defaults. `sdkconfig.defaults` already enabled `CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY`, but the active `platforms/esp32/sdkconfig` had it off; it is on now. Built map: both `ui` objects at `0x3c4f...` in `.ext_ram.bss` (0x7834 total), internal `phone_bridge` 0x6278 and `initial_snapshot` 0x1f90 (grew with the larger map budget).
+- iOS app: the 9.7 MiB `jinan-v1.sqlite` and the Jinan scene sample are no longer app resources; `SurroundingMapStore` has no bundled fallback and reports an unreachable gateway honestly. The database stays in the repo as a unit-test/bench fixture, and the unit-test target keeps it.
+- Verified: native 17/17, Swift 55/55, iOS app build, iOS `build-for-testing` (AppTests compile), ESP32 image 0x509da0 (16% of the 6 MiB slot free).
+- Not done: the map has only been seen as PPM frames and code, not on the glass; building fills remain opt-in, so a fresh rider still sees roads only until the phone's buildings switch is on.
+
+## 2026-10-27T00:15:40+09:00 — Drop the redundant initial NavSnapshot
+
+- `presenter.update(initial_snapshot)` in `app_main.cpp` duplicated the zero snapshot that `NavPresenter()` already applies in its constructor. Removing the static snapshot saves its 0x1f90 bytes of internal DRAM (it had grown with the larger map budget) and leaves `presenter.apply_to_lvgl()` as the only first-frame step.
+- Rebuilt: `moto_gps_esp32.bin` 5,275,040 B; both `ui` objects still at `0x3c4f...` in `.ext_ram.bss`; `phone_bridge` 0x6278 internal; no `initial_snapshot` symbol.
+
+## 2026-10-27T00:30:00+09:00 — Deferred tlog clear
+
+- `tlog clear` on the serial console writes NVS `moto_device/tlog.clear` and reboots. `app_main` checks the flag after `load_settings()` and before `board_port_init()`/BLE/IMU, so `TlogLogger::erase_all()` erases the 16 MB partition in 1 MiB chunks with no live task to stall; success clears the flag, failure keeps it for the next boot.
+- `TlogLogger::erase_all()` resets block/sequence state; `begin()` starts again at 0x0. The host `parttool.py erase_partition` path remains for a device that cannot boot.
+- `docs/BENCH_TEST_PLAN.md` §5 documents both paths. Firmware rebuilt: `moto_gps_esp32.bin` 0x5081d0, 16% of the 6 MiB slot free.

@@ -7,7 +7,7 @@ import XCTest
 @MainActor
 final class OfflineMapSceneTests: XCTestCase {
     func testJinrunGardenHasRealRoadsAndBuildingsInBundledCityPack() throws {
-        let url = try XCTUnwrap(Bundle.main.url(forResource: "jinan-v1", withExtension: "sqlite"))
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "jinan-v1", withExtension: "sqlite"))
         let repository = try SQLiteOfflineMapSceneIndex(url: url)
         // GCJ-02, converted once from the Jinrun Garden WGS84 entrance fix.
         let window = repository.query(
@@ -26,7 +26,7 @@ final class OfflineMapSceneTests: XCTestCase {
         let invalid = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: invalid) }
         try Data("incomplete download".utf8).write(to: invalid)
-        let bundled = try XCTUnwrap(Bundle.main.url(forResource: "jinan-v1", withExtension: "sqlite"))
+        let bundled = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "jinan-v1", withExtension: "sqlite"))
         let index = try OfflineMapSceneCoordinator.loadIndex(
             databaseURLs: [invalid, bundled], sampleURL: nil
         )
@@ -38,9 +38,9 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertFalse(window.buildings.isEmpty)
     }
 
-    func testFullJinanSQLitePackIsBundledAndQueryable() throws {
-        guard let url = Bundle.main.url(forResource: "jinan-v1", withExtension: "sqlite") else {
-            XCTFail("jinan-v1.sqlite is missing from the application bundle")
+    func testFullJinanSQLitePackIsAvailableToTests() throws {
+        guard let url = Bundle(for: Self.self).url(forResource: "jinan-v1", withExtension: "sqlite") else {
+            XCTFail("jinan-v1.sqlite is missing from the test bundle")
             return
         }
         XCTAssertGreaterThan(try Data(contentsOf: url, options: .mappedIfSafe).count, 1_000_000)
@@ -53,10 +53,10 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertEqual(window.revision, 77)
         XCTAssertFalse(window.roads.isEmpty)
         XCTAssertFalse(window.buildings.isEmpty)
-        XCTAssertLessThanOrEqual(window.roads.count, 24)
-        XCTAssertLessThanOrEqual(window.roads.reduce(0) { $0 + $1.points.count }, 192)
-        XCTAssertLessThanOrEqual(window.buildings.count, 16)
-        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, 128)
+        XCTAssertLessThanOrEqual(window.roads.count, OfflineMapSceneLimits.roads)
+        XCTAssertLessThanOrEqual(window.roads.reduce(0) { $0 + $1.points.count }, OfflineMapSceneLimits.roadPoints)
+        XCTAssertLessThanOrEqual(window.buildings.count, OfflineMapSceneLimits.buildings)
+        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, OfflineMapSceneLimits.buildingPoints)
     }
 
     func testBundledOSMSceneDecodesAndCropsRealFeatures() throws {
@@ -80,10 +80,10 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertEqual(window.revision, 9)
         XCTAssertFalse(window.roads.isEmpty)
         XCTAssertFalse(window.buildings.isEmpty)
-        XCTAssertLessThanOrEqual(window.roads.count, 24)
-        XCTAssertLessThanOrEqual(window.roads.reduce(0) { $0 + $1.points.count }, 192)
-        XCTAssertLessThanOrEqual(window.buildings.count, 16)
-        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, 128)
+        XCTAssertLessThanOrEqual(window.roads.count, OfflineMapSceneLimits.roads)
+        XCTAssertLessThanOrEqual(window.roads.reduce(0) { $0 + $1.points.count }, OfflineMapSceneLimits.roadPoints)
+        XCTAssertLessThanOrEqual(window.buildings.count, OfflineMapSceneLimits.buildings)
+        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, OfflineMapSceneLimits.buildingPoints)
     }
 
     func testSceneOutsideFixtureCoverageIsHonestEmptyWindow() throws {
@@ -147,7 +147,7 @@ final class OfflineMapSceneTests: XCTestCase {
             point(origin, northM: 200, eastM: 200), point(origin, northM: 200, eastM: 205),
             point(origin, northM: 205, eastM: 205), point(origin, northM: 205, eastM: 200),
         ]
-        var roads = (0 ..< 24).map { index in
+        var roads = (0 ..< OfflineMapSceneLimits.roads).map { index in
             OfflineMapRoad(
                 osmWayID: Int64(index),
                 roadClass: "service",
@@ -162,7 +162,7 @@ final class OfflineMapSceneTests: XCTestCase {
             roadClass: "primary",
             points: [point(origin, northM: 300, eastM: 0), point(origin, northM: 320, eastM: 0)]
         ))
-        var buildings = (0 ..< 16).map { index in
+        var buildings = (0 ..< OfflineMapSceneLimits.buildings).map { index in
             OfflineMapBuilding(
                 osmWayID: Int64(index),
                 name: nil,
@@ -188,17 +188,19 @@ final class OfflineMapSceneTests: XCTestCase {
             revision: 1
         )
 
-        XCTAssertEqual(window.roads.count, 24)
+        XCTAssertEqual(window.roads.count, OfflineMapSceneLimits.roads)
         XCTAssertTrue(window.roads.contains { $0.osmWayID == 999 })
-        XCTAssertEqual(window.buildings.count, 16)
+        XCTAssertEqual(window.buildings.count, OfflineMapSceneLimits.buildings)
         XCTAssertTrue(window.buildings.contains { $0.osmWayID == 999 })
     }
 
     func testNearbyStreetsAreNotCrowdedOutByDistantMainRoads() {
         let origin = OfflineMapPointE6(latitudeE6: 36_680_000, longitudeE6: 117_130_000)
-        // Thirty primaries at the edge of the window, listed first, and ten
-        // residential streets right around the rider.
-        var roads = (0 ..< 30).map { index in
+        // Sixty primaries at the edge of the window, listed first, and ten
+        // residential streets right around the rider. The budget is 40, so
+        // the old class-first ranking would have spent every slot on
+        // arterials and none on the streets the rider is actually on.
+        var roads = (0 ..< 60).map { index in
             OfflineMapRoad(
                 osmWayID: Int64(index),
                 roadClass: "primary",
@@ -222,7 +224,7 @@ final class OfflineMapSceneTests: XCTestCase {
             document: makeDocument(origin: origin, roads: roads, buildings: [])
         ).query(around: origin, radiusM: 500, revision: 1)
 
-        XCTAssertEqual(window.roads.count, 24)
+        XCTAssertEqual(window.roads.count, OfflineMapSceneLimits.roads)
         let selected = Set(window.roads.compactMap(\.osmWayID))
         XCTAssertTrue((100 ..< 110).allSatisfy { selected.contains(Int64($0)) })
         XCTAssertGreaterThanOrEqual(window.roads.filter { $0.roadClass == "primary" }.count, 8)
@@ -250,8 +252,8 @@ final class OfflineMapSceneTests: XCTestCase {
     /// phone's simplification the street under the rider must stay within
     /// 2 m, which is about one pixel on the round screen.
     func testSelectedStreetsStayUnderTheRiderOnTheRealCityPack() throws {
-        guard let url = Bundle.main.url(forResource: "jinan-v1", withExtension: "sqlite") else {
-            XCTFail("jinan-v1.sqlite is missing from the application bundle")
+        guard let url = Bundle(for: Self.self).url(forResource: "jinan-v1", withExtension: "sqlite") else {
+            XCTFail("jinan-v1.sqlite is missing from the test bundle")
             return
         }
         let repository = try SQLiteOfflineMapSceneIndex(url: url)
@@ -299,8 +301,8 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertFalse(window.buildings.isEmpty)
         XCTAssertTrue(window.roads.allSatisfy { $0.osmWayID != nil })
         XCTAssertTrue(window.buildings.allSatisfy { $0.osmWayID != nil })
-        XCTAssertLessThanOrEqual(window.roads.count, 24)
-        XCTAssertLessThanOrEqual(window.buildings.count, 16)
+        XCTAssertLessThanOrEqual(window.roads.count, OfflineMapSceneLimits.roads)
+        XCTAssertLessThanOrEqual(window.buildings.count, OfflineMapSceneLimits.buildings)
     }
 
     private func loadDocument() throws -> OfflineMapSceneDocument {

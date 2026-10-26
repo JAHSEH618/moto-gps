@@ -200,12 +200,22 @@ MapScene full_map_scene_fixture() {
   value.scene_revision = 0x10203040U;
   value.view_origin = {36'674'804, 117'122'449};
   value.radius_m = 800;
+  // 255 points over 40 roads: the first 15 roads carry one extra point. A
+  // fixture with 8 points per road would exceed the frame's point budget and
+  // no longer exercise a payload the camera can actually receive.
+  constexpr std::size_t kRoadSpanPoints =
+      kMaxMapSceneRoadPoints / kMaxMapSceneRoads;
+  constexpr std::size_t kExtraPointRoads =
+      kMaxMapSceneRoadPoints % kMaxMapSceneRoads;
   for (std::size_t road_index = 0;
        road_index < kMaxMapSceneRoads; ++road_index) {
     MapRoadPolyline road;
     road.road_class = static_cast<MapRoadClass>(
         road_index % (static_cast<std::size_t>(MapRoadClass::Other) + 1));
-    for (std::size_t point_index = 0; point_index < 8; ++point_index) {
+    const std::size_t point_count =
+        kRoadSpanPoints + (road_index < kExtraPointRoads ? 1U : 0U);
+    for (std::size_t point_index = 0; point_index < point_count;
+         ++point_index) {
       road.points.push_back({
           value.view_origin.latitude_e6 +
               static_cast<std::int32_t>(road_index * 75 + point_index * 21),
@@ -739,7 +749,7 @@ void test_full_map_scene_budget_and_reassembly() {
   const Message original{full_map_scene_fixture()};
   const Bytes payload = encode_or_fail(original);
   CHECK(payload.size() <= kDefaultMaxMessageSize);
-  CHECK(payload.size() <= 2'200);
+  CHECK(payload.size() <= 3'200);
   // iOS commonly reports 182 bytes for Write Without Response after an
   // ATT_MTU of 185.  This is the complete characteristic value limit passed
   // to fragment_message, including the 12-byte MOTO frame overhead.
@@ -877,9 +887,13 @@ void test_validation_failures() {
         Error::OutOfRange);
 
   MapScene too_many_map_points = map_scene_fixture();
+  // Overflow the frame total, not a single polyline's 255-point field: split
+  // the excess across two roads so the error under test is the budget.
   too_many_map_points.roads[0].points.resize(
-      kMaxMapSceneRoadPoints + 1,
-      too_many_map_points.roads[0].points.front());
+      128, too_many_map_points.roads[0].points.front());
+  too_many_map_points.roads[1].points.resize(
+      kMaxMapSceneRoadPoints - 127,
+      too_many_map_points.roads[1].points.front());
   CHECK(encode_message(Message{too_many_map_points}).error ==
         Error::TooManyItems);
 

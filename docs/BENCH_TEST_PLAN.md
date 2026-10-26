@@ -162,16 +162,20 @@ python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
 ./build/native/tests/native/moto_replay /tmp/tlog.bin > /tmp/ride.csv
 ```
 
-**擦除 tlog 分区。** 固件运行时不再擦扇区，所以这是硬性前置条件。以下三种情况必须由主机擦一次（先 `read_partition` 备份，擦除不可恢复）：
+**擦除 tlog 分区。** 以下三种情况需要清一次（先 `read_partition` 备份，擦除不可恢复）：
 
 - 首次刷入这版分区表之后；
 - 一次中断的写之后（倾角页状态槽显示 `LOG DIRTY`，录制保持关闭）；
 - 分区写满之后（开机日志 `tlog partition is full`，状态槽 `LOG FULL`）。
 
+主机路径：
+
 ```bash
 python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
   erase_partition --partition-name tlog
 ```
+
+或在串口输入 `tlog clear`：固件写 NVS 标志并重启，`app_main` 在显示、BLE、IMU 任务启动前擦除整个 16 MB 分区，然后从 0x0 重新录制。擦除期间不要断电；失败时标志保留，下次开机会重试。
 
 | 抓 | 期望 |
 |---|---|

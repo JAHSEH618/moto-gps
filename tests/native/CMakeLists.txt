@@ -88,6 +88,10 @@ if(TARGET lvgl)
     "LV_ASSERT_HANDLER=__builtin_trap()\\;")
   add_executable(nav_ui_render_tests nav_ui_render_tests.cpp)
   target_link_libraries(nav_ui_render_tests PRIVATE moto_nav_ui lvgl)
+  # The phone-text sanitizer is an internal header; the render suite reads it
+  # directly rather than through a public wrapper only tests would use.
+  target_include_directories(nav_ui_render_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../shared/nav_ui/src")
   # The geometry registry. Regenerate deliberately; see the test comment.
   target_compile_definitions(nav_ui_render_tests PRIVATE
     "MOTO_UI_GEOMETRY_MANIFEST=\"${CMAKE_CURRENT_LIST_DIR}/ui_geometry_manifest.txt\"")

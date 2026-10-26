@@ -27,7 +27,11 @@ display_symbols='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 
 # Barlow ExtraBold hero read as a different product.
 text_symbols="$(python3 -c '
 chars = []
-for hi in range(0xB0, 0xD8):
+# Both GB2312 levels. Level 1 is the 3,755 everyday characters a UI string
+# needs; level 2 is the 3,008 rarer ones that still turn up in song titles and
+# place names (嚯, 鑫, 淼). Shipping only level 1 silently dropped those
+# characters from a title — the font was confidently wrong, not merely thin.
+for hi in range(0xB0, 0xF8):
     for lo in range(0xA1, 0xFF):
         try:
             chars.append(bytes([hi, lo]).decode("gb2312"))

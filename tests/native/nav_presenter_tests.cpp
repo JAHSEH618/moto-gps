@@ -399,10 +399,20 @@ void test_map_scene_classes_buildings_and_capacity_share_route_transform() {
         117.13 + static_cast<double>(index) * 0.000001,
     };
   }
+  // 255 points over 40 polylines: the last span carries the remainder so the
+  // first-point index never exceeds the uint8 wire/UI span field.
+  constexpr std::size_t kRoadSpanPoints =
+      kRoadContextPointCapacity / kRoadContextPolylineCapacity;
   for (std::size_t index = 0; index < kRoadContextPolylineCapacity;
        ++index) {
+    const std::size_t first = index * kRoadSpanPoints;
+    const std::size_t count =
+        index + 1 == kRoadContextPolylineCapacity
+            ? kRoadContextPointCapacity - first
+            : kRoadSpanPoints;
     snapshot.road_context_polylines[index] = {
-        static_cast<std::uint8_t>(index * 8), 8,
+        static_cast<std::uint8_t>(first),
+        static_cast<std::uint8_t>(count),
         index == 0 ? RoadContextClass::Motorway
                    : RoadContextClass::Service,
     };

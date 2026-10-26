@@ -390,7 +390,6 @@ final class SurroundingMapStore: ObservableObject {
     private(set) var latestWindow: OfflineMapSceneWindow?
 
     private let cache: MapTileCache
-    private let fallback: (any OfflineMapSceneQuerying)?
     private var sceneTask: Task<Void, Never>?
     private var downloadTask: Task<Void, Never>?
     private var generation: UInt64 = 0
@@ -400,16 +399,16 @@ final class SurroundingMapStore: ObservableObject {
     private var retryAfter: Date?
     private var activeDownloadID: String?
 
-    init(baseURL: URL, bundle: Bundle = .main, storageURL: URL? = nil,
+    init(baseURL: URL, storageURL: URL? = nil,
          loader: MapTileCache.Loader? = nil) {
         let storage = storageURL ?? FileManager.default.urls(for: .applicationSupportDirectory,
                                                             in: .userDomainMask)[0]
             .appendingPathComponent("SurroundingMaps", isDirectory: true)
         cache = MapTileCache(root: storage, loader: loader ?? Self.httpLoader(baseURL: baseURL))
-        let bundled = bundle.url(forResource: "jinan-v1", withExtension: "sqlite")
-        fallback = try? OfflineMapSceneCoordinator.loadIndex(
-            databaseURLs: bundled.map { [$0] } ?? [],
-            sampleURL: bundle.url(forResource: "jinan_map_scene_sample", withExtension: "json"))
+        // The shipping app carries no city database. The gateway's map tiles
+        // and the rider's downloaded packs are the only geometry sources; an
+        // unreachable gateway is reported as such instead of silently falling
+        // back to a frozen Jinan snapshot.
         Task { [weak self] in await self?.reloadPacks() }
     }
 
@@ -452,8 +451,7 @@ final class SurroundingMapStore: ObservableObject {
                 if documents[tile] == nil || !fresh { needsRefresh.append(tile) }
             }
             guard !Task.isCancelled, self.generation == current else { return }
-            self.emit(documents: Array(documents.values), origin: origin,
-                      includeFallback: documents.count != tiles.count)
+            self.emit(documents: Array(documents.values), origin: origin)
             self.statusText = documents.count == tiles.count
                 ? "正在更新 · 已缓存周边地图" : "正在加载在线周边地图"
             var failed = false
@@ -478,7 +476,7 @@ final class SurroundingMapStore: ObservableObject {
             }
             guard !Task.isCancelled, self.generation == current else { return }
             let complete = documents.count == tiles.count
-            let hasOfflineGeometry = self.emit(documents: Array(documents.values), origin: origin, includeFallback: !complete)
+            let hasOfflineGeometry = self.emit(documents: Array(documents.values), origin: origin)
             if !failed && complete {
                 self.statusText = needsRefresh.isEmpty ? "周边地图已就绪 · 使用缓存" : "在线周边地图"
                 self.retryAfter = Date().addingTimeInterval(24 * 60 * 60)
@@ -603,18 +601,17 @@ final class SurroundingMapStore: ObservableObject {
     }
 
     @discardableResult
-    private func emit(documents: [MapTileDocument], origin: OfflineMapPointE6, includeFallback: Bool) -> Bool {
+    private func emit(documents: [MapTileDocument], origin: OfflineMapPointE6) -> Bool {
         var roads: [OfflineMapRoad] = []
         var buildings: [OfflineMapBuilding] = []
         var roadKeys: Set<RoadKey> = []
         var buildingKeys: Set<RoadKey> = []
-        let backup = includeFallback ? fallback?.query(around: origin, radiusM: 500, revision: 0) : nil
-        for road in documents.flatMap(\.roads) + (backup?.roads ?? []) {
+        for road in documents.flatMap(\.roads) {
             if roadKeys.insert(RoadKey(id: road.osmWayID, kind: road.roadClass, points: road.points)).inserted {
                 roads.append(road)
             }
         }
-        for building in documents.flatMap(\.buildings) + (backup?.buildings ?? []) {
+        for building in documents.flatMap(\.buildings) {
             if buildingKeys.insert(RoadKey(id: building.osmWayID, kind: building.buildingClass, points: building.points)).inserted {
                 buildings.append(building)
             }

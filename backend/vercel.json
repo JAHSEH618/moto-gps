@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": [
+    "hkg1"
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/v1/map/tiles/:z/:x/:y",
+      "destination": "/api/v1/map/tiles?z=:z&x=:x&y=:y"
+    }
+  ]
+}

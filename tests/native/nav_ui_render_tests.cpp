@@ -4,6 +4,7 @@
 // transitions and label/geometry residue cleanup.
 
 #include "moto_nav_ui.h"
+#include "moto_nav_ui_text.h"
 
 #include <lvgl.h>
 
@@ -24,6 +25,11 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+// The music page's faces, declared here so the text-coverage test reads the
+// same glyph subsets the firmware ships.
+LV_FONT_DECLARE(moto_font_display_40);
+LV_FONT_DECLARE(moto_font_text_40);
 
 namespace {
 
@@ -979,6 +985,77 @@ void test_music_page_state_and_fallback() {
   CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
 }
 
+// Phone-supplied strings end up on faces with a fixed glyph set. A codepoint
+// no face in the chain can draw used to paint as an empty box, and so did a
+// copy cut in the middle of a codepoint.
+bool every_codepoint_is_drawable(const char *text, const lv_font_t *font) {
+  std::size_t index = 0;
+  const std::size_t size = std::strlen(text);
+  while (index < size) {
+    const std::uint32_t codepoint =
+        moto::nav_ui::detail::next_codepoint(text, size, index);
+    if (codepoint != '\n' &&
+        !moto::nav_ui::detail::drawable(font, codepoint)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void test_music_text_never_paints_a_box() {
+  // A copy of the chain the GTA backend installs, so the test reads the same
+  // glyph coverage the device has.
+  lv_font_t title_face = moto_font_display_40;
+  title_face.fallback = &moto_font_text_40;
+
+  char title[64];
+  moto::nav_ui::copy_display_text(title, sizeof(title), &title_face, "公路之歌",
+                                  "--");
+  CHECK(std::strcmp(title, "公路之歌") == 0);
+
+  // GB2312 level 2 is in the subset too: a level-1-only face dropped 嚯 from a
+  // real title and rendered it as if the singer had not sung it.
+  moto::nav_ui::copy_display_text(title, sizeof(title), &title_face,
+                                  "哎哟嚯radio", "--");
+  CHECK(std::strcmp(title, "哎哟嚯radio") == 0);
+
+  // Scripts the subset does not carry are dropped rather than drawn as boxes.
+  moto::nav_ui::copy_display_text(title, sizeof(title), &title_face,
+                                  "夜に駆ける", "--");
+  CHECK(std::strcmp(title, "夜に駆ける") != 0);
+  CHECK(every_codepoint_is_drawable(title, &title_face));
+  CHECK(title[0] != '\0');
+
+  // An ideographic space is not a glyph either: dropping it must not leave the
+  // words welded together or a stray gap at the end.
+  moto::nav_ui::copy_display_text(title, sizeof(title), &title_face,
+                                  "NIGHT\xE3\x80\x80RIDE", "--");
+  CHECK(std::strcmp(title, "NIGHTRIDE") == 0);
+  moto::nav_ui::copy_display_text(title, sizeof(title), &title_face,
+                                  "RIDE\xE3\x80\x80", "--");
+  CHECK(std::strcmp(title, "RIDE") == 0);
+
+  // Truncation stops at a character boundary, never inside one: the leftovers
+  // of a split codepoint are the box the rider reported.
+  char narrow[10];
+  moto::nav_ui::copy_display_text(narrow, sizeof(narrow), &title_face,
+                                  "公路之歌公路之歌", "--");
+  CHECK(std::strlen(narrow) == 9);
+  CHECK(every_codepoint_is_drawable(narrow, &title_face));
+
+  // Nothing drawable at all leaves the placeholder, not a blank line. Kana are
+  // the clean case: GB2312 level 1 carries no kana at all, while a kanji like
+  // 夜 is shared and survives.
+  CHECK(!moto::nav_ui::detail::drawable(&title_face, 0x306B));
+  moto::nav_ui::copy_display_text(title, sizeof(title), &title_face,
+                                  "\xE3\x81\xAB\xE3\x81\x91", "--");
+  CHECK(std::strcmp(title, "--") == 0);
+
+  // A missing face must not blackhole the text.
+  moto::nav_ui::copy_display_text(title, sizeof(title), nullptr, "KANA", "--");
+  CHECK(std::strcmp(title, "KANA") == 0);
+}
+
 int home_tap_count = 0;
 
 void count_home_tap(void *) {
@@ -1224,6 +1301,55 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
                    settled_bytes.begin()));
 }
 
+// A short route moving 12 px must dirty its own span, not the whole 466 px
+// map. Before the dirty-area pass every route motion frame invalidated the
+// full Radar, which is what made swipes and taps feel late while riding.
+void test_map_motion_invalidates_only_the_moved_span() {
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_theme(MOTO_UI_THEME_GTA_NIGHT);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_state_t state = base_state();
+  state.route_point_count = 3;
+  state.route_points[0] = {233, 180};
+  state.route_points[1] = {233, 233};
+  state.route_points[2] = {233, 300};
+  state.road_point_count = 0;
+  state.road_polyline_count = 0;
+  state.building_point_count = 0;
+  state.building_footprint_count = 0;
+  moto_nav_ui_set_state(&state);
+  // Settle the page dots and the 920 ms connection confirmation first.
+  pump(1'200);
+  const std::uint64_t before = frame_hash();
+
+  for (int i = 0; i < state.route_point_count; ++i) {
+    state.route_points[i].x = static_cast<std::int16_t>(
+        state.route_points[i].x + 12);
+  }
+  moto_nav_ui_set_reduce_motion(0);
+  moto_nav_ui_set_state(&state);
+  // The state setter also updates the road-name and maneuver labels. Those
+  // are settled before the measured frame so this test sees map motion only.
+  lv_refr_now(lv_display_get_default());
+
+  std::vector<lv_area_t> areas;
+  flush_log = &areas;
+  pump(5);  // one 25 ms interpolation tick
+  flush_log = nullptr;
+
+  CHECK(!areas.empty());
+  CHECK(frame_hash() != before);
+  bool saw_route_span = false;
+  for (const lv_area_t& area : areas) {
+    const int32_t width = area.x2 - area.x1 + 1;
+    const int32_t height = area.y2 - area.y1 + 1;
+    CHECK(width <= 140);
+    CHECK(height <= 220);
+    if (width <= 140 && height <= 220) saw_route_span = true;
+  }
+  CHECK(saw_route_span);
+}
+
 void test_diagonal_map_pixels_are_independent_of_partial_buffer_height() {
   moto_nav_ui_set_reduce_motion(1);
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
@@ -1239,9 +1365,18 @@ void test_diagonal_map_pixels_are_independent_of_partial_buffer_height() {
         static_cast<std::int16_t>((i * 83) % 780 - 160),
         static_cast<std::int16_t>((i * 127) % 590 - 110)};
   }
+  // Partition 255 points over 40 polylines; the last span keeps the
+  // remainder and the first-point index stays inside the uint8 span field.
+  const int span_points = MOTO_UI_ROAD_POINT_CAPACITY /
+                          MOTO_UI_ROAD_POLYLINE_CAPACITY;
   for (int i = 0; i < state.road_polyline_count; ++i) {
+    const int first = i * span_points;
+    const int count = i + 1 == state.road_polyline_count
+                          ? MOTO_UI_ROAD_POINT_CAPACITY - first
+                          : span_points;
     state.road_polylines[i] = {
-        static_cast<std::uint8_t>(i * 8), 8,
+        static_cast<std::uint8_t>(first),
+        static_cast<std::uint8_t>(count),
         static_cast<std::uint8_t>(i % 6)};
   }
   moto_nav_ui_set_state(&state);
@@ -2138,12 +2273,14 @@ int main(int argc, char **argv) {
   test_lean_status_slot_reports_cal_and_fallback();
   test_clearing_geometry_leaves_no_residue();
   test_music_page_state_and_fallback();
+  test_music_text_never_paints_a_box();
   test_home_glyph_is_gated_by_speed();
   test_home_blip_is_clamped_to_the_ring();
   test_phone_lifecycle_renders_deterministically();
   test_demo_mode_visual_contract();
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
+  test_map_motion_invalidates_only_the_moved_span();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
   test_one_swipe_moves_one_page_even_after_a_rebuild();
   test_visible_objects_are_registered();

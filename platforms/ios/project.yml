@@ -26,10 +26,6 @@ targets:
       - path: ../../shared/nav_app/nav_app.cpp
       - path: ../../shared/protocol/fixtures/ble-navigation-v1.golden.txt
         buildPhase: resources
-      - path: ../../shared/demo_fixture/jinan_map_scene_sample.json
-        buildPhase: resources
-      - path: ../../shared/offline_map/jinan-v1.sqlite
-        buildPhase: resources
       - path: ../../assets/fonts/BarlowCondensed-SemiBold.ttf
         buildPhase: resources
       - path: ../../assets/fonts/BarlowCondensed-ExtraBold.ttf
@@ -120,6 +116,10 @@ targets:
     sources:
       - path: AppTests
       - path: ../../shared/demo_fixture/jinan_map_scene_sample.json
+        buildPhase: resources
+      # Development/bench fixture only. The shipping app no longer carries a
+      # 9.7 MB Jinan database; real maps come from the gateway's map tiles.
+      - path: ../../shared/offline_map/jinan-v1.sqlite
         buildPhase: resources
     dependencies:
       - target: MotoGPS

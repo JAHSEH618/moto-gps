@@ -341,6 +341,11 @@ final class AppModel: ObservableObject {
     /// Mirror the saved home to the device. The address is converted to GCJ-02
     /// inside `HomeLocationBroadcast`, exactly once.
     private func broadcastHomeLocation() {
+        // Revision zero is the wire's "never seen" marker and is not
+        // encodable. A fresh install with nothing saved has no home to mirror
+        // yet, so it stays quiet instead of sending a message the codec
+        // refuses; setting or clearing a home advances the revision first.
+        guard homeStore.revision != 0 else { return }
         bluetooth.sendHomeLocation(
             HomeLocationBroadcast(
                 revision: homeStore.revision,

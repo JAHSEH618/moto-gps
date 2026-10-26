@@ -20,6 +20,7 @@
 #include "lvgl.h"
 #include "moto_nav_ui_backends.h"
 #include "moto_nav_ui_memory.h"
+#include "moto_nav_ui_text.h"
 
 LV_FONT_DECLARE(moto_font_nav_16);
 
@@ -266,13 +267,6 @@ lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font,
     lv_obj_set_style_text_color(label, color, 0);
     lv_label_set_text(label, text);
     return label;
-}
-
-void copy_text(char *destination, std::size_t capacity, const char *source,
-               const char *fallback) {
-    if(capacity == 0) return;
-    const char *value = source != nullptr && source[0] != '\0' ? source : fallback;
-    std::snprintf(destination, capacity, "%s", value != nullptr ? value : "");
 }
 
 lv_color_t traffic_color(moto_traffic_t traffic) {
@@ -2264,12 +2258,18 @@ void moto_ui_classic::set_page_change_callback(
 void moto_ui_classic::set_music_state(const moto_music_state_t *state) {
     if(state == nullptr || ui.screen == nullptr) return;
     ui.music = *state;
-    copy_text(ui.music_source_text, sizeof(ui.music_source_text),
-              state->source_name, "PHONE MEDIA");
-    copy_text(ui.music_title_text, sizeof(ui.music_title_text),
-              state->track_title, "--");
-    copy_text(ui.music_artist_text, sizeof(ui.music_artist_text),
-              state->artist_name, "--");
+    moto::nav_ui::copy_display_text(ui.music_source_text,
+                                    sizeof(ui.music_source_text),
+                                    &lv_font_montserrat_16, state->source_name,
+                                    "PHONE MEDIA");
+    moto::nav_ui::copy_display_text(ui.music_title_text,
+                                    sizeof(ui.music_title_text),
+                                    &lv_font_montserrat_20,
+                                    state->track_title, "--");
+    moto::nav_ui::copy_display_text(ui.music_artist_text,
+                                    sizeof(ui.music_artist_text),
+                                    &lv_font_montserrat_16,
+                                    state->artist_name, "--");
     ui.music.source_name = ui.music_source_text;
     ui.music.track_title = ui.music_title_text;
     ui.music.artist_name = ui.music_artist_text;

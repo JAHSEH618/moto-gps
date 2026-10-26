@@ -362,20 +362,20 @@ u32 scene_revision          非零；新窗口严格递增
 i32 view_origin_lat_e6
 i32 view_origin_lon_e6
 u16 radius_m                100..1500
-u8  road_count              0..24
-u8  building_count          0..16
+u8  road_count              0..40
+u8  building_count          0..24
 
 repeat road_count:
   u8 road_class             0 motorway, 1 primary, 2 secondary,
                             3 residential, 4 service, 5 other
-  u8 point_count            2..255；全帧道路点合计 <=192
+  u8 point_count            2..255；全帧道路点合计 <=255
   repeat point_count:
     svarint lat_delta_e6     相对 view_origin
     svarint lon_delta_e6
 
 repeat building_count:
   u8 building_class         0 generic, 1 landmark, 2 parking
-  u8 point_count            3..255；全帧建筑点合计 <=128
+  u8 point_count            3..255；全帧建筑点合计 <=192
   repeat point_count:
     svarint lat_delta_e6     相对 view_origin
     svarint lon_delta_e6
@@ -386,8 +386,8 @@ repeat building_count:
 建议带 `ACK_REQUESTED`，在校验、解码并提交成功后才回复 Ack。更高
 `scene_revision` 原子替换旧窗口；旧 revision、半包和 CRC 错误均不改变屏幕。
 
-本编码对 192 个道路点 + 128 个建筑点通常约 1.3–2.2 KiB；在 185-byte GATT value
-下约 8–14 个协议分片。它不应按定位帧率发送：前进约 100 m、靠近窗口边缘或跨
+本编码对 255 个道路点 + 192 个建筑点通常约 1.8–2.9 KiB；在 185-byte GATT value
+下约 11–18 个协议分片。它不应按定位帧率发送：前进约 100 m、靠近窗口边缘或跨
 500 m 离线分块时刷新一次即可。当前链路已接入：iOS 的 `SurroundingMapStore`
 选择窗口，经 `ESP32BLECentral` 和共享 C++ codec 下发；ESP32 的 `PhoneNavBridge`
 校验并原子提交后，经 `NavPresenter` 交给道路与建筑 LVGL 图层。代码接入不等于

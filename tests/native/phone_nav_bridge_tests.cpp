@@ -752,13 +752,22 @@ void test_map_scene_atomically_replaces_roads_and_buildings_at_capacity() {
   maximum.scene_revision = 2;
   maximum.view_origin = geometry.view_origin;
   maximum.radius_m = 700;
+  // Fill the frame's 255-point budget, not 8 points per road: 40 x 8 would
+  // exceed the wire limit and be rejected before it reaches the bridge.
+  constexpr std::size_t kRoadSpanPoints =
+      moto::ble::kMaxMapSceneRoadPoints / moto::ble::kMaxMapSceneRoads;
+  constexpr std::size_t kExtraPointRoads =
+      moto::ble::kMaxMapSceneRoadPoints % moto::ble::kMaxMapSceneRoads;
   for (std::size_t road_index = 0;
        road_index < moto::ble::kMaxMapSceneRoads; ++road_index) {
     moto::ble::MapRoadPolyline road;
     road.road_class = road_index == 0
                           ? moto::ble::MapRoadClass::Service
                           : moto::ble::MapRoadClass::Residential;
-    for (std::size_t point_index = 0; point_index < 8; ++point_index) {
+    const std::size_t point_count =
+        kRoadSpanPoints + (road_index < kExtraPointRoads ? 1U : 0U);
+    for (std::size_t point_index = 0; point_index < point_count;
+         ++point_index) {
       road.points.push_back({
           geometry.view_origin.latitude_e6 +
               static_cast<std::int32_t>(road_index * 20 + point_index),

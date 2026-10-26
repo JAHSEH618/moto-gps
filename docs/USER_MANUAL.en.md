@@ -115,7 +115,7 @@ Traffic is currently used in route summaries and the circular progress arc. Comp
 colouring of individual route segments is still being developed, and traffic-light countdown is not connected.
 
 Grey roads and buildings now load online by default and are no longer limited to Jinan. When the
-network fails, the App uses downloaded regions, recent cache and the bundled Jinan base map; uncovered
+network fails, the App uses downloaded regions and the recent cache; uncovered
 areas may be missing. Completeness depends on local OSM data, and the display selects features within
 its capacity. See section 10 for downloads.
 
@@ -216,7 +216,7 @@ including an accepted reroute.
   "Continue download" on a saved item. Downloads can resume after an App restart; uninterrupted
   background downloading after screen lock is not guaranteed.
 - Swipe a saved item left to delete it. "Clear automatic cache" preserves manual downloads. The
-  bundled Jinan base map remains part of the App.
+  App carries no built-in whole-city map.
 - Automatic cache is limited to 128 MiB and manual downloads to 512 MiB in total. Cities and routes
   share stored tiles. Limits count file contents; actual disk use can be slightly higher. Oversized
   regions or routes are rejected and require a smaller scope.

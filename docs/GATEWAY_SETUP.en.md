@@ -18,7 +18,10 @@ iPhone → your own HTTPS gateway → AMap Web Service (search, routes, city bou
               stores the key   → Protomaps / OSM (roads, buildings; server cache)
 ```
 
-For an alternative without maintaining a server, use the new [Cloudflare Workers + R2 option](../backend/cloudflare/README.en.md). This page continues to describe the original Node.js server deployment.
+For an alternative without maintaining a server, use the [Cloudflare Workers + R2 option](../backend/cloudflare/README.en.md)
+or the [Vercel Functions option](../backend/vercel/README.en.md) (both share the same gateway code; the
+Vercel page also covers domain binding and HTTPS). This page continues to describe the original Node.js
+server deployment.
 
 ## 1. Prepare the key and the service environment
 
@@ -237,7 +240,7 @@ gateway, the actual key, the route request and the App's address all work togeth
 
 "Maps and offline downloads" on home supports city/district search; after choosing a route, its
 surroundings can also be downloaded. Keep the App running; interrupted downloads can resume. Offline
-use relies on downloads, cache and the retained bundled Jinan base map. These supply only road and
+use relies on downloaded packs and the recent cache. These supply only road and
 building backgrounds, not offline search, rerouting, live traffic, speed limits or countdowns.
 
 Replacing the key later only requires updating the server-side environment and restarting the

@@ -134,12 +134,13 @@ distance/area ordering as the small sample. The default file path is
 `Application Support/OfflineMaps/jinan-v1.sqlite`, and a seed database with the same name can
 also be placed directly in the App Bundle root. The whole-Jinan JSON is never read into memory in one go.
 
-The whole-Jinan SQLite artifact now lives at `shared/offline_map/jinan-v1.sqlite` and is included
-in the iOS App Bundle: about 9.63 MiB, with 47,468 roads / 266,985 road points and 26,702
-buildings / 148,140 building points. Full geometry decoding of the database and SQLite
-`integrity_check` both pass, and the Building D area also returns real road and building query
-results. The iPhone side is therefore no longer a fixed demo route but can query the city-wide
-package by current position.
+The whole-Jinan SQLite artifact is kept at `shared/offline_map/jinan-v1.sqlite` as a unit-test
+and offline-pack verification fixture; the shipping app no longer bundles it and gets maps from
+the gateway tiles and downloaded offline packs: about 9.63 MiB, with 47,468 roads / 266,985 road
+points and 26,702 buildings / 148,140 building points. Full geometry decoding of the database and
+SQLite `integrity_check` both pass, and the Building D area also returns real road and building
+query results. The iPhone side is therefore no longer a fixed demo route but can query the
+city-wide package by current position when one is installed.
 
 What is not finished is online download / incremental version update of the offline package and
 acceptance of OSM coverage density during real rides. Terminal reception, double-buffered atomic

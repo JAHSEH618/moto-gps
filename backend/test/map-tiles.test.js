@@ -6,6 +6,7 @@ import test from "node:test";
 import { createMapTileProvider, createRangeSource, MAP_BUILD_MANIFEST, MapTileError,
   selectLatestBuild, tileBoundsWgs84, transformVectorTile } from "../src/map-tiles.js";
 import { MapDiskCache } from "../src/map-cache.js";
+import { createMemoryStorage } from "../lib/memory-storage.js";
 
 const fixture = await readFile(new URL("../fixtures/protomaps-jinan-15-27044-12791.mvt", import.meta.url));
 const header = { tileType: 1, minZoom: 0, maxZoom: 15 };
@@ -226,4 +227,26 @@ test("source 404 cannot bypass manifest failure backoff for each downloaded tile
   await value.initialize();
   for (let x = 1; x < 4; x++) await assert.rejects(value.getTile(15, x, 1));
   assert.equal(calls, 2, "only first 404 may immediately force the metadata check");
+});
+
+test("in-memory storage serves a brand-new tile and never touches a disk directory", async (t) => {
+  const cacheDirectory = await directory(t);
+  const storage = createMemoryStorage({ maximumTiles: 4 });
+  let downloads = 0;
+  const value = provider(t, { cacheDirectory, storage, scheduleRefresh: false,
+    fetchImpl: async () => Response.json([build("20260915")]),
+    archiveFactory: () => archive(async () => { downloads += 1; return { data: fixture }; }),
+  });
+  await value.initialize();
+  // Regression: the memory backend must return a promise from put(), because the shared
+  // loader chains .catch() on it. A synchronous return failed the first tile of each area.
+  const first = await value.getTile(15, 27044, 12791);
+  assert.equal(first.roads.length, 104);
+  assert.equal(first.source.source_revision, "20260915");
+
+  const second = await value.getTile(15, 27044, 12791);
+  assert.deepEqual(second.roads, first.roads);
+  assert.equal(downloads, 1, "a cached tile must not re-read the map source");
+  assert.equal(value.status().cache.storage, "memory");
+  assert.deepEqual(await readdir(cacheDirectory), [], "serverless hosts must need no state directory");
 });
