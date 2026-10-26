@@ -39,4 +39,9 @@ void mark_tlog_selftest_done();
 bool load_imu_fifo_enabled();
 bool save_imu_fifo_enabled(bool enabled);
 
+// Gyro bias in the sensor's own axes, deg/s (DESIGN_V2 §3.4: learned at
+// rest, kept across power cycles). Returns false when nothing valid is stored.
+bool load_gyro_bias(moto::motion::Vec3f& bias_dps);
+bool save_gyro_bias(const moto::motion::Vec3f& bias_dps);
+
 }  // namespace moto::device

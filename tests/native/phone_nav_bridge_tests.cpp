@@ -1065,6 +1065,57 @@ void test_home_location_projects_onto_the_radar() {
 
 }  // namespace
 
+struct SpeedRecord {
+  int calls = 0;
+  float mps = -1.0F;
+  bool valid = false;
+};
+
+void record_speed(float mps, bool valid, void* context) {
+  auto* record = static_cast<SpeedRecord*>(context);
+  ++record->calls;
+  record->mps = mps;
+  record->valid = valid;
+}
+
+// The Lean estimator's kinematic correction runs on the phone's GPS speed.
+// It must arrive with every snapshot, and stop counting as valid when the
+// fix goes stale or the phone goes away.
+void test_phone_speed_reaches_the_lean_estimator() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  SpeedRecord speed;
+  bridge.set_speed_listener(record_speed, &speed);
+  bridge.on_link_state(true);
+
+  moto::ble::NavigationSnapshot navigation;
+  navigation.state = moto::ble::NavigationState::Navigating;
+  navigation.flags = moto::ble::NavigationHasFix;
+  navigation.speed_deci_kph = 540;  // 54 km/h
+  CHECK(bridge.on_message(make_message(navigation, 1)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 1);
+  CHECK(speed.valid);
+  CHECK(std::fabs(speed.mps - 15.0F) < 1.0e-4F);
+
+  navigation.flags |= moto::ble::NavigationGnssStale;
+  CHECK(bridge.on_message(make_message(navigation, 2)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(speed.calls == 2);
+  CHECK(!speed.valid);
+
+  navigation.flags = 0;  // no fix at all
+  CHECK(bridge.on_message(make_message(navigation, 3)) ==
+        moto::ble::AckStatus::Ok);
+  CHECK(!speed.valid);
+
+  bridge.on_link_state(false);
+  CHECK(speed.calls == 4);
+  CHECK(!speed.valid);
+  pump(bridge);
+}
+
 int main() {
   test_sender_is_called_without_bridge_state_lock();  test_settings_apply_echo_and_persist();
   test_boot_settings_replay_reaches_the_ui();
@@ -1082,6 +1133,7 @@ int main() {
   test_imu_attitude_reaches_the_lean_page();
   test_attitude_uplink_is_gated_and_paced();
   test_home_location_projects_onto_the_radar();
+  test_phone_speed_reaches_the_lean_estimator();
 
   if (failures != 0) {
     std::cerr << failures << " phone navigation bridge checks failed\n";

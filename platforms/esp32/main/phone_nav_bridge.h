@@ -47,6 +47,12 @@ class PhoneNavBridge {
   using SettingsStoreCallback =
       bool (*)(const moto::device::DeviceSettings& settings);
   void set_settings_store(SettingsStoreCallback callback);
+  // The phone's GPS speed, as it arrives: every navigation snapshot, and an
+  // invalid speed when the link drops. The Lean estimator's kinematic
+  // correction needs it (DESIGN_V2 §3.5); valid means the phone has a fix
+  // that is not stale. Called on the BLE task, outside the bridge lock.
+  using SpeedListener = void (*)(float speed_mps, bool valid, void* context);
+  void set_speed_listener(SpeedListener listener, void* context);
   // Apple Media Service: the iPhone's own Now Playing service, read by the
   // device over the same BLE link. While it is available the music page shows
   // its state and the keys go to `MusicKeyHandler` first; it returns false
@@ -140,6 +146,8 @@ class PhoneNavBridge {
   std::uint32_t settings_revision_ = 0;
   bool ambient_night_ = false;
   SettingsStoreCallback settings_store_ = nullptr;
+  SpeedListener speed_listener_ = nullptr;
+  void* speed_listener_context_ = nullptr;
   // Command id of the last HomeShortcut. The phone answers InvalidState when no
   // home is set; the device cannot know that on its own, so the refusal has to
   // come back as a visible hint instead of a silent no-op.

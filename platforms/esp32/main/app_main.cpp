@@ -800,6 +800,12 @@ extern "C" void app_main(void) {
     std::memcpy(&session_info.firmware_hash, desc->app_elf_sha256, 4);
   }
   tlog.begin(session_info);
+  phone_bridge.set_speed_listener(
+      [](float speed_mps, bool valid, void* context) {
+        static_cast<MotionHeadingSensor*>(context)->set_vehicle_speed(
+            speed_mps, valid);
+      },
+      &motion_sensor);
   motion_sensor.set_mode_callback(lean_mode_changed, nullptr);
   motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
   moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,

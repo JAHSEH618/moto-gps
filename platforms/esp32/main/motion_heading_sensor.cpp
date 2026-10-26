@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -160,6 +161,18 @@ void MotionHeadingSensor::run() {
     return assumed;
   }();
   lean_.set_mount(mount_);
+  // Start from the offset learned on the last ride instead of zero, so the
+  // first corner after power-on does not integrate the part's raw offset.
+  moto::motion::Vec3f stored_bias{};
+  if (moto::device::load_gyro_bias(stored_bias)) {
+    lean_.set_bias_sensor_dps(stored_bias);
+    saved_bias_dps_ = stored_bias;
+    bias_saved_ = true;
+    ESP_LOGI(kTag, "gyro bias restored: %.2f %.2f %.2f dps",
+             static_cast<double>(stored_bias.x),
+             static_cast<double>(stored_bias.y),
+             static_cast<double>(stored_bias.z));
+  }
   have_emit_ = false;
   temperature_countdown_ = 0;
 
@@ -278,8 +291,9 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
   have_emit_ = true;
   lean_.step({raw.gyro_dps[0], raw.gyro_dps[1], raw.gyro_dps[2]},
              {raw.accel_mps2[0], raw.accel_mps2[1], raw.accel_mps2[2]}, dt,
-             moto::motion::SpeedSample{});
+             speed_sample(sample_ms));
   const moto::motion::LeanOutput& out = lean_.output();
+  persist_bias(sample_ms);
   last_lean_deg_ = out.lean_deg;
   last_pitch_deg_ = out.pitch_deg;
   last_quality_ = out.quality;
@@ -288,8 +302,10 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
   moto::motion::AttitudeEstimate attitude;
   attitude.lean_deg = out.lean_deg;
   attitude.pitch_deg = out.pitch_deg;
-  const moto::motion::Vec3f accel_body =
-      mount_.to_body({raw.accel_mps2[0], raw.accel_mps2[1], raw.accel_mps2[2]});
+  // The estimator's basis, which may hold a provisional up before the rider
+  // calibrates; longitudinal G must use the same axes as Lean and pitch.
+  const moto::motion::Vec3f accel_body = lean_.mount().to_body(
+      {raw.accel_mps2[0], raw.accel_mps2[1], raw.accel_mps2[2]});
   const float pitch_rad = out.pitch_deg * 0.017453292519943295F;
   // Specific force along forward minus the gravity component along forward.
   attitude.longitudinal_g =
@@ -306,6 +322,73 @@ void MotionHeadingSensor::emit(const RawImuSample& raw,
   }
   attitude.valid = out.valid;
   callback_(-out.yaw_rate_dps, attitude, raw, sample_ms, callback_context_);
+}
+
+void MotionHeadingSensor::set_vehicle_speed(float speed_mps, bool valid) {
+  if (!valid || !std::isfinite(speed_mps) || speed_mps < 0.0F) {
+    speed_at_ms_.store(0, std::memory_order_release);
+    return;
+  }
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &speed_mps, sizeof(bits));
+  speed_bits_.store(bits, std::memory_order_relaxed);
+  // Never 0: zero is the "no speed" marker.
+  const std::uint32_t now = static_cast<std::uint32_t>(monotonic_ms()) | 1U;
+  speed_at_ms_.store(now, std::memory_order_release);
+}
+
+moto::motion::SpeedSample MotionHeadingSensor::speed_sample(
+    std::uint64_t now_ms) const {
+  // Until this was wired the estimator always got an empty sample, so the
+  // kinematic correction that keeps Lean honest in a long corner never ran.
+  constexpr float kMaxAgeS = 2.5F;
+  moto::motion::SpeedSample sample;
+  const std::uint32_t at = speed_at_ms_.load(std::memory_order_acquire);
+  if (at == 0) return sample;
+  const std::uint32_t bits = speed_bits_.load(std::memory_order_relaxed);
+  float mps = 0.0F;
+  std::memcpy(&mps, &bits, sizeof(mps));
+  const float age_s =
+      static_cast<float>(static_cast<std::uint32_t>(now_ms) - at) / 1'000.0F;
+  if (age_s < 0.0F || age_s > kMaxAgeS) return sample;
+  sample.valid = true;
+  sample.mps = mps;
+  sample.age_s = age_s;
+  return sample;
+}
+
+void MotionHeadingSensor::persist_bias(std::uint64_t now_ms) {
+  // DESIGN_V2 §3.4 asks for the bias to be written at power-off, but the
+  // bike's key can cut power without a shutdown. Write instead after 30 s of
+  // continuous stillness, when it moved by more than 0.2 dps, at most once a
+  // minute. Riding never writes.
+  constexpr std::uint64_t kStillMs = 30'000;
+  constexpr std::uint64_t kMinIntervalMs = 60'000;
+  constexpr float kChangeDps = 0.2F;
+  if (!lean_.bias_learning() || !lean_.bias_known()) {
+    still_since_ms_ = 0;
+    return;
+  }
+  if (still_since_ms_ == 0) still_since_ms_ = now_ms;
+  if (now_ms - still_since_ms_ < kStillMs) return;
+  if (bias_saved_ && now_ms - last_bias_save_ms_ < kMinIntervalMs) return;
+  const moto::motion::Vec3f bias = lean_.bias_sensor_dps();
+  const float dx = bias.x - saved_bias_dps_.x;
+  const float dy = bias.y - saved_bias_dps_.y;
+  const float dz = bias.z - saved_bias_dps_.z;
+  if (bias_saved_ && std::sqrt(dx * dx + dy * dy + dz * dz) < kChangeDps) {
+    return;
+  }
+  last_bias_save_ms_ = now_ms;
+  if (moto::device::save_gyro_bias(bias)) {
+    saved_bias_dps_ = bias;
+    bias_saved_ = true;
+    ESP_LOGI(kTag, "gyro bias saved: %.2f %.2f %.2f dps",
+             static_cast<double>(bias.x), static_cast<double>(bias.y),
+             static_cast<double>(bias.z));
+  } else {
+    ESP_LOGW(kTag, "gyro bias not persisted");
+  }
 }
 
 void MotionHeadingSensor::fifo_loop(bool& restart) {

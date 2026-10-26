@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 #include "attitude_estimator.hpp"
@@ -84,6 +85,9 @@ class MotionHeadingSensor {
   void set_mode_callback(ModeCallback callback, void* context);
 
   esp_err_t start(SampleCallback callback, void* context);
+  // The phone's GPS speed (any task). Feeds the Lean estimator's kinematic
+  // correction; a speed older than 2.5 s is treated as none.
+  void set_vehicle_speed(float speed_mps, bool valid);
 
  private:
   static void task_entry(void* context);
@@ -96,6 +100,8 @@ class MotionHeadingSensor {
   void announce_mode(AcquisitionMode mode);
   void run_calibration();
   void emit(const RawImuSample& raw, std::int64_t sample_us);
+  void persist_bias(std::uint64_t now_ms);
+  moto::motion::SpeedSample speed_sample(std::uint64_t now_ms) const;
 
   qmi8658_dev_t device_{};
   moto::motion::LeanEstimator lean_{};
@@ -103,6 +109,15 @@ class MotionHeadingSensor {
   bool have_emit_ = false;
   float temperature_c_ = 0.0F;
   int temperature_countdown_ = 0;
+  // Phone GPS speed, written by the BLE task and read by this one. The float
+  // travels as its bit pattern; a zero timestamp means "no speed".
+  std::atomic<std::uint32_t> speed_bits_{0};
+  std::atomic<std::uint32_t> speed_at_ms_{0};
+  // Bias persistence: written only from this task, only while parked.
+  moto::motion::Vec3f saved_bias_dps_{};
+  bool bias_saved_ = false;
+  std::uint64_t still_since_ms_ = 0;
+  std::uint64_t last_bias_save_ms_ = 0;
 
   SampleCallback callback_ = nullptr;
   void* callback_context_ = nullptr;

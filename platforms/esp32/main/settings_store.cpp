@@ -16,6 +16,16 @@ constexpr char kMountKey[] = "att.rmount";
 constexpr char kTlogPosKey[] = "tlog.pos";
 constexpr char kTlogOkKey[] = "tlog.ok";
 constexpr char kImuFifoKey[] = "imu.fifo";
+constexpr char kGyroBiasKey[] = "att.gbias";
+// Version byte first, so a later layout is rejected instead of misread.
+constexpr std::uint8_t kGyroBiasVersion = 1;
+struct GyroBiasBlob {
+  std::uint8_t version;
+  std::uint8_t reserved[3];
+  float x;
+  float y;
+  float z;
+};
 
 // app_main loads settings before the BLE transport starts, and the transport
 // is the other caller of nvs_flash_init(). ESP-IDF returns ESP_OK for a second
@@ -108,6 +118,34 @@ bool save_imu_fifo_enabled(bool enabled) {
   nvs_handle_t handle = 0;
   if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
   esp_err_t result = nvs_set_u8(handle, kImuFifoKey, enabled ? 1 : 0);
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  return result == ESP_OK;
+}
+
+bool load_gyro_bias(moto::motion::Vec3f& bias_dps) {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+  GyroBiasBlob blob{};
+  std::size_t size = sizeof(blob);
+  const esp_err_t result = nvs_get_blob(handle, kGyroBiasKey, &blob, &size);
+  nvs_close(handle);
+  if (result != ESP_OK || size != sizeof(blob) ||
+      blob.version != kGyroBiasVersion) {
+    return false;
+  }
+  bias_dps = {blob.x, blob.y, blob.z};
+  return true;
+}
+
+bool save_gyro_bias(const moto::motion::Vec3f& bias_dps) {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
+  const GyroBiasBlob blob{kGyroBiasVersion, {}, bias_dps.x, bias_dps.y,
+                          bias_dps.z};
+  esp_err_t result = nvs_set_blob(handle, kGyroBiasKey, &blob, sizeof(blob));
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
   return result == ESP_OK;

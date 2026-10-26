@@ -52,6 +52,10 @@ struct MountCalibration {
                  bool calibrated = true);
 
   Vec3f to_body(const Vec3f& sensor) const;
+  Vec3f to_sensor(const Vec3f& body) const;
+  // Provisional up for an uncalibrated screen far from the assumed mount.
+  // Keeps the basis orthonormal and leaves stage1 untouched.
+  void adopt_up(const Vec3f& sensor_up);
   Vec3f forward_axis() const { return forward_; }
   Vec3f up_axis() const { return up_; }
   bool valid() const { return stage1; }
@@ -135,6 +139,8 @@ class LeanEstimator {
 
   void set_mount(const MountCalibration& mount);
   bool calibrated() const { return mount_.stage1; }
+  // The basis in use, including a provisional up adopted before calibration.
+  const MountCalibration& mount() const { return mount_; }
 
   // v2 review §1: the IMU sits h metres above the roll axis, so a_y picks up
   // h*lean_accel and a_z picks up h*lean_rate^2. Vehicle-profile parameter;
@@ -149,6 +155,15 @@ class LeanEstimator {
 
   // Gyro bias in deg/s, per axis. Static-only learning (§3.4).
   Vec3f bias_dps() const;
+
+  // The same bias in the sensor's own axes, which is what survives a power
+  // cycle or a recalibration: the part's offset does not depend on how the
+  // screen is mounted. A restored bias is the starting point; static
+  // learning keeps refining it.
+  Vec3f bias_sensor_dps() const;
+  void set_bias_sensor_dps(const Vec3f& bias_dps);
+  // True once the bias came from storage or from a stationary window.
+  bool bias_known() const { return bias_known_; }
 
   // True while the stationary window used to learn the bias is open.
   bool bias_learning() const { return static_for_s_ >= kStaticHoldS; }
@@ -168,6 +183,9 @@ class LeanEstimator {
   static constexpr float kKinematicMinSpeedMps = 4.0F;
   static constexpr float kStraightHoldS = 1.5F;
   static constexpr float kMaxLeanDeg = 70.0F;
+  // sin(45°): pitched further than this, the assumed mount is not how the
+  // screen sits.
+  static constexpr float kProvisionalPitchSin = 0.70710678F;
 
   bool is_static(const Vec3f& accel, const Vec3f& gyro,
                  const SpeedSample& speed) const;
@@ -198,6 +216,16 @@ class LeanEstimator {
   // when the phone's GPS has expired (v2 review §3).
   float accel_delta_ema_ = 0.0F;
   float last_accel_magnitude_ = 9.80665F;
+  // Stillness from the gyro's spread, not its level. A QMI8658 can sit at
+  // several deg/s with the board perfectly still, so "|raw rate| < 3 dps"
+  // never opened the bias window and the horizon drifted without bound.
+  Vec3f gyro_mean_dps_{};
+  float gyro_jitter_ema_ = 0.0F;
+  // |a| reference for the stillness gate before step 1 has measured this
+  // unit's own magnitude; a 30-50 mg zero-g offset fails a fixed 1 g gate.
+  float accel_magnitude_ema_ = 9.80665F;
+  bool gyro_seeded_ = false;
+  bool bias_known_ = false;
   bool in_corner_ = false;
   LeanOutput out_{};
 };

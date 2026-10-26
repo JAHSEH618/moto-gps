@@ -64,9 +64,30 @@ Vec3f rotate_about_axis(const Vec3f& v, const Vec3f& axis, float angle_rad) {
           v.z * c + kxv.z * s + k.z * kdv * (1.0F - c)};
 }
 
+// The bike's forward axis in the sensor frame for a given up axis: the hint
+// projected onto the level plane. A hint nearly parallel to up has no level
+// direction, so fall back to the adapter's assumed forward (sensor -z, screen
+// facing the rider), then to sensor +y (a screen lying flat with its top
+// towards the front wheel), then to sensor +x.
+Vec3f level_forward(const Vec3f& hint, const Vec3f& up) {
+  const Vec3f candidates[] = {hint,
+                              {0.0F, 0.0F, -1.0F},
+                              {0.0F, 1.0F, 0.0F},
+                              {1.0F, 0.0F, 0.0F}};
+  for (const Vec3f& candidate : candidates) {
+    const Vec3f level = sub(candidate, scale(up, dot(candidate, up)));
+    if (length(level) > 0.5F) return normalise(level);
+  }
+  return {1.0F, 0.0F, 0.0F};
+}
+
 }  // namespace
 
 void MountCalibration::begin_static() {
+  // A capture always measures afresh. observe_static() returned the previous
+  // basis as "captured" whenever stage 1 was already set, so a remounted
+  // screen could never be recalibrated.
+  stage1 = false;
   acc_sum_ = {};
   acc_count_ = 0;
   acc_time_s_ = 0.0F;
@@ -160,6 +181,10 @@ bool MountCalibration::observe_static(const Vec3f& accel_mps2,
   const Vec3f up = normalise(acc_sum_);
   if (length(up) < 0.5F) return false;
   up_ = up;
+  // The basis must stay orthonormal. Keeping the old forward against a new
+  // up skewed every body axis by the screen's tilt: a 30° tilt-back read as
+  // -27° pitch at rest and Lean was taken about a tilted axis.
+  forward_ = level_forward(forward_, up_);
   static_magnitude_mps2 = magnitude_mean;
   reject_reason = 0;
   stage1 = true;
@@ -248,6 +273,20 @@ void MountCalibration::set_basis(const Vec3f& sensor_forward,
   forward_ = forward;
 }
 
+Vec3f MountCalibration::to_sensor(const Vec3f& body) const {
+  const Vec3f untrimmed = rotate_about_x(body, -trim_deg * kDegToRad);
+  const Vec3f left = normalise(cross(up_, forward_));
+  return add(add(scale(forward_, untrimmed.x), scale(left, untrimmed.y)),
+             scale(up_, untrimmed.z));
+}
+
+void MountCalibration::adopt_up(const Vec3f& sensor_up) {
+  const Vec3f up = normalise(sensor_up);
+  if (length(up) < 0.5F) return;
+  up_ = up;
+  forward_ = level_forward(forward_, up_);
+}
+
 Vec3f MountCalibration::to_body(const Vec3f& sensor) const {
   const Vec3f left = normalise(cross(up_, forward_));
   const Vec3f body = {dot(sensor, forward_), dot(sensor, left),
@@ -271,13 +310,32 @@ void LeanEstimator::reset() {
   roll_accel_ema_ = 0.0F;
   accel_delta_ema_ = 0.0F;
   last_accel_magnitude_ = kGravity;
+  gyro_mean_dps_ = {};
+  gyro_jitter_ema_ = 0.0F;
+  accel_magnitude_ema_ = kGravity;
+  gyro_seeded_ = false;
+  bias_known_ = false;
   out_ = LeanOutput{};
 }
 
 void LeanEstimator::set_mount(const MountCalibration& mount) {
+  // The bias lives in the body frame, but it is the sensor's offset: carry
+  // it across the new basis instead of dropping it. Zeroing it after every
+  // calibration left the gyro's raw offset (~7 dps on a QMI8658) in the
+  // integration until the 10 s learner caught up.
+  const Vec3f bias_sensor = mount_.to_sensor(bias_rads_);
   mount_ = mount;
-  // The bias lives in the body frame; a new basis invalidates it.
-  bias_rads_ = {};
+  bias_rads_ = mount_.to_body(bias_sensor);
+}
+
+Vec3f LeanEstimator::bias_sensor_dps() const {
+  return scale(mount_.to_sensor(bias_rads_), kRadToDeg);
+}
+
+void LeanEstimator::set_bias_sensor_dps(const Vec3f& bias_dps) {
+  if (!finite(bias_dps) || length(bias_dps) > 30.0F) return;
+  bias_rads_ = mount_.to_body(scale(bias_dps, kDegToRad));
+  bias_known_ = true;
 }
 
 Vec3f LeanEstimator::bias_dps() const {
@@ -287,9 +345,18 @@ Vec3f LeanEstimator::bias_dps() const {
 bool LeanEstimator::is_static(const Vec3f& accel, const Vec3f& gyro,
                               const SpeedSample& speed) const {
   if (!finite(accel) || !finite(gyro)) return false;
-  if (length(gyro) > 3.0F) return false;
-  if (std::fabs(length(accel) - mount_.static_magnitude_mps2) >
-      0.03F * kGravity) {
+  // Still means "the rate is not changing", whatever its level: either the
+  // learned bias already explains the rate, or the rate sits inside the
+  // part's offset range with sensor-noise spread only. A real rotation at a
+  // constant rate on a parked bike does not happen; on the road the spread
+  // and the accelerometer gates below both trip.
+  const float corrected = length(sub(gyro, bias_dps()));
+  const bool quiet_offset = gyro_seeded_ && length(gyro) < 15.0F &&
+                            gyro_jitter_ema_ < 0.6F;
+  if (corrected > 3.0F && !quiet_offset) return false;
+  const float reference = mount_.stage1 ? mount_.static_magnitude_mps2
+                                        : accel_magnitude_ema_;
+  if (std::fabs(length(accel) - reference) > 0.03F * kGravity) {
     return false;
   }
   if (!speed.valid && accel_delta_ema_ > 0.004F * kGravity) return false;
@@ -313,6 +380,28 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
   if (!finite(gyro_dps) || !finite(accel_mps2)) return;
   if (!std::isfinite(dt) || dt <= 0.0F) return;
   dt = std::clamp(dt, 0.0005F, 0.05F);
+
+  // Before the rider calibrates, the basis is the adapter's guess (screen
+  // upright, facing the rider). A screen mounted differently has no defined
+  // Lean in that guess: lying flat, the guessed "up" is horizontal and the
+  // angle wound through ±180°. When a still screen is pitched more than 45°
+  // against the guess, adopt the measured gravity as a provisional up. Only
+  // pitch counts: a parked bike cannot sit 45° nose-up or nose-down, while one
+  // lying on its side is off about the forward axis and must still read as
+  // saturated. Never persisted; CAL_OK stays false, so CAL is still shown.
+  if (!mount_.stage1 && static_for_s_ >= kStaticHoldS) {
+    const Vec3f measured_up = normalise(accel_mps2);
+    if (length(measured_up) > 0.5F &&
+        std::fabs(dot(measured_up, mount_.forward_axis())) >
+            kProvisionalPitchSin) {
+      const Vec3f bias_sensor =
+          mount_.to_sensor(bias_rads_);
+      mount_.adopt_up(measured_up);
+      bias_rads_ = mount_.to_body(bias_sensor);
+      up_body_ = normalise(mount_.to_body(accel_mps2));
+      lean_prev_deg_ = std::atan2(up_body_.y, up_body_.z) * kRadToDeg;
+    }
+  }
 
   const Vec3f accel = mount_.to_body(accel_mps2);
   const Vec3f gyro_raw = mount_.to_body(gyro_dps);
@@ -361,6 +450,23 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
     last_accel_magnitude_ = accel_magnitude;
   }
 
+  // Spread of the raw rate about its own 0.5 s mean (stillness gate).
+  if (!gyro_seeded_) {
+    gyro_mean_dps_ = gyro_dps;
+    gyro_seeded_ = true;
+  }
+  {
+    const float k = std::clamp(dt / 0.5F, 0.0F, 1.0F);
+    gyro_mean_dps_ =
+        add(gyro_mean_dps_, scale(sub(gyro_dps, gyro_mean_dps_), k));
+    const float spread = length(sub(gyro_dps, gyro_mean_dps_));
+    gyro_jitter_ema_ += (spread - gyro_jitter_ema_) * k;
+    if (std::isfinite(accel_magnitude)) {
+      accel_magnitude_ema_ += (accel_magnitude - accel_magnitude_ema_) *
+                              std::clamp(dt / 2.0F, 0.0F, 1.0F);
+    }
+  }
+
   // Stationary window: only here may the bias follow the gyro.
   const bool stationary = is_static(accel, gyro_dps, speed);
   static_for_s_ = stationary ? static_for_s_ + dt : 0.0F;
@@ -371,6 +477,14 @@ void LeanEstimator::step(const Vec3f& gyro_dps, const Vec3f& accel_mps2,
     // window may follow it; riding must never write to this reference.
     mount_.static_magnitude_mps2 +=
         (length(accel) - mount_.static_magnitude_mps2) * (dt / 10.0F);
+    if (!bias_known_) {
+      // First stillness with nothing stored: take the 0.5 s mean rate now.
+      // Learning it from zero at tau = 10 s left several degrees of Lean
+      // error for half a minute, and a rider who set off sooner kept the
+      // whole offset in every corner.
+      bias_rads_ = scale(mount_.to_body(gyro_mean_dps_), kDegToRad);
+      bias_known_ = true;
+    }
     // tau = 10 s, applied to the raw body-frame rate.
     const float blend = dt / 10.0F;
     bias_rads_ = add(bias_rads_, scale(sub(scale(gyro_raw, kDegToRad),

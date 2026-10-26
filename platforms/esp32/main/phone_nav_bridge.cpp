@@ -389,12 +389,18 @@ void PhoneNavBridge::on_system_media(const moto::ble::MediaState& state,
 }
 
 void PhoneNavBridge::on_link_state(bool active) {
+  SpeedListener speed_listener = nullptr;
+  void* speed_context = nullptr;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     if (link_active_ == active) {
       return;
     }
     link_active_ = active;
+    if (!active) {
+      speed_listener = speed_listener_;
+      speed_context = speed_listener_context_;
+    }
     ui_phone_connection_ = active ? MOTO_UI_PHONE_CONNECTING
                                   : MOTO_UI_PHONE_OFFLINE;
     auto& phone_snapshot = phone_snapshot_locked();
@@ -420,6 +426,9 @@ void PhoneNavBridge::on_link_state(bool active) {
       media_state_.track_title = "等待连接";
     }
   }
+  // Without the phone there is no speed; the estimator must not keep
+  // trusting the last one (it also ages out on its own).
+  if (speed_listener != nullptr) speed_listener(0.0F, false, speed_context);
   const std::uint32_t flags = static_cast<std::uint32_t>(RenderNavigation) |
       (active ? 0U : static_cast<std::uint32_t>(RenderMedia));
   request_render(flags);
@@ -706,6 +715,10 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
 
 void PhoneNavBridge::consume_navigation(
     const moto::ble::NavigationSnapshot& input) {
+  SpeedListener speed_listener = nullptr;
+  void* speed_context = nullptr;
+  float speed_mps = 0.0F;
+  bool speed_valid = false;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     // A valid phone snapshot is always authoritative. Older firmware allowed
@@ -735,6 +748,11 @@ void PhoneNavBridge::consume_navigation(
     heading_fusion_.anchor(phone_heading_deg, phone_speed_mps,
                            has_usable_fix && !has_flag(
                                input.flags, moto::ble::NavigationGnssStale));
+    speed_listener = speed_listener_;
+    speed_context = speed_listener_context_;
+    speed_mps = phone_speed_mps;
+    speed_valid = has_usable_fix &&
+                  !has_flag(input.flags, moto::ble::NavigationGnssStale);
 
     phone_snapshot.state = map_state(input.state);
     phone_snapshot.network = map_network(input.network);
@@ -812,6 +830,9 @@ void PhoneNavBridge::consume_navigation(
     } else {
       apply_geometry_locked(phone_snapshot);
     }
+  }
+  if (speed_listener != nullptr) {
+    speed_listener(speed_mps, speed_valid, speed_context);
   }
   present_navigation();
 }
@@ -1036,6 +1057,13 @@ void PhoneNavBridge::set_settings_store(
     PhoneNavBridge::SettingsStoreCallback callback) {
   const std::lock_guard<std::mutex> lock(state_mutex_);
   settings_store_ = callback;
+}
+
+void PhoneNavBridge::set_speed_listener(SpeedListener listener,
+                                        void* context) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  speed_listener_ = listener;
+  speed_listener_context_ = context;
 }
 
 void PhoneNavBridge::apply_settings(

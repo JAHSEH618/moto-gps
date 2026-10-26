@@ -6,6 +6,7 @@
 #include "lean_estimator.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 
@@ -193,6 +194,33 @@ void test_bias_learns_only_when_static() {
   CHECK(estimator.bias_learning());
   check_near(estimator.bias_dps().x, 1.0F, 0.15F, "static bias x");
   check_near(estimator.bias_dps().y, 0.0F, 0.01F, "static bias y");
+}
+
+// The board on the bench: a QMI8658 zero-rate offset of several deg/s, the
+// usual sensor noise, and no phone speed. The raw rate never drops under the
+// 3 dps "moving" threshold, so the stationary window must still open, learn
+// the offset and hold the horizon. Before the fix lean and pitch drifted by
+// the offset every second, without bound.
+void test_large_gyro_offset_is_learned_at_rest() {
+  LeanEstimator estimator;
+  const Vec3f offset{0.8F, 6.0F, -2.5F};  // deg/s, ISO body
+  std::uint32_t seed = 12345U;
+  const auto noise = [&seed](float amplitude) {
+    seed = seed * 1664525U + 1013904223U;
+    return amplitude * (static_cast<float>(seed >> 8) / 8388608.0F - 1.0F);
+  };
+  const int steps = static_cast<int>(40.0F / kDt);
+  for (int i = 0; i < steps; ++i) {
+    const Vec3f rates{offset.x + noise(0.15F), offset.y + noise(0.15F),
+                      offset.z + noise(0.15F)};
+    const Vec3f accel{noise(0.03F), noise(0.03F), kGravity + noise(0.03F)};
+    estimator.step(rates, accel, kDt, SpeedSample{});
+  }
+  CHECK(estimator.bias_learning());
+  check_near(estimator.bias_dps().y, offset.y, 0.3F, "large offset bias y");
+  check_near(estimator.output().lean_deg, 0.0F, 1.0F, "lean held at rest");
+  check_near(estimator.output().pitch_deg, 0.0F, 1.0F, "pitch held at rest");
+  CHECK((estimator.output().flags & moto::motion::kLeanSrcStatic) != 0);
 }
 
 void test_saturation_flag() {
@@ -447,6 +475,163 @@ void test_quality_is_halved_without_calibration() {
 
 }  // namespace
 
+float dot3(const Vec3f& a, const Vec3f& b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+Vec3f cross3(const Vec3f& a, const Vec3f& b) {
+  return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+          a.x * b.y - a.y * b.x};
+}
+
+Vec3f unit3(const Vec3f& v) {
+  const float n = std::sqrt(dot3(v, v));
+  return {v.x / n, v.y / n, v.z / n};
+}
+
+// A second long-press must measure again. It used to return the stored basis
+// as "captured", so a remounted screen kept its old axes.
+void test_recalibration_measures_afresh() {
+  MountCalibration mount;
+  mount.set_basis({0.0F, 0.0F, -1.0F}, {0.0F, 1.0F, 0.0F});
+  CHECK(mount.stage1);
+  const float tilt = 30.0F * kDegToRad;
+  const Vec3f tilted{0.0F, std::cos(tilt), std::sin(tilt)};
+  mount.begin_static();
+  CHECK(!mount.observe_static(
+      {tilted.x * kGravity, tilted.y * kGravity, tilted.z * kGravity},
+      {0.0F, 0.0F, 0.0F}, 0.01F));
+  bool ready = false;
+  for (int i = 0; i < 300 && !ready; ++i) {
+    ready = mount.observe_static(
+        {tilted.x * kGravity, tilted.y * kGravity, tilted.z * kGravity},
+        {0.0F, 0.0F, 0.0F}, 0.01F);
+  }
+  CHECK(ready);
+  check_near(dot3(mount.up_axis(), tilted), 1.0F, 1.0e-3F,
+             "recalibrated up follows the new mount");
+}
+
+// Calibrating a screen tilted back 30° must leave an orthonormal basis: level
+// at rest reads zero pitch and zero Lean, and a real lean about the bike's
+// forward axis reads as that lean.
+void test_capture_keeps_the_basis_orthonormal() {
+  MountCalibration mount;
+  mount.set_basis({0.0F, 0.0F, -1.0F}, {0.0F, 1.0F, 0.0F}, false);
+  const float tilt = 30.0F * kDegToRad;
+  const Vec3f up{0.0F, std::cos(tilt), std::sin(tilt)};
+  mount.begin_static();
+  bool ready = false;
+  for (int i = 0; i < 300 && !ready; ++i) {
+    ready = mount.observe_static(
+        {up.x * kGravity, up.y * kGravity, up.z * kGravity},
+        {0.0F, 0.0F, 0.0F}, 0.01F);
+  }
+  CHECK(ready);
+  check_near(dot3(mount.forward_axis(), mount.up_axis()), 0.0F, 1.0e-4F,
+             "forward is level after capture");
+
+  // The bike's true axes in the sensor frame, built independently.
+  const Vec3f forward = unit3({0.0F, std::sin(tilt), -std::cos(tilt)});
+  const Vec3f left = cross3(up, forward);
+  const float lean = 25.0F * kDegToRad;
+  // Right lean: world up seen from the bike tips towards its left axis.
+  const Vec3f leaned{
+      kGravity * (std::sin(lean) * left.x + std::cos(lean) * up.x),
+      kGravity * (std::sin(lean) * left.y + std::cos(lean) * up.y),
+      kGravity * (std::sin(lean) * left.z + std::cos(lean) * up.z)};
+
+  LeanEstimator estimator;
+  estimator.set_mount(mount);
+  for (int i = 0; i < 6 * 112; ++i) {
+    estimator.step({0.0F, 0.0F, 0.0F}, leaned, kDt, SpeedSample{});
+  }
+  check_near(estimator.output().lean_deg, 25.0F, 0.5F,
+             "lean about the bike's forward axis after a tilted capture");
+  check_near(estimator.output().pitch_deg, 0.0F, 0.5F,
+             "no phantom pitch from a skewed basis");
+}
+
+// Before calibration the adapter assumes an upright screen. Lying flat, that
+// guess has a horizontal "up" and Lean wound through ±180°; held still, the
+// estimator must adopt gravity as a provisional up and read level.
+void test_uncalibrated_flat_screen_reads_level() {
+  MountCalibration assumed;
+  assumed.set_basis({0.0F, 0.0F, -1.0F}, {0.0F, 1.0F, 0.0F}, false);
+  LeanEstimator estimator;
+  estimator.set_mount(assumed);
+  const Vec3f flat{0.0F, 0.0F, kGravity};
+  const Vec3f offset{0.6F, -0.4F, 0.3F};  // a still QMI8658's raw offset
+  for (int i = 0; i < 20 * 112; ++i) {
+    estimator.step(offset, flat, kDt, SpeedSample{});
+  }
+  CHECK(!estimator.calibrated());
+  CHECK((estimator.output().flags & moto::motion::kLeanCalOk) == 0U);
+  check_near(estimator.output().lean_deg, 0.0F, 1.0F,
+             "flat screen reads level before calibration");
+  check_near(estimator.output().pitch_deg, 0.0F, 1.0F,
+             "flat screen reads no pitch before calibration");
+  const float settled = estimator.output().lean_deg;
+  for (int i = 0; i < 20 * 112; ++i) {
+    estimator.step(offset, flat, kDt, SpeedSample{});
+  }
+  check_near(estimator.output().lean_deg, settled, 0.3F,
+             "no winding while it lies still");
+}
+
+// The first stillness after power-on takes the mean rate at once. Learning
+// from zero at tau = 10 s left ~3.5° of Lean error for half a minute with a
+// 7 dps offset, and riding off sooner kept the whole offset.
+void test_first_stillness_seeds_the_bias() {
+  LeanEstimator estimator;
+  const Vec3f offset{7.0F, -2.0F, 1.5F};
+  for (int i = 0; i < 4 * 112; ++i) {
+    estimator.step(offset, static_accel(0.0F), kDt, SpeedSample{});
+  }
+  CHECK(estimator.bias_known());
+  check_near(estimator.bias_dps().x, offset.x, 0.3F, "seeded bias x");
+  check_near(estimator.output().lean_deg, 0.0F, 0.5F,
+             "level within seconds of the first stillness");
+}
+
+// The offset belongs to the sensor, not to the mount: a recalibration must
+// carry it into the new basis instead of zeroing it.
+void test_bias_survives_a_new_mount() {
+  LeanEstimator estimator;
+  const Vec3f offset{7.0F, -2.0F, 1.5F};
+  for (int i = 0; i < 4 * 112; ++i) {
+    estimator.step(offset, static_accel(0.0F), kDt, SpeedSample{});
+  }
+  const Vec3f before = estimator.bias_sensor_dps();
+  MountCalibration rotated;
+  rotated.set_basis({0.0F, 0.0F, -1.0F}, {0.0F, 1.0F, 0.0F});
+  estimator.set_mount(rotated);
+  const Vec3f after = estimator.bias_sensor_dps();
+  check_near(after.x, before.x, 1.0e-3F, "sensor bias x kept");
+  check_near(after.y, before.y, 1.0e-3F, "sensor bias y kept");
+  check_near(after.z, before.z, 1.0e-3F, "sensor bias z kept");
+}
+
+// A bias restored from storage is used from the first sample: riding off
+// straight away (no stillness yet) must not integrate the raw offset.
+void test_restored_bias_holds_from_the_first_sample() {
+  LeanEstimator estimator;
+  const Vec3f offset{7.0F, -2.0F, 1.5F};
+  estimator.set_bias_sensor_dps(offset);
+  CHECK(estimator.bias_known());
+  SpeedSample moving;
+  moving.valid = true;
+  moving.mps = 0.0F;  // no kinematic correction, gyro path only
+  // Two seconds of a slightly bumpy road: never stationary.
+  for (int i = 0; i < 2 * 112; ++i) {
+    const float bump = (i % 2 == 0 ? 0.4F : -0.4F);
+    moving.mps = 2.0F;
+    estimator.step(offset, {0.0F, 0.0F, kGravity + bump}, kDt, moving);
+  }
+  check_near(estimator.output().lean_deg, 0.0F, 0.5F,
+             "restored bias keeps Lean level while moving");
+}
+
 int main() {
   test_static_tilt();
   test_pitch_is_nose_up_positive();
@@ -456,6 +641,7 @@ int main() {
   test_no_speed_straight_holds_zero();
   test_bias_is_frozen_while_moving();
   test_bias_learns_only_when_static();
+  test_large_gyro_offset_is_learned_at_rest();
   test_saturation_flag();
   test_stale_speed_disables_kinematic();
   test_static_capture_tolerates_zero_g_offset();
@@ -466,6 +652,12 @@ int main() {
   test_lever_arm_is_compensated();
   test_rmount_removes_bracket_lean();
   test_quality_is_halved_without_calibration();
+  test_recalibration_measures_afresh();
+  test_capture_keeps_the_basis_orthonormal();
+  test_uncalibrated_flat_screen_reads_level();
+  test_first_stillness_seeds_the_bias();
+  test_bias_survives_a_new_mount();
+  test_restored_bias_holds_from_the_first_sample();
 
   if (failures != 0) {
     std::cerr << failures << " lean_estimator checks failed\n";
