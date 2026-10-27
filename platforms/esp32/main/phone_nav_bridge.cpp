@@ -1303,8 +1303,21 @@ void PhoneNavBridge::render_pending() {
   const bool media = (requested & RenderMedia) != 0U;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
-    if (navigation || motion) {
+    if (navigation) {
       render_snapshot_ = snapshot_;
+    } else if (motion) {
+      // A motion frame needs only what on_imu_sample() writes. Every other
+      // writer requests RenderNavigation, except a completed RouteGeometry,
+      // which waits for the NavigationSnapshot queued right behind it (see
+      // consume_geometry). The rest of render_snapshot_ stays the last
+      // navigation frame's, so the 8 KB snapshot is not copied under the lock
+      // the IMU and BLE tasks wait on, 40 times a second.
+      render_snapshot_.heading_deg = snapshot_.heading_deg;
+      render_snapshot_.has_attitude = snapshot_.has_attitude;
+      render_snapshot_.lean_deg = snapshot_.lean_deg;
+      render_snapshot_.pitch_deg = snapshot_.pitch_deg;
+      render_snapshot_.longitudinal_g = snapshot_.longitudinal_g;
+      render_snapshot_.lateral_g = snapshot_.lateral_g;
     }
     if (navigation) {
       render_phone_connection_ = ui_phone_connection_;
@@ -1330,8 +1343,10 @@ void PhoneNavBridge::render_pending() {
   // Projection is the expensive part of a motion frame (hundreds of map
   // points and trigonometry), but it does not call LVGL. Keep it outside the
   // display mutex so the LVGL worker can finish the previous flush in parallel.
-  if (navigation || motion) {
+  if (navigation) {
     presenter_.update(render_snapshot_);
+  } else if (motion) {
+    presenter_.update_motion(render_snapshot_);
   }
 
   // The BLE worker has already returned before this point in firmware. The
