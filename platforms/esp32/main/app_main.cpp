@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "esp_heap_caps.h"  // HEAPPROBE
+#define HEAPPROBE(label) ESP_LOGW("heapprobe", "%-14s free %u min %u largest %u", label, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))  // HEAPPROBE
 #include "ams_client_nimble.h"
 #include "ble_nav_transport_nimble.h"
 #include "bsp/esp-bsp.h"
@@ -163,6 +165,10 @@ void log_tasks() {
   log_task_entry("moto_demo", g_task_demo);
   log_task_entry("moto_power", g_task_power);
   log_task_entry("moto_current", xTaskGetCurrentTaskHandle());
+  log_task_entry("nimble_host", xTaskGetHandle("nimble_host"));  // HEAPPROBE
+  log_task_entry("moto_ble_rx", xTaskGetHandle("moto_ble_rx"));  // HEAPPROBE
+  log_task_entry("btController", xTaskGetHandle("btController"));  // HEAPPROBE
+  ESP_LOGW("heapprobe", "internal free %u min %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));  // HEAPPROBE
   ESP_LOGI(kTag, "free heap: internal %u B, PSRAM %u B",
            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
@@ -901,6 +907,8 @@ extern "C" void app_main(void) {
     }
   }
 
+  HEAPPROBE("before_board");  // HEAPPROBE
+  heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
     ESP_LOGE(kTag, "board initialization stopped before shared UI startup: %s",
@@ -939,6 +947,7 @@ extern "C" void app_main(void) {
   // panel is still hidden, then reveal it.  This removes the white frame that
   // used to leak from LVGL's default startup screen.
   lv_refr_now(display);
+  HEAPPROBE("after_board");  // HEAPPROBE
   const esp_err_t reveal_result = board_port_reveal_display();
   if (reveal_result != ESP_OK) {
     ESP_LOGE(kTag, "could not reveal boot animation: %s",
@@ -963,6 +972,7 @@ extern "C" void app_main(void) {
   // The tree reset clears the theme and the building visibility, so the boot
   // settings are applied again after create(); the boot screen used a copy of
   // the same settings before the tree existed.
+  HEAPPROBE("before_ui");  // HEAPPROBE
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
   static PhoneNavBridge phone_bridge(presenter);
@@ -985,6 +995,7 @@ extern "C" void app_main(void) {
   lv_refr_now(display);
   board_port_unlock();
 
+  HEAPPROBE("after_ui");  // HEAPPROBE
   if (!phone_bridge.start_renderer()) {
     ESP_LOGE(kTag, "UI renderer startup failed; BLE was not started");
     vTaskDelete(nullptr);
@@ -1006,12 +1017,14 @@ extern "C" void app_main(void) {
       &phone_bridge);
   phone_bridge.set_music_key_handler(AmsClient::key_handler, &ams_client);
   transport.set_gap_observer(AmsClient::gap_observer, &ams_client);
+  HEAPPROBE("before_ble");  // HEAPPROBE
   const esp_err_t ble_result = transport.start();
   if (ble_result != ESP_OK) {
     ESP_LOGE(kTag, "BLE startup failed; display remains in offline mode: %s",
              esp_err_to_name(ble_result));
   }
 
+  HEAPPROBE("after_ble");  // HEAPPROBE
   static MotionHeadingSensor motion_sensor;
   // Restore the captured bracket before the sensor task starts: every sample
   // is mapped through this basis, so applying it later would mix frames.
@@ -1034,6 +1047,7 @@ extern "C" void app_main(void) {
   if (const esp_app_desc_t* desc = esp_app_get_description()) {
     std::memcpy(&session_info.firmware_hash, desc->app_elf_sha256, 4);
   }
+  HEAPPROBE("before_tlog");  // HEAPPROBE
   tlog.begin(session_info);
   phone_bridge.set_speed_listener(
       [](const moto::motion::SpeedFix& fix, void* context) {
@@ -1045,8 +1059,10 @@ extern "C" void app_main(void) {
   motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
   moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,
                                             &motion_sensor);
+  HEAPPROBE("before_motion");  // HEAPPROBE
   const esp_err_t motion_result = motion_sensor.start(update_motion_heading,
                                                       &phone_bridge);
+  HEAPPROBE("after_motion");  // HEAPPROBE
   if (motion_result != ESP_OK) {
     ESP_LOGW(kTag, "QMI8658 heading assist could not start: %s",
              esp_err_to_name(motion_result));
@@ -1061,6 +1077,7 @@ extern "C" void app_main(void) {
     }
   }
 
+  HEAPPROBE("after_cmd_tasks");  // HEAPPROBE
   // Demo generation fills the retained snapshot in place, but geometry and
   // LVGL projection still use deeper C++ call frames than a trivial task.
   if (xTaskCreate(demo_tick_task, "moto_demo", 6'144, &phone_bridge, 2,
@@ -1071,6 +1088,9 @@ extern "C" void app_main(void) {
                   &g_task_power) != pdPASS) {
     ESP_LOGW(kTag, "PWR long-hold task could not start");
   }
+  HEAPPROBE("after_tasks");  // HEAPPROBE
+  ESP_LOGW("heapprobe", "main stack free %u B", (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));  // HEAPPROBE
+  heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE
 
   ESP_LOGI(kTag,
            "iPhone BLE + QMI heading -> NavPresenter -> shared LVGL running");
