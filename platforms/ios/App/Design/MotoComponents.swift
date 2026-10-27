@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Hairlines and panels
 
@@ -137,11 +138,26 @@ struct MotoPrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(.body, weight: .semibold))
+            .font(.system(.body, weight: .bold))
             .foregroundStyle(palette.onAccent)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .background(configuration.isPressed ? palette.accent.opacity(0.82) : palette.accent)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            // The plate darkens and shrinks while held: at arm's length on the
+            // bars, a 12% opacity change is invisible, a 4% scale step and a
+            // full stop of brightness are not.
+            .background(configuration.isPressed ? palette.accent.opacity(0.7) : palette.accent)
+            .overlay(
+                Rectangle().strokeBorder(palette.onAccent.opacity(configuration.isPressed ? 0.9 : 0),
+                                         lineWidth: MotoMetrics.hairline * 2)
+            )
+            .brightness(configuration.isPressed ? -0.12 : 0)
+            .scaleEffect(configuration.isPressed ? 0.955 : 1)
+            .animation(.spring(response: 0.16, dampingFraction: 0.5),
+                       value: configuration.isPressed)
             .contentShape(Rectangle())
+            .onChange(of: configuration.isPressed) { _, pressed in
+                guard pressed else { return }
+                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            }
     }
 }
 

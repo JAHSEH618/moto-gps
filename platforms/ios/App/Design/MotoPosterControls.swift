@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Band plate
 
@@ -214,7 +215,7 @@ struct MotoBandButton: View {
                 .padding(.vertical, MotoMetrics.s2)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MotoBandPressStyle())
         .accessibilityIdentifier(identifier)
     }
 }
@@ -233,8 +234,24 @@ struct MotoHeaderButton: View {
                 .padding(.vertical, MotoMetrics.s2)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MotoBandPressStyle())
         .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Press feedback for the band's text actions. They sit on the cover gutter, so
+/// the tap shows as a squeeze and a dim — no new surface — plus one light tick.
+struct MotoBandPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .opacity(configuration.isPressed ? 0.5 : 1)
+            .animation(.spring(response: 0.15, dampingFraction: 0.55),
+                       value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                guard pressed else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
     }
 }
 

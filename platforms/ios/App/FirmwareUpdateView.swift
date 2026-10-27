@@ -40,7 +40,7 @@ struct FirmwareUpdateView: View {
             }
         ) {
             checkSection
-            if let release, isUpdateAvailable {
+            if let release, isUpdateAvailable, model.deviceSupportsOta {
                 updateSection(release)
             }
         }
@@ -87,14 +87,26 @@ struct FirmwareUpdateView: View {
                     }
                 }
             }
-            MotoBandButton("检查更新", identifier: "firmware-check-button") {
+            Button("检查更新") {
                 Task { await loadRelease() }
             }
+            .buttonStyle(MotoPrimaryButtonStyle())
             .disabled(isLoadingRelease)
             .opacity(isLoadingRelease ? 0.5 : 1)
+            .accessibilityIdentifier("firmware-check-button")
             if let releaseMessage {
                 MotoProse(text: releaseMessage, tone: .muted)
                     .accessibilityIdentifier("firmware-release-message")
+            }
+            // A round screen flashed before the OTA capability landed cannot
+            // be updated over the hotspot at all, so say why instead of
+            // offering a button that would be refused.
+            if model.deviceReady && !model.deviceSupportsOta {
+                MotoProse(
+                    text: "圆屏当前固件不支持 OTA，需要先用 USB 刷一次带 OTA 的固件，之后这一页才能用。",
+                    tone: .muted
+                )
+                .accessibilityIdentifier("firmware-ota-unsupported")
             }
             MotoProse(text: checkCaption, tone: .muted)
         }
@@ -123,11 +135,13 @@ struct FirmwareUpdateView: View {
                     }
                 }
             }
-            MotoBandButton("更新圆屏", identifier: "firmware-update-button") {
+            Button("更新圆屏") {
                 startUpdate(release)
             }
+            .buttonStyle(MotoPrimaryButtonStyle())
             .disabled(!canUpdate)
             .opacity(canUpdate ? 1 : 0.5)
+            .accessibilityIdentifier("firmware-update-button")
             if let message = model.firmwareUpdate?.message ?? formError {
                 MotoProse(text: message, tone: .muted)
                     .accessibilityIdentifier("firmware-message")

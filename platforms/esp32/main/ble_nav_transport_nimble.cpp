@@ -5,6 +5,7 @@
 
 #include "ble_event_filter.hpp"
 #include "connection_epoch_gate.hpp"
+#include "device_capabilities.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -627,24 +628,17 @@ void BleNavTransport::send_connection_status(
   status.state = state;
   status.minimum_version = moto::ble::kProtocolVersion;
   status.maximum_version = moto::ble::kProtocolVersion;
-  status.capabilities = moto::ble::CapabilityNavigation |
-                        moto::ble::CapabilityRouteGeometry |
-                        moto::ble::CapabilityTraffic |
-                        moto::ble::CapabilityMediaState |
-                        moto::ble::CapabilityTouchCommands |
-                        moto::ble::CapabilityMusicCommands |
-                        moto::ble::CapabilityCommandAck |
-                        moto::ble::CapabilityMapScene |
-                        moto::ble::CapabilityAttitudeTelemetry |
-                        moto::ble::CapabilityHomeLocation |
-                        moto::ble::CapabilityDeviceSettings |
-                        moto::ble::CapabilityCompassHeading |
-                        moto::ble::CapabilityGnssInput |
-                        moto::ble::CapabilityWifiHotspot;
+  status.capabilities = moto::esp32::kDeviceCapabilities;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(negotiated_frame_size());
   status.heartbeat_interval_ms = 1'000;
+  // One line per handshake: the app gates whole screens on these bits, so the
+  // log is the only place to see what the phone was actually told.
+  ESP_LOGI(kTag, "handshake %s caps=0x%08x frame=%u",
+           state == moto::ble::ConnectionState::Ready ? "ready" : "starting",
+           static_cast<unsigned>(status.capabilities),
+           static_cast<unsigned>(status.max_frame_size));
   send_message(moto::ble::Message{status}, moto::ble::Urgent);
 }
 
