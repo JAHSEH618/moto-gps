@@ -1,0 +1,8 @@
+# Release overlay, applied on top of sdkconfig.defaults:
+#   idf.py -C platforms/esp32 -B platforms/esp32/build-release \
+#     -DSDKCONFIG=build-release/sdkconfig \
+#     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
+# The partition table is shared with the development build.
+
+# No telemetry recorder: the tlog partition is left untouched.
+CONFIG_MOTO_TLOG_DISABLE=y

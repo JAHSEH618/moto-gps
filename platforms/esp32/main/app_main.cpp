@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "esp_heap_caps.h"  // HEAPPROBE
+#include "sdkconfig.h"
 #define HEAPPROBE(label) ESP_LOGW("heapprobe", "%-14s free %u min %u largest %u", label, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))  // HEAPPROBE
 #include "ams_client_nimble.h"
 #include "ble_nav_transport_nimble.h"
@@ -42,8 +43,14 @@
 namespace {
 constexpr char kTag[] = "moto_gps";
 
-// Development recorder. Absent when the tlog partition is missing or its
-// above-16-MB self-test failed; every append is then a no-op.
+// Development recorder. Absent when the tlog partition is missing, its
+// above-16-MB self-test failed, or the build sets CONFIG_MOTO_TLOG_DISABLE; every
+// append is then a no-op.
+#ifdef CONFIG_MOTO_TLOG_DISABLE
+constexpr bool kTlogEnabled = false;
+#else
+constexpr bool kTlogEnabled = true;
+#endif
 static moto::device::TlogLogger tlog;
 static bool g_calibration_unverified = true;
 static MotionHeadingSensor* g_sensor = nullptr;
@@ -372,6 +379,8 @@ void serial_command_task(void* context) {
       ESP_LOGI(kTag, "FIFO enabled for A/B; restarting acquisition");
     } else if (std::strcmp(line, "sys tasks") == 0) {
       log_tasks();
+    } else if (std::strcmp(line, "tlog clear") == 0 && !kTlogEnabled) {
+      ESP_LOGW(kTag, "tlog disabled in this build; nothing to clear");
     } else if (std::strcmp(line, "tlog clear") == 0) {
       // Deferred erase: write the flag and reboot. app_main erases the 14 MB
       // partition before the display/BLE/IMU tasks exist, because the erase
@@ -968,7 +977,7 @@ extern "C" void app_main(void) {
              "screen unlit for %llu min (limit 360); clearing tlog",
              static_cast<unsigned long long>(unlit_us / 60'000'000ULL));
   }
-  if (requested_clear || unlit_clear) {
+  if (kTlogEnabled && (requested_clear || unlit_clear)) {
     ESP_LOGW(kTag, "tlog clear requested; erasing the 14 MB partition");
     if (tlog.erase_all()) {
       if (requested_clear) moto::device::clear_tlog_clear_request();

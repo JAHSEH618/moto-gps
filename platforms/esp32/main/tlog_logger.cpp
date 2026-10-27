@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "esp_partition.h"
 #include "esp_random.h"
 #include "flash_guard.hpp"
@@ -211,6 +212,9 @@ bool TlogLogger::run_selftest() {
 }
 
 bool TlogLogger::erase_all() {
+#ifdef CONFIG_MOTO_TLOG_DISABLE
+  return false;
+#else
   if (!ensure_partition()) return false;
   flash_guard_init();
   // Erase in 1 MiB chunks so the serial log shows progress and a partial
@@ -243,9 +247,16 @@ bool TlogLogger::erase_all() {
   full_ = false;
   dirty_ = false;
   return true;
+#endif
 }
 
 bool TlogLogger::begin(const TlogSessionInfo& session) {
+#ifdef CONFIG_MOTO_TLOG_DISABLE
+  // Release build: leave the partition alone, so every append is a no-op.
+  (void)session;
+  ESP_LOGI(kTag, "tlog disabled in this build (CONFIG_MOTO_TLOG_DISABLE)");
+  return false;
+#else
   flash_guard_init();
   session_ = session;
   if (!ensure_partition()) return false;
@@ -284,6 +295,7 @@ bool TlogLogger::begin(const TlogSessionInfo& session) {
            static_cast<unsigned>(session_.odr_hz),
            static_cast<unsigned>(session_.sample_hz));
   return true;
+#endif
 }
 
 void TlogLogger::append(std::uint64_t now_ms, const RawImuSample& raw,

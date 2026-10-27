@@ -31,6 +31,8 @@ class TlogLogger {
   // display/BLE/IMU tasks exist, after `tlog clear` set the deferred flag;
   // the erase stalls the flash cache for seconds and must never run mid-ride.
   bool erase_all();
+  // Opens the partition for recording. With CONFIG_MOTO_TLOG_DISABLE (release) it
+  // returns false without touching flash, and erase_all() does the same.
   bool begin(const TlogSessionInfo& session);
   bool ready() const { return ready_; }
   bool full() const { return full_; }

@@ -141,7 +141,22 @@ build_esp32() {
     return 1
   fi
   # export.sh is written for bash; sourcing it from zsh leaves idf.py off PATH.
-  bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 build"
+  bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 build" || return 1
+  # Release overlay (CONFIG_MOTO_TLOG_DISABLE=y) in its own build dir, so the
+  # disabled branches keep compiling. A saved sdkconfig wins over the
+  # defaults files and a Kconfig edit does not trigger a reconfigure, so the
+  # release config is regenerated every time and then checked.
+  rm -f platforms/esp32/build-release/sdkconfig
+  bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 \
+    -B platforms/esp32/build-release \
+    -DSDKCONFIG=build-release/sdkconfig \
+    -DSDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.release' \
+    reconfigure build" || return 1
+  if ! grep -q '^#define CONFIG_MOTO_TLOG_DISABLE 1' \
+      platforms/esp32/build-release/config/sdkconfig.h; then
+    echo "release build does not have CONFIG_MOTO_TLOG_DISABLE set"
+    return 1
+  fi
 }
 
 verify_app_size() {
@@ -151,13 +166,14 @@ verify_app_size() {
 step_run "todo log" verify_todo_log
 step_run "native build and tests" build_native
 step_run "Swift package tests" test_swift
-step_run "app size gate" verify_app_size
 if [[ "$run_ios" == "1" ]]; then
   step_run "iOS app build" build_ios
 fi
 if [[ "$run_esp32" == "1" ]]; then
   step_run "ESP32 firmware build" build_esp32
 fi
+# After the firmware build, so the gate measures the image just built.
+step_run "app size gate" verify_app_size
 
 printf '\n==> summary\n'
 for index in "${!names[@]}"; do
