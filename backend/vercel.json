@@ -13,5 +13,37 @@
       "source": "/api/v1/map/tiles/:z/:x/:y",
       "destination": "/api/v1/map/tiles?z=:z&x=:x&y=:y"
     }
+  ],
+  "headers": [
+    {
+      "source": "/firmware/latest.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=60, stale-while-revalidate=300"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/json; charset=utf-8"
+        }
+      ]
+    },
+    {
+      "source": "/firmware/(.*)\\.bin",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/octet-stream"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=60, must-revalidate"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"moto-gps.bin\""
+        }
+      ]
+    }
   ]
 }

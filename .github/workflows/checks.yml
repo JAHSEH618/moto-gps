@@ -38,6 +38,8 @@ jobs:
         run: |
           npm ci --prefix backend
           npm --prefix backend test
+      - name: Verify the published OTA image and manifest
+        run: node scripts/publish_firmware.mjs --check
       - name: Verify public map fixtures
         run: |
           node scripts/generate_jinan_demo_fixture.mjs --check

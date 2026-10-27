@@ -39,7 +39,8 @@ backend/
   lib/vercel-handler.js         adapter: feeds the Function request to one gateway instance
   lib/vercel-app.js             builds provider / map / limiter identity from the environment
   lib/memory-storage.js         in-memory tile cache (same async storage contract as disk and R2)
-  vercel.json                   region, duration, tile rewrite
+  public/firmware/              OTA image and latest.json (Vercel static hosting)
+  vercel.json                   region, duration, tile rewrite, firmware cache headers
   vercel/dev-server.js          local stand-in, no Vercel account needed
 ```
 
@@ -182,7 +183,42 @@ dig +short doupaw.site                                  # Vercel addresses, not 
 
 The ESP32 firmware needs no change.
 
-## 6. Known limitations
+## 6. Firmware OTA hosting
+
+`backend/public/` is Vercel's static root, so the OTA image and its manifest need no Function:
+
+```text
+https://doupaw.site/firmware/moto-gps.bin  ESP32 app image
+https://doupaw.site/firmware/latest.json   version, URL, SHA-256, size
+```
+
+Publish from the repository root:
+
+```sh
+node scripts/publish_firmware.mjs \
+  --bin=platforms/esp32/build/moto_gps_esp32.bin
+node scripts/publish_firmware.mjs --check
+cd backend && npx vercel --prod
+```
+
+The script accepts only 1 MiB–7 MiB images (the OTA slot), computes the SHA-256, and writes
+both `moto-gps.bin` and `latest.json` into `backend/public/firmware/`. The repository ignores
+`*.bin` by default; this directory carries an explicit exception so a Git deployment uploads
+the file. `--check` catches a manifest that is behind the image, in CI or before a release.
+
+Verify:
+
+```sh
+curl -sS https://doupaw.site/firmware/latest.json
+curl -sSI https://doupaw.site/firmware/moto-gps.bin   # 200 + application/octet-stream
+```
+
+The app's 05 Firmware → "Get latest from doupaw.site" reads the manifest and fills the URL and
+digest. The round screen downloads over the phone hotspot with HTTPS, verifies SHA-256, and only
+then switches the boot partition. The manifest is cached for 60 s; the image is revalidated after
+60 s so a fresh release does not stay hidden behind an old edge copy.
+
+## 7. Known limitations
 
 - **No shared cache.** Tiles live in one warm instance; a cold instance re-reads the PMTiles source.
   A ride keeps one instance busy, so the first tile is slow and later ones are fast; a new area or a
@@ -201,7 +237,7 @@ The ESP32 firmware needs no change.
 - **Hobby is for personal, non-commercial use.** Concurrency, duration and bandwidth limits follow the
   Vercel plan page.
 
-## 7. Rollback
+## 8. Rollback
 
 Change the in-app gateway address back to the previous value. The Node, Workers and Vercel hosts can
 run side by side without affecting each other.

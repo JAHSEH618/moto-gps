@@ -34,6 +34,9 @@ backups/
 *.bin
 *.elf
 *.map
+# The OTA image is served by Vercel from the backend's static tree. It is the
+# one binary that has to be tracked for a Git deployment to carry it.
+!backend/public/firmware/*.bin
 
 # Local Cloudflare emulator state (also when tests run from the repository root)
 .wrangler/

@@ -37,7 +37,8 @@ backend/
   lib/vercel-handler.js         适配器：把 Function 请求喂给同一个网关实例
   lib/vercel-app.js             按环境变量组装 provider / 地图 / 限流来源
   lib/memory-storage.js         内存瓦片缓存（实现与磁盘、R2 相同的异步存储契约）
-  vercel.json                   区域、时长、瓦片 rewrite
+  public/firmware/              OTA 镜像与 latest.json（Vercel 静态托管）
+  vercel.json                   区域、时长、瓦片 rewrite、固件缓存头
   vercel/dev-server.js          本地预演，不需要 Vercel 账号
 ```
 
@@ -186,7 +187,41 @@ dig +short doupaw.site                                  # Vercel 的地址，不
 
 ESP32 固件不需要改。
 
-## 6. 已知限制
+## 6. 固件 OTA 托管
+
+`backend/public/` 是 Vercel 的静态站点根目录，所以 OTA 镜像和清单不需要再写一个
+Function：
+
+```text
+https://doupaw.site/firmware/moto-gps.bin   ESP32 app 镜像
+https://doupaw.site/firmware/latest.json   版本、URL、SHA-256、字节数
+```
+
+发布（在仓库根目录）：
+
+```sh
+node scripts/publish_firmware.mjs   --bin=platforms/esp32/build/moto_gps_esp32.bin
+node scripts/publish_firmware.mjs --check
+cd backend && npx vercel --prod
+```
+
+脚本只接受 1 MiB–7 MiB 的镜像（与 OTA 分区一致），计算 SHA-256，并把同一个
+`moto-gps.bin` 与 `latest.json` 写进 `backend/public/firmware/`。仓库的 `.gitignore`
+默认忽略 `*.bin`，这个目录有显式例外，所以 Vercel 从 Git 部署时拿得到文件。
+`--check` 在 CI 或发布前确认清单没有落后于镜像。
+
+验收：
+
+```sh
+curl -sS https://doupaw.site/firmware/latest.json
+curl -sSI https://doupaw.site/firmware/moto-gps.bin   # 200 + application/octet-stream
+```
+
+App 的 05 固件 →「获取 doupaw.site 最新固件」会读取这个清单并填入下载地址与摘要；
+圆屏通过手机热点用 HTTPS 下载，校验 SHA-256 后才切换启动分区。清单缓存 60 秒，
+镜像同样 60 秒后重新验证，避免刚发布时长期命中旧文件。
+
+## 7. 已知限制
 
 - **没有共享缓存**：瓦片只在温实例内存里，冷实例要重新向 PMTiles 源取字节。
   骑行时同一实例基本都在服务，第一张瓦片慢、之后快；换区域或冷启动会再慢一次。
@@ -201,7 +236,7 @@ ESP32 固件不需要改。
   这是选 Vercel 的代价，不是可配置项。
 - **Hobby 计划仅限个人非商业用途**；并发、时长、带宽上限以 Vercel 计划页为准。
 
-## 7. 回滚
+## 8. 回滚
 
 App 的「网关设置」改回原地址即可切换回 Node 或 Workers 部署，
 服务端三套宿主可以并存，互不影响。
