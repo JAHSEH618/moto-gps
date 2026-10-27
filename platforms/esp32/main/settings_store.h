@@ -35,7 +35,7 @@ void mark_tlog_selftest_done();
 
 // `tlog clear` is a deferred erase: the serial command writes this flag and
 // reboots, and app_main erases the partition before the display, BLE and IMU
-// tasks start. Erasing 16 MB with the cache off while they run would stall
+// tasks start. Erasing 14 MB with the cache off while they run would stall
 // every one of them.
 void request_tlog_clear();
 bool tlog_clear_requested();

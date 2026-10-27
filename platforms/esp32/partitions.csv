@@ -4,8 +4,10 @@
 nvs,      data, nvs,      0x9000,   0x6000,
 otadata,  data, ota,      0xf000,   0x2000,
 phy_init, data, phy,      0x11000,  0x1000,
-app0,     app,  ota_0,    0x20000,  0x600000,
-app1,     app,  ota_1,    0x620000, 0x600000,
-assets,   data, spiffs,   0xc20000, 0x300000,
-coredump, data, coredump, 0xf20000, 0x10000,
-tlog,     data, 0x40,     0x1000000,0x1000000,
+# 7 MiB OTA slots: the WiFi stack took the 6 MiB slots past the 90% gate.
+# tlog gave up 2 MiB and still lies wholly above 16 MB.
+app0,     app,  ota_0,    0x20000,  0x700000,
+app1,     app,  ota_1,    0x720000, 0x700000,
+assets,   data, spiffs,   0xe20000, 0x300000,
+coredump, data, coredump, 0x1120000,0x10000,
+tlog,     data, 0x40,     0x1200000,0xe00000,

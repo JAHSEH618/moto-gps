@@ -48,7 +48,7 @@
 | 部件 | 规格 | 对设计的影响 |
 |---|---|---|
 | MCU | ESP32-S3R8，240 MHz，8 MB PSRAM | 估算器全 float |
-| Flash | 32 MB（`sdkconfig` 已设 32 MB；`flash_id` 待复核） | tlog 16 MB @ 0x1000000 |
+| Flash | 32 MB（`sdkconfig` 已设 32 MB；`flash_id` 待复核） | tlog 14 MB @ 0x1200000 |
 | 屏幕 | CO5300 466×466 AMOLED | 烧屏防护；亮度走面板命令 |
 | 触摸 | CST9217，I2C 0x5A，INT GPIO11 | 行驶中只保留翻页 |
 | IMU | QMI8658 0x6B，**无磁力计**，INT2 引脚**待原理图确认** | FIFO 用 STATUSINT 轮询，不依赖 INT2 |
@@ -318,7 +318,7 @@ band 速度表（12 点顺时针，v_max 可配）+ 刻度、限速标记、超�
 
 会话：首次 >10 km/h、TRACK 进入、静止 10 min、VBUS 消失 60 s。存储只用内部 flash。
 
-**分区（32 MB）**：nvs 0x9000/0x6000（24 KB，**保持**，`att.rmount` 存活）、otadata 0xf000/8 KB、phy_init 0x11000/4 KB、app0 0x20000/6 MB、app1 0x620000/6 MB、assets 0xc20000/3 MB、coredump 0xf20000/64 KB、tlog 0x1000000/16 MB。换表必须 USB 全片烧写；CI 门槛 6 MiB×90%。
+**分区（32 MB）**：nvs 0x9000/0x6000（24 KB，**保持**，`att.rmount` 存活）、otadata 0xf000/8 KB、phy_init 0x11000/4 KB、app0 0x20000/7 MB、app1 0x720000/7 MB、assets 0xe20000/3 MB、coredump 0x1120000/64 KB、tlog 0x1200000/14 MB（约 65 min @ 3.6 KB/s）。换表必须 USB 全片烧写；CI 门槛 7 MiB×90%。2026-10-27 为 WiFi 协议栈把 OTA 槽从 6 MB 扩到 7 MB，空间来自 tlog。
 
 **tlog 自描述**：4 KB 块（magic MTLG、版本、块序号、boot id、首样本序号、payload_len、CRC32）。块先写 payload、最后写头；崩溃最多丢一块，读时跳过坏块。每 boot 首块带 SessionMeta（固件 hash、模式/ODR、h、估算器 τ/门限、MountRecord）。**不使用 NVS 记追加位置**：开机二分查找第一个全 0xFF 扇区。写满即停，倾角页显示 `LOG FULL`。运行时不再擦除扇区（擦除会关缓存几十毫秒、卡住 IMU 总线）：一次中断的写会留下 `LOG DIRTY`，录制保持关闭，直到主机擦除分区（台架计划 §5）。导出 `parttool.py read_partition --name tlog` → `moto_replay`（跳过 0xFF 扇区、逐块 CRC、按会话输出）。
 

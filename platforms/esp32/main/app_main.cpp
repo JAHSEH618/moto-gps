@@ -373,7 +373,7 @@ void serial_command_task(void* context) {
     } else if (std::strcmp(line, "sys tasks") == 0) {
       log_tasks();
     } else if (std::strcmp(line, "tlog clear") == 0) {
-      // Deferred erase: write the flag and reboot. app_main erases the 16 MB
+      // Deferred erase: write the flag and reboot. app_main erases the 14 MB
       // partition before the display/BLE/IMU tasks exist, because the erase
       // stalls the flash cache for seconds.
       moto::device::request_tlog_clear();
@@ -969,7 +969,7 @@ extern "C" void app_main(void) {
              static_cast<unsigned long long>(unlit_us / 60'000'000ULL));
   }
   if (requested_clear || unlit_clear) {
-    ESP_LOGW(kTag, "tlog clear requested; erasing the 16 MB partition");
+    ESP_LOGW(kTag, "tlog clear requested; erasing the 14 MB partition");
     if (tlog.erase_all()) {
       if (requested_clear) moto::device::clear_tlog_clear_request();
       ESP_LOGI(kTag, "tlog partition erased; recording will start at 0x0");

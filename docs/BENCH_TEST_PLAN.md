@@ -34,8 +34,8 @@ esptool.py --chip esp32s3 -p <PORT> flash_id
 
 | 抓 | 期望 |
 |---|---|
-| 关键字 | `above-16-MB self-test passed at 0x1ff000` |
-| 关键字 | `recording at 0x0 of 0x1000000`（首块从 0 开始） |
+| 关键字 | `above-16-MB self-test passed at 0xdff000` |
+| 关键字 | `recording at 0x0 of 0xe00000`（首块从 0 开始） |
 | 通过 | 自测通过；若失败，记录 `above-16-MB ... failed` 并停止后续记录测试 |
 | 备注 | 失败时记录器禁用，`LOG FULL` 不出现；把完整日志发回 |
 
@@ -175,7 +175,7 @@ python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
   erase_partition --partition-name tlog
 ```
 
-或在串口输入 `tlog clear`：固件写 NVS 标志并重启，`app_main` 在显示、BLE、IMU 任务启动前擦除整个 16 MB 分区，然后从 0x0 重新录制。擦除期间不要断电；失败时标志保留，下次开机会重试。
+或在串口输入 `tlog clear`：固件写 NVS 标志并重启，`app_main` 在显示、BLE、IMU 任务启动前擦除整个 14 MB 分区，然后从 0x0 重新录制。擦除期间不要断电；失败时标志保留，下次开机会重试。
 
 **6 小时未点亮自动清理。** 屏幕点亮时把当前 RTC 计数写进 `RTC_DATA_ATTR`（每 60 s 刷新，进入深度睡眠前再写一次）。下一次启动时，如果该计数显示屏幕已熄灭超过 6 小时，`app_main` 会在显示、BLE、IMU 任务启动前擦除 tlog，并在串口打印 `screen unlit for ... min; clearing tlog`。`tlog status` 可查看当前未点亮时长和是否会触发清理。
 

@@ -19,7 +19,7 @@
 
 | 器件 / 接口 | 官方资料 | 本项目现状 |
 |---|---|---|
-| ESP32-S3，32 MB Flash，8 MB 八线 PSRAM | README | 已用：6 MB ×2 OTA 槽 + 16 MB tlog 分区 |
+| ESP32-S3，32 MB Flash，8 MB 八线 PSRAM | README | 已用：7 MB ×2 OTA 槽 + 14 MB tlog 分区（2026-10-27 为 WiFi 从 6 MB/16 MB 调整） |
 | CO5300 QSPI AMOLED 466×466 | README、BSP | 已用：自管初始化，TE 同步（GPIO13） |
 | CST9217 触摸 | BSP | 已用 |
 | QMI8658 六轴 | 原理图：`QMI_INT1` 网络标号接 **GPIO21** | 已用（轮询/锁存链路）；**中断脚未用** |
@@ -144,7 +144,7 @@ TODO 已定：“不依赖手机热点维持终端连接”。所以 **BLE = 控
 | 方案 | 谁连谁 | 适合 | iOS 限制 |
 |---|---|---|---|
 | **A. iPhone 个人热点（推荐）** | 圆屏作 STA 连手机热点 | 骑行中/出发前 OTA、地图批量、日志上传 | 热点只能用户手动开；iPhone 12 及以后要打开“最大兼容性”才是 2.4 GHz；无设备连接一段时间后热点会自动关闭（时长随 iOS 版本，需实测）；网段 `172.20.10.0/28`，手机是 `172.20.10.1` |
-| B. 圆屏 SoftAP | 手机加入圆屏的 AP | 车库/离线：下载 16 MB tlog、上传固件、网页设置 | App 内自动加入要 `NEHotspotConfiguration`（Hotspot 能力，个人免费签名大概率不可用）；免授权做法：圆屏显示 `WIFI:` 二维码，用系统相机扫码入网 |
+| B. 圆屏 SoftAP | 手机加入圆屏的 AP | 车库/离线：下载 14 MB tlog、上传固件、网页设置 | App 内自动加入要 `NEHotspotConfiguration`（Hotspot 能力，个人免费签名大概率不可用）；免授权做法：圆屏显示 `WIFI:` 二维码，用系统相机扫码入网 |
 | C. 家里 WiFi | 圆屏连家用路由 | 插电充电时自动检查 OTA、同步日志 | 无 |
 | D. ESP-NOW | 圆屏之间直连 | 组队骑行“队友雷达” | 不经过手机；必须固定信道，与连热点互斥 |
 
@@ -186,7 +186,7 @@ iOS 侧：`Info.plist` 加 `NSLocalNetworkUsageDescription`（首次访问局域
 |---|---|---|
 | W0 | 内存腾挪（§3.6）+ 上述 sdkconfig | 开 WiFi 后内部堆最低值仍有余量，BLE 连接与地图帧率不变 |
 | W1 | BLE 下发凭据、按需连热点、回报 IP/RSSI | 连上 iPhone 热点并在 App 显示 IP；断开后 BLE 不受影响 |
-| W2 | tlog HTTP 下载 + 会话令牌 | 16 MB 下载完成并通过 CRC/回放 |
+| W2 | tlog HTTP 下载 + 会话令牌 | 14 MB 下载完成并通过 CRC/回放 |
 | W3 | OTA + 回滚 + 哈希校验 | 故意刷坏的镜像能自动回滚 |
 | W4 | 地图批量 + 设备端取窗口 | BLE 地图消息量下降，罗盘/快照延迟不升 |
 | W5 | SoftAP + 二维码车库模式 | 相机扫码入网，网页可下载日志、上传固件 |
