@@ -6,10 +6,11 @@ dependencies:
   # motion course remains the long-term heading reference.
   waveshare/qmi8658:
     version: "^2.0.0"
-  # The official Waveshare 1.75C LVGL-9 example pins 9.5.0. Point the
-  # Component Manager at the repository submodule so Web and firmware compile
-  # the exact same checkout rather than resolving two independent copies.
+  # The official Waveshare 1.75C LVGL-9 example pins 9.5.0. The source is the
+  # repository submodule, registered as the project component `lvgl` in
+  # ../CMakeLists.txt; the Component Manager prefers it over the registry copy
+  # and never downloads one. An override_path would put this checkout's
+  # absolute path into dependencies.lock and break every other checkout.
   lvgl/lvgl:
     version: "9.5.0"
     public: true
-    override_path: "../../../third_party/lvgl"

@@ -265,11 +265,12 @@ dependencies:
       type: idf
     version: 5.5.5
   lvgl/lvgl:
+    component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
     dependencies: []
     source:
-      path: /Users/okonma/CodeSpace/moto/third_party/lvgl
-      type: local
-    version: '*'
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.5.0
   waveshare/esp32_s3_touch_amoled_1_75c:
     component_hash: a3d1cca48e6faed9118f7b679186e498d358052afc03794e4b602541c3e0e672
     dependencies:
@@ -340,6 +341,6 @@ direct_dependencies:
 - lvgl/lvgl
 - waveshare/esp32_s3_touch_amoled_1_75c
 - waveshare/qmi8658
-manifest_hash: 31db81f620fef57cee6a7345f662aa19687fec967fd8d6fa55b9f9db811e0e27
+manifest_hash: a7c5d805a057cb415821cc0ef5d71ef4f12343a8a9e5b066da58623c94adc77d
 target: esp32s3
 version: 2.0.0
