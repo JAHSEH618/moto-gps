@@ -170,6 +170,11 @@ class MotionHeadingFusion {
 
   [[nodiscard]] bool initialized() const noexcept { return initialized_; }
   [[nodiscard]] float heading_deg() const noexcept { return heading_deg_; }
+  // Parked with a phone reference, only the compass slew moves the heading,
+  // so it is already smoothed and the map only rotates under the rider.
+  [[nodiscard]] bool compass_driven() const noexcept {
+    return stationary_ && has_phone_reference_;
+  }
 
  private:
   static constexpr float kCourseAnchorSpeedMps = 1.5F;
@@ -177,9 +182,12 @@ class MotionHeadingFusion {
   static constexpr float kDeadbandDps = 0.65F;
   static constexpr float kCompassCorrection = 0.7F;
   static constexpr std::uint64_t kMaximumIntegrationGapMs = 160;
-  // 80 ms: a compass step is 92% drawn before the phone's next 5 Hz report,
-  // and the 40 Hz map frames show a turn rather than a jump.
-  static constexpr float kCompassSlewTauMs = 80.0F;
+  // 40 ms: a compass step is 99% drawn before the phone's next 5 Hz report,
+  // and still spans several 40 Hz map frames, so it shows as a turn rather
+  // than a jump. The steady lag behind a phone turning at a constant rate is
+  // about tau. This is the only smoothing the map gets while parked: the UI
+  // lands compass frames without its own blend (heading_presmoothed).
+  static constexpr float kCompassSlewTauMs = 40.0F;
   static constexpr float kCompassSettledDeg = 0.05F;
 
   // Runs on every parked IMU sample. The clock advances even without a
