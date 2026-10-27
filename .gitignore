@@ -27,6 +27,10 @@ platforms/ios/MotoGPS.xcodeproj/
 *.xcuserstate
 platforms/web/shell/runtime/
 backups/
+# The native C++ tests stay local. Anchored: with core.ignorecase a bare
+# `tests/` would also hide platforms/ios/Tests. CMake, scripts/verify.sh and
+# CI build and run them only where the directory exists.
+/tests/
 *.bin
 *.elf
 *.map
