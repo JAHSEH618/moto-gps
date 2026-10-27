@@ -100,6 +100,9 @@ final class AppModel: ObservableObject {
         bluetooth.compassHeadingDeg = { [weak liveLocation] in
             liveLocation?.compassHeadingDeg
         }
+        liveLocation.onCompassHeading = { [weak bluetooth] in
+            bluetooth?.compassHeadingDidChange()
+        }
         bluetooth.onDeviceCommand = { [weak self] command in
             guard let self else { return .failed }
             switch command.kind {

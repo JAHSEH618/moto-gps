@@ -19,6 +19,9 @@ final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
     /// session that ended; invalidation is handled where it is known, below.
     private static let maximumCompassAgeS: TimeInterval = 30
     private var compassReading: (headingDeg: Double, at: Date)?
+    /// Called for every calibrated compass reading. A parked handlebar's
+    /// heading is this reading, so it should not wait for the next fix.
+    var onCompassHeading: (@MainActor () -> Void)?
 
     /// The phone's compass heading in degrees from true north (magnetic
     /// north when the true heading is unavailable), if a calibrated reading
@@ -156,6 +159,7 @@ extension CoreLocationNavigationSource: @preconcurrency CLLocationManagerDelegat
             : newHeading.magneticHeading
         guard heading.isFinite, heading >= 0 else { return }
         compassReading = (heading, newHeading.timestamp)
+        onCompassHeading?()
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

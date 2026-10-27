@@ -273,6 +273,8 @@ final class ESP32BLECentral: NSObject {
     private var codec: MotoBLEProtocolCodec?
     private var handshake: BLEHandshakeGate?
     private var pendingNavigationState: MotoNavCoreSnapshot?
+    /// The newest snapshot this session sent, for a compass-only resend.
+    private var lastSentNavigationState: MotoNavCoreSnapshot?
     private var pendingMediaState: PhoneMediaState?
     private var pendingMapScene: OfflineMapSceneWindow?
     /// Newest saved home. Retained across a disconnect and re-sent after every
@@ -366,6 +368,20 @@ final class ESP32BLECentral: NSObject {
     }
 
     func sendNavigationSnapshot(_ state: MotoNavCoreSnapshot) {
+        pendingNavigationState = state
+        scheduleNavigationTransmit()
+    }
+
+    /// Parked, the handlebar's heading is the compass read when a snapshot is
+    /// encoded, and snapshots otherwise go out only on a fix or the 1 s tick:
+    /// a turned phone reached the dial a second late. Resend the last state
+    /// so the new reading rides the 5 Hz pacing instead.
+    func compassHeadingDidChange() {
+        guard peerCapabilities & Self.compassHeadingCapability != 0,
+              pendingNavigationState == nil,
+              let state = lastSentNavigationState,
+              state.speedMPS < Self.courseMinimumSpeedMPS || !state.headingDeg.isFinite
+        else { return }
         pendingNavigationState = state
         scheduleNavigationTransmit()
     }
@@ -774,6 +790,7 @@ final class ESP32BLECentral: NSObject {
         writePumpTask?.cancel()
         writePumpTask = nil
         lastNavigationTransmitAtMs = 0
+        lastSentNavigationState = nil
         lastWriteWithoutResponseAtMs = 0
         lastRouteGeometrySignature = nil
         mapSceneDelivery = BLEMapSceneDelivery()
@@ -953,6 +970,7 @@ final class ESP32BLECentral: NSObject {
                 lastRouteGeometrySignature = nil
             }
             lastNavigationTransmitAtMs = Self.monotonicMs()
+            lastSentNavigationState = state
             flushPendingMapScene()
         } catch {
             // Preserve the newest state for the next protocol-ready session.
