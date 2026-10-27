@@ -2,6 +2,17 @@ import Combine
 import Foundation
 import MotoNavigationCore
 
+extension FirmwareUpdateStatus {
+    /// The ObjC bridge class stays in the app target: the core package models
+    /// the wire result, the bridge knows the wire.
+    init(_ message: MotoBLEOtaStatus) {
+        self.init(state: State(rawValue: message.state) ?? .failed,
+                  failure: Failure(rawValue: message.failure) ?? .network,
+                  progressPercent: message.progressPercent,
+                  bytesReceived: message.bytesReceived)
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var navigation = MotoNavCoreBridge().snapshot
@@ -11,6 +22,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var wifiStatus: WifiHotspotStatus?
     @Published private(set) var wifiSave: WifiHotspotSave = .idle
     @Published private(set) var deviceSupportsWifi = false
+    /// What the round screen last said about a firmware update, and whether it
+    /// takes one at all.
+    @Published private(set) var firmwareUpdate: FirmwareUpdateStatus?
+    @Published private(set) var firmwareAccepted: Bool?
+    @Published private(set) var deviceSupportsOta = false
+    /// The URL the device is fetching while an update runs: the phone's own
+    /// hotspot server, or a release URL the rider pasted.
+    @Published private(set) var firmwareURL: String?
+    @Published private(set) var firmwareServing = false
     /// The hotspot name the rider last saved. Kept so the form opens filled
     /// in; the password is never stored on the phone.
     @Published private(set) var wifiHotspotName =
@@ -27,6 +47,10 @@ final class AppModel: ObservableObject {
     private var raceLogPublishedAt = Date.distantPast
     private var raceLogSavedAt = Date.distantPast
     private var raceLogPersists = true
+    /// The hotspot file server, held while an update runs.
+    private var firmwareFileServer: FirmwareFileServer?
+    @Published private(set) var firmwareServedBytes: UInt32 = 0
+    @Published private(set) var lastFirmwareFileName = ""
     @Published private(set) var navigationFailure: String?
     @Published private(set) var isNavigationActive = false
     @Published private(set) var isDemoActive = false
@@ -92,8 +116,14 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.device = snapshot
             self.deviceSupportsWifi = self.bluetooth.deviceSupportsWifiHotspot
+            self.deviceSupportsOta = self.bluetooth.deviceSupportsOta
             if case .connected = snapshot.connection { return }
             self.wifiStatus = nil
+            // An update that dies with the link is not "still running": the
+            // device reports Failed over BLE, and the server is no longer read.
+            if self.firmwareUpdate?.isRunning == true {
+                self.stopFirmwareServer()
+            }
             self.attitude.clear()
             self.publishRaceLog(force: true)
         }
@@ -117,6 +147,22 @@ final class AppModel: ObservableObject {
                 ipv4Address: status.ipv4Address,
                 rssiDbm: status.rssiDbm
             )
+        }
+        bluetooth.onOtaStatus = { [weak self] status in
+            guard let self else { return }
+            let value = FirmwareUpdateStatus(status)
+            self.firmwareUpdate = value
+            // Ready means the image is in place and the device is rebooting;
+            // Failed means nobody will read the file. Either way the hotspot
+            // server has done its job.
+            if value.state == .ready || value.state == .failed {
+                self.stopFirmwareServer()
+            }
+        }
+        bluetooth.onOtaCommandAck = { [weak self] status in
+            guard let self else { return }
+            self.firmwareAccepted = status == 0
+            if status != 0 { self.stopFirmwareServer() }
         }
         bluetooth.onWifiConfigAck = { [weak self] status in
             guard let self else { return }
@@ -666,6 +712,59 @@ final class AppModel: ObservableObject {
         wifiHotspotName = ""
         wifiSave = .waitingForDevice
         bluetooth.sendWifiConfig(ssid: nil, password: "")
+    }
+
+    // MARK: - Firmware update (W3)
+
+    /// Serves the picked image over the hotspot and asks the round screen to
+    /// fetch it. The image never crosses BLE, so the phone stays the server
+    /// until the device reports Ready or Failed.
+    func startFirmwareUpdate(image: Data, sha256Hex: String,
+                             fileName: String) throws {
+        let size = UInt32(clamping: image.count)
+        if let error = FirmwareUpdate.validate(
+            url: FirmwareUpdate.servingURL(host: "0.0.0.0"),
+            sizeBytes: size, sha256Hex: sha256Hex
+        ) { throw error }
+        let server = firmwareFileServer ?? FirmwareFileServer()
+        firmwareFileServer = server
+        let url = try server.start(image: image) { [weak self] sent in
+            // The device's own OtaStatus drives the bar; this only proves the
+            // phone actually served the bytes.
+            self?.firmwareServedBytes = sent
+        }
+        firmwareURL = url
+        firmwareServing = true
+        firmwareAccepted = nil
+        firmwareUpdate = FirmwareUpdateStatus(
+            state: .downloading, failure: .none, progressPercent: 0,
+            bytesReceived: 0)
+        lastFirmwareFileName = fileName
+        bluetooth.sendOtaCommand(url: url, sha256Hex: sha256Hex,
+                                 sizeBytes: size)
+    }
+
+    /// A release URL the rider pasted, e.g. a GitHub asset with its SHA-256.
+    func startFirmwareUpdate(url: String, sha256Hex: String,
+                             sizeBytes: UInt32) throws {
+        if let error = FirmwareUpdate.validate(url: url, sizeBytes: sizeBytes,
+                                               sha256Hex: sha256Hex) {
+            throw error
+        }
+        stopFirmwareServer()
+        firmwareURL = url
+        firmwareAccepted = nil
+        firmwareUpdate = FirmwareUpdateStatus(
+            state: .downloading, failure: .none, progressPercent: 0,
+            bytesReceived: 0)
+        bluetooth.sendOtaCommand(url: url, sha256Hex: sha256Hex,
+                                 sizeBytes: sizeBytes)
+    }
+
+    func stopFirmwareServer() {
+        firmwareFileServer?.stop()
+        firmwareFileServer = nil
+        firmwareServing = false
     }
 
     private func bind(_ runtime: SharedNavigationRuntime) {

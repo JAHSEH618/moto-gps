@@ -53,6 +53,10 @@ class WifiLink {
   void request_forget();
   void log_status();
 
+  // True while the station has an address. Read by the OTA worker, which
+  // waits for this before it fetches, and by nobody on the UI path.
+  [[nodiscard]] bool connected() const noexcept { return connected_.load(); }
+
  private:
   enum class Event : std::uint8_t {
     Up,
@@ -104,6 +108,7 @@ class WifiLink {
   char ssid_[moto::ble::kMaxWifiSsidBytes + 1]{};
   char psk_[moto::ble::kMaxWifiPskBytes + 1]{};
   std::atomic<bool> phone_wants_status_{false};
+  std::atomic<bool> connected_{false};
 
   // Worker task only from here down.
   moto::ble::WifiStatus status_{};

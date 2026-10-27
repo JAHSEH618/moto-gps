@@ -198,6 +198,8 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x19` | PerformanceRun | device→phone | every state change of the 0-100 clock and after each handshake; only to a phone that advertises bit13, no ACK |
 | `0x1A` | WifiConfig | phone→device | when the rider saves or forgets the hotspot; only to a device that advertises bit14, ACK_REQUESTED |
 | `0x1B` | WifiStatus | device→phone | WiFi state change, RSSI while connected, and after each handshake; only to a phone that advertises bit14, no ACK |
+| `0x1C` | OtaCommand | phone→device | when the rider starts an update; only to a device that advertises bit15, ACK_REQUESTED, encrypted and bonded link only |
+| `0x1D` | OtaStatus | device→phone | every state change, at most 2 Hz while downloading; only to a phone that advertises bit15, no ACK |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -223,7 +225,8 @@ device understands NavigationSnapshot's HeadingCompass flag; the phone sets that
 a peer that advertises this bit, because an older firmware rejects unknown flags), bit12 GNSS
 input (the device takes `0x18`), bit13 performance run (advertised by the phone: it shows the
 round screen's 0-100 results, so the device sends it `0x19`), bit14 WiFi hotspot (both ends: the
-device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`).
+device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`), bit15 OTA (both ends: the
+phone offers an image and takes `0x1D`; the device takes `0x1C` and reports `0x1D`).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -642,6 +645,49 @@ i8  rssi_dbm
 `failure` is non-zero exactly when Failed. After Failed the radio is already off again.
 The phone reaches the device at that address directly (the hotspot is `172.20.10.0/28`);
 no Bonjour is needed.
+
+### 6.17 OtaCommand (`0x1C`, phone→device, at most 238 bytes)
+
+Firmware update (WAVESHARE_OPTIMIZATION_PLAN §4.4, W3). The image **never crosses BLE**: the
+phone either serves the file over the hotspot it already shares with the round screen, or
+hands over a release URL and the device fetches it itself. Sent with ACK_REQUESTED, only to a
+device that advertises bit15, and accepted only on an **encrypted and bonded** link; anything
+else is answered `InvalidState` and not a byte is written.
+
+```text
+u8  revision
+u8  url_length           10..200
+u8[] url                  absolute http:// or https://, printable ASCII, no spaces, no NUL
+u8[32] sha256              SHA-256 of the whole image; all zero means the sender did not
+                          compute one and is refused
+u32 size_bytes            0 when not stated, otherwise 1 MiB..7 MiB (one OTA slot)
+```
+
+The device writes the idle OTA slot, verifies SHA-256 after the last byte, and only then points
+the bootloader at it and reboots. Development builds carry tlog; the release overlay
+(`sdkconfig.release`) turns it off, and both take the same OTA path. Once the new image is
+running, the firmware calls `esp_ota_mark_app_valid_cancel_rollback()` when a BLE handshake
+completes; if no handshake arrives, the next reset rolls back to the previous slot
+(`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`).
+
+### 6.18 OtaStatus (`0x1D`, device→phone, fixed 8 bytes)
+
+Sent on every state change and at most 2 Hz while downloading (only when the percentage moved
+by 2 or more). No ACK: the next status replaces a lost one.
+
+```text
+u8  revision
+u8  state                0 Idle, 1 Downloading, 2 Verifying, 3 Ready, 4 Failed
+u8  failure              0 None, 1 NoWifi, 2 NoCredentials, 3 BadUrl, 4 Network, 5 HashMismatch,
+                         6 ImageRejected, 7 NoMemory, 8 Busy, 9 TooLarge
+u8  progress_percent     0..100; 0 while the total is unknown
+u32 bytes_received        bytes written to the slot; zero while Idle
+```
+
+`failure` is non-zero exactly when Failed, and a Failed update has already discarded the slot
+(it cannot boot later). After Ready the device reboots within about a second: the phone treats
+that as a dropped link, not as a failure. Ready means the image is in place, not that the new
+version has run.
 
 ## 7. Display Snapshot to the shared NavSnapshot
 

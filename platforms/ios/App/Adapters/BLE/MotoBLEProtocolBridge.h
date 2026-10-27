@@ -189,6 +189,28 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) int8_t rssiDbm;
 @end
 
+/// The firmware image the round screen should fetch over the hotspot (message
+/// 0x1C). `sha256Hex` is the image's SHA-256 as 64 hex characters; the bridge
+/// converts it to the 32 wire bytes, so Swift never restates the layout.
+/// `sizeBytes == 0` means "not stated": the device learns the total from the
+/// response instead of refusing a mismatch.
+@interface MotoBLEOtaCommandInput : NSObject
+@property(nonatomic, copy) NSString *url;
+@property(nonatomic, copy) NSString *sha256Hex;
+@property(nonatomic) uint32_t sizeBytes;
+@end
+
+/// The round screen's update progress (message 0x1D). state: 0 idle,
+/// 1 downloading, 2 verifying, 3 ready, 4 failed. failure: 0 none, 1 no wifi,
+/// 2 no credentials, 3 bad url, 4 network, 5 hash mismatch, 6 image rejected,
+/// 7 out of memory, 8 busy, 9 too large.
+@interface MotoBLEOtaStatus : NSObject
+@property(nonatomic, readonly) uint8_t state;
+@property(nonatomic, readonly) uint8_t failure;
+@property(nonatomic, readonly) uint8_t progressPercent;
+@property(nonatomic, readonly) uint32_t bytesReceived;
+@end
+
 /// One successfully decoded transport message, or one valid partial/duplicate
 /// frame. Sequence and ACK metadata stay attached to the shared decoder output.
 @interface MotoBLEInboundMessage : NSObject
@@ -202,6 +224,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, nullable) MotoBLEAttitudeSample *attitudeSample;
 @property(nonatomic, readonly, nullable) MotoBLEPerformanceRun *performanceRun;
 @property(nonatomic, readonly, nullable) MotoBLEWifiStatus *wifiStatus;
+@property(nonatomic, readonly, nullable) MotoBLEOtaStatus *otaStatus;
 @property(nonatomic, readonly, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -272,6 +295,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSArray<NSData *> *)encodeWifiConfig:(MotoBLEWifiConfigInput *)config
                                            error:(NSError **)error
     NS_SWIFT_NAME(encodeWifiConfig(_:));
+
+/// Sent with AckRequested; `lastEncodedSequence` is the sequence the device's
+/// Ack will name. Refused (InvalidState) on a link that is not encrypted and
+/// bonded, and refused (InvalidState) while another update is running.
+- (nullable NSArray<NSData *> *)encodeOtaCommand:(MotoBLEOtaCommandInput *)command
+                                           error:(NSError **)error
+    NS_SWIFT_NAME(encodeOtaCommand(_:));
+
+/// Test hooks for the golden check: the shared OtaCommand encoder and the
+/// shared OtaStatus decoder, without restating either layout in Swift.
+- (nullable NSData *)encodeOtaCommandPayloadForTesting:(MotoBLEOtaCommandInput *)command
+                                                 error:(NSError **)error;
+- (nullable MotoBLEOtaStatus *)decodeOtaStatusPayloadForTesting:(NSData *)payload
+                                                          error:(NSError **)error;
 
 /// Test hooks for the golden check: the shared WifiConfig encoder and the
 /// shared WifiStatus decoder, without restating either layout in Swift.

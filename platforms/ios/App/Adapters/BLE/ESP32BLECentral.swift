@@ -190,6 +190,11 @@ final class ESP32BLECentral: NSObject {
     /// The device's Ack to the newest WifiConfig: 0 stored, 2 refused because
     /// the link is not bonded, 3 storage failed.
     var onWifiConfigAck: ((UInt8) -> Void)?
+    /// The device's update progress (OtaStatus 0x1D).
+    var onOtaStatus: ((MotoBLEOtaStatus) -> Void)?
+    /// The device's Ack to the newest OtaCommand: 0 accepted, 2 refused
+    /// (unbonded link, an update already running, an image that cannot fit).
+    var onOtaCommandAck: ((UInt8) -> Void)?
     /// The phone's current compass heading, read for every navigation
     /// snapshot sent while the bike is too slow for a GNSS course.
     var compassHeadingDeg: (() -> Double?)?
@@ -302,6 +307,9 @@ final class ESP32BLECentral: NSObject {
     /// keep a password it cannot read back from iOS anyway.
     private var pendingWifiConfig: MotoBLEWifiConfigInput?
     private var pendingWifiConfigSequence: UInt16?
+    /// The image the rider asked for, held until the device acknowledges it.
+    private var pendingOtaCommand: MotoBLEOtaCommandInput?
+    private var pendingOtaCommandSequence: UInt16?
     private var transportTeardown = BLETransportTeardown()
     private var transportTeardownInProgress: Bool { transportTeardown.isWaiting }
     private var transportTeardownTask: Task<Void, Never>?
@@ -454,6 +462,47 @@ final class ESP32BLECentral: NSObject {
     /// True once a handshaken device has said it takes WifiConfig.
     var deviceSupportsWifiHotspot: Bool {
         protocolReady && WifiHotspot.supports(capabilities: peerCapabilities)
+    }
+
+    /// True once a handshaken device has said it can take an OTA command.
+    var deviceSupportsOta: Bool {
+        protocolReady && FirmwareUpdate.supports(capabilities: peerCapabilities)
+    }
+
+    /// Hands the device a URL and the image's SHA-256. The image itself never
+    /// crosses BLE: the device fetches it over the hotspot.
+    func sendOtaCommand(url: String, sha256Hex: String, sizeBytes: UInt32) {
+        let input = MotoBLEOtaCommandInput()
+        input.url = url
+        input.sha256Hex = sha256Hex
+        input.sizeBytes = sizeBytes
+        pendingOtaCommand = input
+        pendingOtaCommandSequence = nil
+        flushPendingOtaCommand()
+    }
+
+    private func flushPendingOtaCommand() {
+        guard protocolReady,
+              let codec,
+              let command = pendingOtaCommand,
+              FirmwareUpdate.supports(capabilities: peerCapabilities)
+        else { return }
+        guard let frames = encodeDroppingFailure("ota command", {
+            try codec.encodeOtaCommand(command)
+        })
+        else {
+            pendingOtaCommand = nil
+            onOtaCommandAck?(3)
+            return
+        }
+        do {
+            try send(frames)
+            pendingOtaCommandSequence = codec.lastEncodedSequence
+            trace("ota command sent sequence=\(codec.lastEncodedSequence) size=\(command.sizeBytes)")
+        } catch {
+            trace("ota command send failed: \(error.localizedDescription)")
+            recoverFromTransportError(error.localizedDescription)
+        }
     }
 
     /// Hands the hotspot to the device now, or after the next handshake.
@@ -761,6 +810,7 @@ final class ESP32BLECentral: NSObject {
                 lastSentSettingsRevision = nil
                 flushPendingDeviceSettings()
                 flushPendingWifiConfig()
+                flushPendingOtaCommand()
             }
         } catch {
             recoverFromTransportError(error.localizedDescription)
@@ -857,8 +907,10 @@ final class ESP32BLECentral: NSObject {
         handshake = nil
         protocolReady = false
         peerCapabilities = 0
-        // An unacknowledged WifiConfig is sent again after the next handshake.
+        // An unacknowledged WifiConfig or OtaCommand is sent again after the
+        // next handshake.
         pendingWifiConfigSequence = nil
+        pendingOtaCommandSequence = nil
         lastValidDeviceFrameAtMs = 0
         deviceHeartbeatTimeoutMs = 5_000
         outboundFrames.removeAll()
@@ -1726,6 +1778,16 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                     onWifiConfigAck?(ack.status)
                     return
                 }
+                if let sequence = pendingOtaCommandSequence,
+                   ack.acknowledgedSequence == sequence {
+                    // Any answer ends this attempt: the device refused it for a
+                    // reason the phone cannot fix by sending it again.
+                    pendingOtaCommandSequence = nil
+                    pendingOtaCommand = nil
+                    trace("ota command acknowledged status=\(ack.status)")
+                    onOtaCommandAck?(ack.status)
+                    return
+                }
                 if mapSceneDelivery.acknowledge(sequence: ack.acknowledgedSequence,
                                                 status: ack.status) {
                     trace("map acknowledged sequence=\(ack.acknowledgedSequence) status=\(ack.status)")
@@ -1744,6 +1806,8 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                     onPerformanceRun?(run)
                 } else if let wifi = inbound.wifiStatus {
                     onWifiStatus?(wifi)
+                } else if let ota = inbound.otaStatus {
+                    onOtaStatus?(ota)
                 }
                 return
             }

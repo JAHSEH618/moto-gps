@@ -1041,3 +1041,53 @@ register reads have never seen a fitted cell.
 - **iOS.** Device sheet → 03 WiFi → 设置热点: SSID + password typed once, validated with the same rules, sent over the bonded link; the password is held in memory until the device Acks and is never stored on the phone (the SSID is, for the form). The screen shows state, IP and RSSI from WifiStatus. `NSLocalNetworkUsageDescription` added.
 - Verified: firmware builds; native 17/17 (`ble_protocol_tests` covers both messages); `swift test` passes (new `WifiHotspotTests`); iOS simulator build succeeds; new `BLEProtocolGoldenTests` pass on the simulator. `OnlineMapWireTests.testActualShanghaiGatewayTileReachesTheExistingBLESceneCodec` fails: it still asserts the old 24-road/16-building window that 24cca34 raised to 40/24, which this change does not touch (not re-run on the base commit).
 - **Not measured: runtime heap.** No board was attached. Board checks: internal free/min from HEAPPROBE `after_tasks` against 96/47 KiB, `wifi_link` lines at before up / started / connected / after down; join the iPhone hotspot with Maximize Compatibility on and see the IP in the app; BLE snapshots, AMS and touch unaffected while joined and after `wifi down`; a wrong password reports AuthFailed; an unbonded link is refused.
+
+## 2026-10-27T23:55:00+09:00 — W3 OTA: the image never crosses BLE
+
+- **Boot fix first.** The published HEAD did not boot on the board: `SPIRAM_RODATA` copied 4.3 MB of fonts into PSRAM, leaving 2.5 MB of heap where the board needs a 2 MiB LVGL pool plus two 434 KB full-height draw buffers. The second buffer failed to allocate and the CO5300 never registered. Rodata stays in flash now (`# CONFIG_SPIRAM_RODATA is not set`); only the 1.3 MB of instructions is copied, ~6.7 MB of PSRAM is free, and the board is back to 11–13 ms map frames with 83 KiB internal free. Shrinking the LVGL pool to 1 MiB also fits and is wrong: LVGL then spins inside `lv_draw_buf_create_ex` on the boot screen's first refresh and the task watchdog fires every 5 s. Measured on the board, both ways. `sdkconfig` was also stale (it predated the WiFi memory work), so it is regenerated from the defaults.
+- **Wire.** `OtaCommand` 0x1C (url ≤200 bytes, 32-byte SHA-256, size) and `OtaStatus` 0x1D (state, failure, percent, bytes) behind capability bit15 `CapabilityOta`; `AckStatus` Ack for the command, no Ack for the status. Codec refusals are pinned: no scheme, no digest, a size outside one 1 MiB..7 MiB slot, 200+ byte URL. Golden `ota_command.payload` / `ota_status.payload` regenerated with `--dump-golden` and checked from Swift, so both ends are pinned to one vector.
+- **Device.** `ota_update.{h,cpp}`: the worker is created on the first command (its 10 KiB stack is not worth keeping for a rider who never updates), asks the WiFi worker for the hotspot and polls for an address for 25 s, streams the body in 4 KiB pieces into the idle slot with `esp_ota_write` under `flash_guard`, hashes with mbedTLS as it goes, and only compares SHA-256 and calls `esp_ota_set_boot_partition` after the last byte. Every failure discards the slot with `esp_ota_abort`; the running image is untouched either way. `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, and the image is confirmed from the phone's `ConnectionStatus.Ready`, so a build that boots but cannot handshake rolls back on the next reset. Bench: `ota status`, `ota confirm`.
+- **Phone.** Device sheet 05 固件: pick a `.bin` from Files (SHA-256 via CryptoKit), or paste a release URL plus digest. The phone serves the picked file from `172.20.10.1:8123/moto-gps.bin` on the hotspot bridge address only (NWListener bound to that address), sends the URL and digest over the bonded link, and stops the server on Ready/Failed. `FirmwareUpdate` in the core package owns the capability bit, the URL/size/digest rules and the status wording; `FirmwareUpdateTests` covers them.
+- **Verified:** native 17/17 (new OTA codec checks), `swift test` 65/65, iOS app build, `build-for-testing` (AppTests compile), firmware builds at 0x5b2d00 (19% of the 7 MiB slot free), boots with `ota: ready; running app0 (state 2), target app1`, and the new app is installed on the iPhone Air.
+- **Not done:** no update has run end to end on the board. It needs the rider: iPhone hotspot on with "Maximize Compatibility", the hotspot saved in 03 WiFi, then a `.bin` picked in 05 固件. The expected device log is `ota: accepted …`, then `Downloading` percentages, `SHA-256` verify, and a reboot into app1 with rollback armed.
+
+## 2026-10-28T00:45:00+09:00 — PWR blank, an abortable launch clock, quieter page turns, hosted OTA
+
+**PWR short press** (DESIGN_V2 §2.5). A tap now blanks the panel and a second tap
+or a touch wakes it; the 3 s hold still requests software shutdown. The policy
+gained an explicit manual-off state: motion and a still-active route keep it
+dark, while touch/PWR clears it and restarts the 5/15 minute idle clocks. Waking
+from the 15-minute auto-off works on the first press because the toggle reads
+the panel's actual level, not the manual flag. `burnin toggle` covers the bench.
+New `burn_in_policy_tests` pin blank, motion, route hold, wake and force.
+
+**0-100 can stop.** The GTA page had no way out of RUNNING except reaching the
+target. It now ends a live run on a tap (`STOP`), a >5 km/h fall from the peak
+(`ABORT`), 30 s without the target (`TIME`), or 1.5 s at a standstill. The
+transition is reported as Armed so the phone's race log closes the run. An
+aborted attempt will not restart from a rolling 5 km/h; it needs a real 1.5 s
+standstill first. The render suite covers tap, drop and the no-immediate-restart
+rule.
+
+**Page turns.** The immediate cause was the wire, not the painter: a swipe
+changed the page locally, then a NavigationSnapshot already in flight carried
+the old page and flipped the screen back for a frame before the phone's echo
+arrived. `PhoneNavBridge` now holds the rider's page until the phone echoes it
+(2 s bound for an old phone), and a page change requests an immediate display
+refresh instead of waiting for the worker's next 25 ms tick. New bridge test:
+local change, stale snapshot, echo, then phone authority again.
+
+**OTA hosting.** `backend/public/firmware/` is the Vercel static tree:
+`https://doupaw.site/firmware/moto-gps.bin` and `latest.json`. The new
+`scripts/publish_firmware.mjs` copies a 1–7 MiB image, computes SHA-256 and
+writes the version/URL/size manifest; `--check` fails when the pair is stale.
+The iOS 05 Firmware sheet gained "获取 doupaw.site 最新固件", which reads the
+manifest and fills the URL and digest. `vercel.json` sets octet-stream and a
+60 s revalidating cache. Backend tests cover manifest/staleness and the App
+tests cover manifest decoding and rejection.
+
+**Verified:** native 18/18, backend 77/77, Swift 67/67, iOS simulator build,
+firmware image 0x5b3190 (19% of the 7 MiB slot free), published image
+5,976,464 B with SHA-256 `abb2abc8053d81c0414889c15b73ddbfbced2cf23cfe1207e6628f624dbd72a7`.
+**Not verified:** nothing ran on the board or a real iPhone; the PWR tap timing,
+page feel and an end-to-end OTA still need the rider.

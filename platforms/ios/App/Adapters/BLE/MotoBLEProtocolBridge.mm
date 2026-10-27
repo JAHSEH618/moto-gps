@@ -337,7 +337,10 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                         moto::ble::CapabilityPerformanceRun |
                         // Shows the device's WifiStatus (0x1B) on the
                         // Device -> WiFi screen.
-                        moto::ble::CapabilityWifiHotspot;
+                        moto::ble::CapabilityWifiHotspot |
+                        // Offers a firmware image (0x1C) and shows the device's
+                        // OtaStatus (0x1D) on the Device -> Firmware screen.
+                        moto::ble::CapabilityOta;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(storage->maximum_frame_size);
@@ -510,6 +513,19 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @implementation MotoBLEWifiStatus
 @end
 
+@implementation MotoBLEOtaCommandInput
+@end
+
+@interface MotoBLEOtaStatus ()
+@property(nonatomic, readwrite) uint8_t state;
+@property(nonatomic, readwrite) uint8_t failure;
+@property(nonatomic, readwrite) uint8_t progressPercent;
+@property(nonatomic, readwrite) uint32_t bytesReceived;
+@end
+
+@implementation MotoBLEOtaStatus
+@end
+
 namespace {
 
 MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
@@ -526,6 +542,39 @@ MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
           : @"";
   value.rssiDbm = status.rssi_dbm;
   return value;
+}
+
+MotoBLEOtaStatus *OtaStatusFromShared(const moto::ble::OtaStatus &status) {
+  MotoBLEOtaStatus *value = [[MotoBLEOtaStatus alloc] init];
+  value.state = static_cast<uint8_t>(status.state);
+  value.failure = static_cast<uint8_t>(status.failure);
+  value.progressPercent = status.progress_percent;
+  value.bytesReceived = status.bytes_received;
+  return value;
+}
+
+// The digest is 32 bytes on the wire and 64 hex characters everywhere a human
+// or a shell computes it. Parsed here so Swift never restates the layout.
+BOOL OtaCommandFromInput(MotoBLEOtaCommandInput *input,
+                         moto::ble::OtaCommand *command) {
+  if (command == nullptr) return NO;
+  command->url = Utf8String(input.url);
+  command->size_bytes = input.sizeBytes;
+  const std::string hex = Utf8String(input.sha256Hex);
+  if (hex.size() != moto::ble::kOtaSha256Bytes * 2U) return NO;
+  auto nibble = [](char character) -> int {
+    if (character >= '0' && character <= '9') return character - '0';
+    if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+    if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+    return -1;
+  };
+  for (std::size_t i = 0; i < moto::ble::kOtaSha256Bytes; ++i) {
+    const int high = nibble(hex[i * 2U]);
+    const int low = nibble(hex[i * 2U + 1U]);
+    if (high < 0 || low < 0) return NO;
+    command->sha256[i] = static_cast<std::uint8_t>((high << 4) | low);
+  }
+  return YES;
 }
 
 }  // namespace
@@ -549,6 +598,7 @@ MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
 @property(nonatomic, readwrite, nullable) MotoBLEAttitudeSample *attitudeSample;
 @property(nonatomic, readwrite, nullable) MotoBLEPerformanceRun *performanceRun;
 @property(nonatomic, readwrite, nullable) MotoBLEWifiStatus *wifiStatus;
+@property(nonatomic, readwrite, nullable) MotoBLEOtaStatus *otaStatus;
 @property(nonatomic, readwrite, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -757,6 +807,65 @@ MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
   return WifiStatusFromShared(*status);
 }
 
+- (NSArray<NSData *> *)encodeOtaCommand:(MotoBLEOtaCommandInput *)input
+                                  error:(NSError **)error {
+  auto *storage = static_cast<CodecStorage *>(_storage);
+  moto::ble::OtaCommand command;
+  if (!OtaCommandFromInput(input, &command)) {
+    if (error != nullptr) {
+      *error = [NSError errorWithDomain:kMotoBLEErrorDomain
+                                   code:4001
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"固件摘要必须是 64 位十六进制 SHA-256。"
+                               }];
+    }
+    return nil;
+  }
+  // Acked: the rider is told whether the device accepted the update, and a
+  // refusal (unbonded link, busy, image too large) must not look like success.
+  return EncodeMessage(storage, moto::ble::Message{command},
+                       moto::ble::AckRequested, error);
+}
+
+- (NSData *)encodeOtaCommandPayloadForTesting:(MotoBLEOtaCommandInput *)input
+                                        error:(NSError **)error {
+  moto::ble::OtaCommand command;
+  if (!OtaCommandFromInput(input, &command)) {
+    if (error != nullptr) {
+      *error = [NSError errorWithDomain:kMotoBLEErrorDomain
+                                   code:4001
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey :
+                                     @"固件摘要必须是 64 位十六进制 SHA-256。"
+                               }];
+    }
+    return nil;
+  }
+  const auto payload = moto::ble::encode_message(moto::ble::Message{command});
+  if (!payload.ok()) {
+    if (error != nullptr) *error = ProtocolError(payload.error, payload.offset);
+    return nil;
+  }
+  return [NSData dataWithBytes:payload.value.data() length:payload.value.size()];
+}
+
+- (MotoBLEOtaStatus *)decodeOtaStatusPayloadForTesting:(NSData *)payload
+                                                 error:(NSError **)error {
+  const auto decoded = moto::ble::decode_message(
+      moto::ble::MessageType::OtaStatus,
+      moto::ble::ByteView(static_cast<const std::uint8_t *>(payload.bytes),
+                          payload.length));
+  const auto *status =
+      decoded.ok() ? std::get_if<moto::ble::OtaStatus>(&decoded.value)
+                   : nullptr;
+  if (status == nullptr) {
+    if (error != nullptr) *error = ProtocolError(decoded.error, decoded.offset);
+    return nil;
+  }
+  return OtaStatusFromShared(*status);
+}
+
 - (NSData *)encodeGnssInputPayloadForTesting:(MotoBLEGnssInput *)input
                                        error:(NSError **)error {
   const auto payload =
@@ -906,6 +1015,11 @@ MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
 
   if (const auto *wifi = std::get_if<moto::ble::WifiStatus>(&decoded.value)) {
     inbound.wifiStatus = WifiStatusFromShared(*wifi);
+    return inbound;
+  }
+
+  if (const auto *ota = std::get_if<moto::ble::OtaStatus>(&decoded.value)) {
+    inbound.otaStatus = OtaStatusFromShared(*ota);
     return inbound;
   }
 

@@ -623,6 +623,9 @@ void WifiLink::set_state(WifiLinkState state, WifiFailure failure) {
     status_.ipv4 = {};
     status_.rssi_dbm = 0;
   }
+  // The OTA worker polls this: it must see the address the moment the link
+  // has one, and lose it the moment the radio goes back down.
+  connected_.store(state == WifiLinkState::Connected);
 }
 
 void WifiLink::publish() {

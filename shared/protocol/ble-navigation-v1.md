@@ -170,6 +170,8 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x19` | PerformanceRun | 设备→手机 | 0-100 计时每次状态变化，以及每次握手后；手机声明 bit13 时才发，无 ACK |
 | `0x1A` | WifiConfig | 手机→设备 | 骑手保存或忘记热点时；设备声明 bit14 时才发，ACK_REQUESTED |
 | `0x1B` | WifiStatus | 设备→手机 | WiFi 状态变化、连接期间的 RSSI、每次握手后；手机声明 bit14 时才发，无 ACK |
+| `0x1C` | OtaCommand | 手机→设备 | 骑手点「开始更新」时；设备声明 bit15 时才发，ACK_REQUESTED，且只走加密+绑定链路 |
+| `0x1D` | OtaStatus | 设备→手机 | 每次状态变化，下载中最高 2 Hz；手机声明 bit15 时才发，无 ACK |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -194,7 +196,8 @@ bit8 attitude telemetry、bit9 home location、bit10 device settings、
 bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标志；手机只对
 声明了它的对端置该位，旧固件会拒绝未知标志）、bit12 GNSS input（设备接收 `0x18`）、
 bit13 performance run（手机声明：它要显示圆屏的 0-100 成绩，设备才发 `0x19`）、
-bit14 WiFi hotspot（双方声明：设备接收 `0x1A` 并回报 `0x1B`，手机显示 `0x1B`）。
+bit14 WiFi hotspot（双方声明：设备接收 `0x1A` 并回报 `0x1B`，手机显示 `0x1B`）、
+bit15 OTA（双方声明：设备接收 `0x1C` 并回报 `0x1D`，手机提供固件并显示 `0x1D`）。
 
 `0x16`、`0x17` 与 `0x18` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
 根本不认识这些类型，而不是收到后忽略。
@@ -582,6 +585,43 @@ i8  rssi_dbm
 `ipv4` 仅在 Connected 时非零，其他状态下它和 `rssi_dbm` 都为 0。`failure` 仅在 Failed
 时非零；进入 Failed 时射频已经关闭。手机直接连这个地址（热点网段 `172.20.10.0/28`），
 不需要 Bonjour。
+
+### 6.17 OtaCommand (`0x1C`, 手机→设备, 最长 238 字节)
+
+固件更新（WAVESHARE_OPTIMIZATION_PLAN §4.4，W3）。镜像**永不经过 BLE**：手机要么在它
+已经共享给圆屏的热点上直接提供文件，要么给一个发布地址，设备经热点自己去取。带
+ACK_REQUESTED，只发给声明 bit15 的设备，且**只接受已加密且已绑定的链路**（否则回
+`InvalidState`，一个字节都不写）。
+
+```text
+u8  revision
+u8  url_length           10..200
+u8[] url                  绝对 http:// 或 https://，可打印 ASCII，不含空格与 NUL
+u8[32] sha256              整张镜像的 SHA-256，全零表示发送方没算，直接拒绝
+u32 size_bytes            0 表示未告知；否则 1 MiB..7 MiB（OTA 槽容量）
+```
+
+设备把镜像写进空闲 OTA 槽，写完才比对 SHA-256，通过后才把启动槽指过去，然后重启。
+开发包带 tlog、正式包（`sdkconfig.release`）关掉 tlog，两者走同一条 OTA 路径。
+开机进入新镜像后，固件在完成一次 BLE 握手时才调用 `esp_ota_mark_app_valid_cancel_rollback()`；
+握手不来就重启，bootloader 自动回滚到旧槽（`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`）。
+
+### 6.18 OtaStatus (`0x1D`, 设备→手机, 固定 8 字节)
+
+每次状态变化时发送；下载中最高 2 Hz（百分比变化 ≥2% 才发）。无 ACK，下一条状态覆盖上一条。
+
+```text
+u8  revision
+u8  state                0 Idle、1 Downloading、2 Verifying、3 Ready、4 Failed
+u8  failure              0 None、1 NoWifi、2 NoCredentials、3 BadUrl、4 Network、5 HashMismatch、
+                         6 ImageRejected、7 NoMemory、8 Busy、9 TooLarge
+u8  progress_percent     0..100，总量未知时为 0
+u32 bytes_received       已写入槽的字节数；Idle 时必须为 0
+```
+
+`failure` 仅在 Failed 时非零，Failed 时槽已丢弃（不会下次开机生效）。Ready 之后设备
+约 1 s 内重启，手机按断链 + 重连处理，不需要额外确认。Never trust: 手机不把 Ready 当作
+“新版本已跑起来”，只当作“镜像已就位”。
 
 ## 7. Display Snapshot 到共享 NavSnapshot
 

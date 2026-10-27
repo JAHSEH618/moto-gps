@@ -662,6 +662,63 @@ Error validate(const WifiStatus& value) {
   return Error::None;
 }
 
+Error validate(const OtaCommand& value) {
+  if (value.url.size() < kMinOtaUrlBytes ||
+      value.url.size() > kMaxOtaUrlBytes) {
+    return Error::StringTooLong;
+  }
+  // The device hands this to esp_http_client as a C string, so a NUL or
+  // whitespace inside it would either truncate the request or split it.
+  for (const char character : value.url) {
+    const auto byte = static_cast<std::uint8_t>(character);
+    if (byte <= 0x20U || byte > 0x7EU) return Error::OutOfRange;
+  }
+  // Absolute, and plain http only for a host on the link (the phone serving
+  // the image it already holds); https covers a release URL. Anything else
+  // (ftp, file, data) is not a fetch this device can make.
+  const bool http = value.url.rfind("http://", 0) == 0;
+  const bool https = value.url.rfind("https://", 0) == 0;
+  if (!http && !https) return Error::OutOfRange;
+  if (value.url.size() <= std::strlen(https ? "https://" : "http://")) {
+    return Error::OutOfRange;
+  }
+  // An all-zero digest is the default-constructed struct, not a hash: a
+  // sender that cannot compute one must not get the image installed blind.
+  const bool any_digest = std::any_of(
+      value.sha256.begin(), value.sha256.end(),
+      [](std::uint8_t byte) { return byte != 0U; });
+  if (!any_digest) return Error::OutOfRange;
+  if (value.size_bytes != 0 &&
+      (value.size_bytes < kMinOtaImageBytes ||
+       value.size_bytes > kMaxOtaImageBytes)) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
+Error validate(const OtaStatus& value) {
+  if (value.state != OtaState::Idle && value.state != OtaState::Downloading &&
+      value.state != OtaState::Verifying && value.state != OtaState::Ready &&
+      value.state != OtaState::Failed) {
+    return Error::InvalidEnum;
+  }
+  if (static_cast<std::uint8_t>(value.failure) >
+      static_cast<std::uint8_t>(OtaFailure::TooLarge)) {
+    return Error::InvalidEnum;
+  }
+  // A failure only explains Failed, and Failed always has one.
+  if ((value.state == OtaState::Failed) !=
+      (value.failure != OtaFailure::None)) {
+    return Error::OutOfRange;
+  }
+  if (value.progress_percent > 100U) return Error::OutOfRange;
+  // Only the states that move bytes carry a count, and Idle carries none.
+  if (value.state == OtaState::Idle && value.bytes_received != 0) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -833,6 +890,15 @@ BytesResult encode_payload(const T& value) {
     writer.u8(value.flags);
     for (const std::uint8_t octet : value.ipv4) writer.u8(octet);
     writer.u8(static_cast<std::uint8_t>(value.rssi_dbm));
+  } else if constexpr (std::is_same_v<T, OtaCommand>) {
+    writer.string_u8(value.url);
+    for (const std::uint8_t byte : value.sha256) writer.u8(byte);
+    writer.u32(value.size_bytes);
+  } else if constexpr (std::is_same_v<T, OtaStatus>) {
+    writer.u8(static_cast<std::uint8_t>(value.state));
+    writer.u8(static_cast<std::uint8_t>(value.failure));
+    writer.u8(value.progress_percent);
+    writer.u32(value.bytes_received);
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -1721,6 +1787,10 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::WifiConfig;
         } else if constexpr (std::is_same_v<T, WifiStatus>) {
           return MessageType::WifiStatus;
+        } else if constexpr (std::is_same_v<T, OtaCommand>) {
+          return MessageType::OtaCommand;
+        } else if constexpr (std::is_same_v<T, OtaStatus>) {
+          return MessageType::OtaStatus;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1882,6 +1952,42 @@ MessageResult decode_wifi_status(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool OtaCommand::operator==(const OtaCommand& rhs) const noexcept {
+  return std::tie(url, sha256, size_bytes) ==
+         std::tie(rhs.url, rhs.sha256, rhs.size_bytes);
+}
+
+MessageResult decode_ota_command(ByteView payload) {
+  Reader reader(payload);
+  OtaCommand value;
+  if (begin_payload(reader)) {
+    value.url = reader.string_u8(kMaxOtaUrlBytes);
+    for (std::uint8_t& byte : value.sha256) byte = reader.u8();
+    value.size_bytes = reader.u32();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
+bool OtaStatus::operator==(const OtaStatus& rhs) const noexcept {
+  return std::tie(state, failure, progress_percent, bytes_received) ==
+         std::tie(rhs.state, rhs.failure, rhs.progress_percent,
+                  rhs.bytes_received);
+}
+
+MessageResult decode_ota_status(ByteView payload) {
+  Reader reader(payload);
+  OtaStatus value;
+  if (begin_payload(reader)) {
+    value.state = static_cast<OtaState>(reader.u8());
+    value.failure = static_cast<OtaFailure>(reader.u8());
+    value.progress_percent = reader.u8();
+    value.bytes_received = reader.u32();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -1910,6 +2016,10 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_wifi_config(payload);
     case MessageType::WifiStatus:
       return decode_wifi_status(payload);
+    case MessageType::OtaCommand:
+      return decode_ota_command(payload);
+    case MessageType::OtaStatus:
+      return decode_ota_status(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

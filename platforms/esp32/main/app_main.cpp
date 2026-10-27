@@ -34,6 +34,7 @@
 #include "battery_ring.hpp"
 #include "burn_in.h"
 #include "wifi_link.h"
+#include "ota_update.hpp"
 
 #include <new>
 
@@ -56,6 +57,7 @@ static bool g_calibration_unverified = true;
 static MotionHeadingSensor* g_sensor = nullptr;
 static PhoneNavBridge* g_bridge = nullptr;
 static WifiLink* g_wifi = nullptr;
+static moto::device::OtaUpdate* g_ota = nullptr;
 // PhoneNavBridge is the largest static object in the firmware (~25 KB: three
 // NavSnapshots with their map windows, the route-view assembly). Nothing in it
 // is touched from an ISR or with the cache off, so it lives in PSRAM and its
@@ -576,6 +578,12 @@ void serial_command_task(void* context) {
       if (g_wifi != nullptr) g_wifi->log_status();
     } else if (std::strcmp(line, "wifi forget") == 0) {
       if (g_wifi != nullptr) g_wifi->request_forget();
+    } else if (std::strcmp(line, "ota status") == 0) {
+      if (g_ota != nullptr) g_ota->log_status();
+    } else if (std::strcmp(line, "ota confirm") == 0) {
+      // Bench: confirms the running image without waiting for a handshake, for
+      // a device being tested without a phone.
+      if (g_ota != nullptr) g_ota->confirm_running_image();
     } else if (std::strcmp(line, "ui perf reset") == 0) {
       board_port_reset_display_timing();
       ESP_LOGI(kTag, "display timing window reset");
@@ -679,7 +687,19 @@ moto_ui_theme_t boot_theme_for(moto::device::DeviceThemeMode mode) {
 struct PhoneLinks {
   PhoneNavBridge* bridge = nullptr;
   WifiLink* wifi = nullptr;
+  moto::device::OtaUpdate* ota = nullptr;
 };
+
+// The OTA worker asks the WiFi link for the radio when it has an image to
+// fetch, and polls it for an address. Neither direction needs anything the
+// WiFi worker does not already own.
+void ota_request_network(void*) {
+  if (g_wifi != nullptr) g_wifi->request_up();
+}
+
+bool ota_network_connected(void*) {
+  return g_wifi != nullptr && g_wifi->connected();
+}
 
 moto::ble::AckStatus receive_phone_message(
     const moto::ble::ReassembledMessage& message, void* context) {
@@ -699,6 +719,19 @@ moto::ble::AckStatus receive_phone_message(
     std::fill(config->psk.begin(), config->psk.end(), '\0');
     return status;
   }
+  if (message.type == moto::ble::MessageType::OtaCommand) {
+    auto decoded = moto::ble::decode_message(
+        message.type, moto::ble::ByteView(message.payload));
+    auto* command = decoded.ok()
+                        ? std::get_if<moto::ble::OtaCommand>(&decoded.value)
+                        : nullptr;
+    if (command == nullptr) {
+      ESP_LOGW(kTag, "drop OtaCommand: %s", moto::ble::to_string(decoded.error));
+      return moto::ble::AckStatus::Failed;
+    }
+    if (links->ota == nullptr) return moto::ble::AckStatus::InvalidState;
+    return links->ota->on_command(*command);
+  }
   const moto::ble::AckStatus status = links->bridge->on_message(message);
   if (message.type == moto::ble::MessageType::ConnectionStatus &&
       status == moto::ble::AckStatus::Ok) {
@@ -709,6 +742,7 @@ moto::ble::AckStatus receive_phone_message(
                 ? std::get_if<moto::ble::ConnectionStatus>(&decoded.value)
                 : nullptr) {
       links->wifi->on_phone_status(*phone);
+      if (links->ota != nullptr) links->ota->on_phone_status(*phone);
     }
   }
   return status;
@@ -1099,7 +1133,20 @@ extern "C" void app_main(void) {
   } else {
     ESP_LOGW(kTag, "WiFi worker could not start; WiFi stays unavailable");
   }
-  static PhoneLinks phone_links{&phone_bridge, &wifi};
+  static PhoneLinks phone_links{&phone_bridge, &wifi, nullptr};
+  // Firmware update (W3): BLE carries the command and the status, the image
+  // comes over the hotspot the WiFi worker owns.
+  static moto::device::OtaUpdate ota;
+  ota.set_sender(BleNavTransport::send_from_bridge, &transport);
+  ota.set_secure_link_check(BleNavTransport::link_encrypted_and_bonded_from,
+                            &transport);
+  ota.set_network({ota_request_network, ota_network_connected, nullptr});
+  if (ota.start() == ESP_OK) {
+    phone_links.ota = &ota;
+    g_ota = &ota;
+  } else {
+    ESP_LOGW(kTag, "OTA worker could not start; updates stay unavailable");
+  }
   transport.set_callbacks(receive_phone_message, update_phone_link,
                           &phone_links);
   // The music page follows whichever app owns the iPhone's Now Playing,

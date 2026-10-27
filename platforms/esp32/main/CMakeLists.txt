@@ -34,6 +34,7 @@ idf_component_register(
         "lean_estimator.cpp"
         "mount_basis.cpp"
         "motion_heading_sensor.cpp"
+        "ota_update.cpp"
         "qmi8658_fifo.cpp"
         "qmi8658_latch.cpp"
         "phone_nav_bridge.cpp"
@@ -69,6 +70,10 @@ idf_component_register(
         esp_wifi
         esp_netif
         esp_event
+        esp_http_client
+        app_update
+        mbedtls
+        esp-tls
         esp32_s3_touch_amoled_1_75c
 )
 

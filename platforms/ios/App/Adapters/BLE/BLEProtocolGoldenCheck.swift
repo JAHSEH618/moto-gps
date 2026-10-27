@@ -8,6 +8,7 @@ enum BLEProtocolGoldenCheck {
         case settingsVectorMissing
         case gnssVectorMissing
         case wifiVectorMissing
+        case otaVectorMissing
         case mismatch(expected: String, actual: String)
 
         var errorDescription: String? {
@@ -18,6 +19,7 @@ enum BLEProtocolGoldenCheck {
             case .settingsVectorMissing: "BLE v1 黄金帧缺少 settings.payload"
             case .gnssVectorMissing: "BLE v1 黄金帧缺少 gnss.payload"
             case .wifiVectorMissing: "BLE v1 黄金帧缺少 wifi_config/wifi_status.payload"
+            case .otaVectorMissing: "BLE v1 黄金帧缺少 ota_command/ota_status.payload"
             case let .mismatch(expected, actual):
                 "BLE v1 编码不一致：expected \(expected), actual \(actual)"
             }
@@ -178,6 +180,40 @@ enum BLEProtocolGoldenCheck {
         let expectedDecoded = "state=2 failure=0 stored=true ip=172.20.10.2 rssi=-58"
         guard actualWifiStatus == expectedDecoded else {
             throw CheckError.mismatch(expected: expectedDecoded, actual: actualWifiStatus)
+        }
+
+        // Firmware update: the phone encodes OtaCommand and only decodes
+        // OtaStatus, so one direction is pinned on each side.
+        guard let expectedOtaCommand = vector("ota_command.payload"),
+              let expectedOtaStatus = vector("ota_status.payload")
+        else { throw CheckError.otaVectorMissing }
+
+        let ota = MotoBLEOtaCommandInput()
+        ota.url = "https://example.invalid/moto-GPS-0.2.2-release.bin"
+        ota.sha256Hex = (0xA0...0xBF).map { String(format: "%02x", $0) }.joined()
+        ota.sizeBytes = 5_906_480
+        let otaPayload = try codec.encodeOtaCommandPayload(forTesting: ota)
+        let actualOtaCommand = otaPayload.map { String(format: "%02x", $0) }.joined()
+        guard actualOtaCommand == expectedOtaCommand else {
+            throw CheckError.mismatch(expected: expectedOtaCommand, actual: actualOtaCommand)
+        }
+
+        var otaStatusBytes = Data()
+        var otaIndex = expectedOtaStatus.startIndex
+        while otaIndex < expectedOtaStatus.endIndex {
+            let next = expectedOtaStatus.index(otaIndex, offsetBy: 2)
+            guard let byte = UInt8(expectedOtaStatus[otaIndex..<next], radix: 16) else {
+                throw CheckError.otaVectorMissing
+            }
+            otaStatusBytes.append(byte)
+            otaIndex = next
+        }
+        let otaStatus = try codec.decodeOtaStatusPayload(forTesting: otaStatusBytes)
+        let actualOtaStatus = "state=\(otaStatus.state) failure=\(otaStatus.failure) "
+            + "percent=\(otaStatus.progressPercent) bytes=\(otaStatus.bytesReceived)"
+        let expectedOtaDecoded = "state=1 failure=0 percent=43 bytes=2540032"
+        guard actualOtaStatus == expectedOtaDecoded else {
+            throw CheckError.mismatch(expected: expectedOtaDecoded, actual: actualOtaStatus)
         }
     }
 }

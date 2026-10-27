@@ -51,6 +51,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
+        # The firmware screen picks a .bin out of Files. Exposing the app's
+        # Documents folder is what makes the sideloaded build able to receive
+        # one at all (no AirDrop from a laptop, no TestFlight in this fork).
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen:
           UIColorName: LaunchBackground
           UIImageName: LaunchLogo

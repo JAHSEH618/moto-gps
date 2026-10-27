@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var showsGatewaySettings = false
     @State private var showsRaceTelemetry = false
     @State private var showsWifiHotspot = false
+    @State private var showsFirmwareUpdate = false
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
@@ -853,11 +854,33 @@ struct ContentView: View {
                     }
                 }
             }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "05", text: "固件")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "圆屏固件") {
+                            MotoLabel(text: firmwareRowStatus, tone: .muted, uppercased: false)
+                        }
+                        MotoRule()
+                        Button("更新固件") { showsFirmwareUpdate = true }
+                            .buttonStyle(MotoSecondaryButtonStyle())
+                            .accessibilityIdentifier("device-firmware-action")
+                    }
+                }
+            }
         }
         .motoTheme(theme)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sheet(isPresented: $showsWifiHotspot) { WifiHotspotView(model: model) }
+        .sheet(isPresented: $showsFirmwareUpdate) { FirmwareUpdateView(model: model) }
+    }
+
+    private var firmwareRowStatus: String {
+        guard model.deviceReady else { return "--" }
+        guard model.deviceSupportsOta else { return "固件不支持" }
+        return model.firmwareUpdate?.title ?? "可更新"
     }
 
     private var wifiRowStatus: String {

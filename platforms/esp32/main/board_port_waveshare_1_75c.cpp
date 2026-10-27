@@ -33,6 +33,13 @@ constexpr char kTag[] = "board_waveshare";
 // QSPI DMA. A 32-row internal-buffer experiment exhausted BLE startup memory.
 constexpr std::uint16_t kDrawBufferHeight = MOTO_DISPLAY_HEIGHT;
 constexpr bool kDrawBuffersUsePsram = true;
+// The PSRAM budget, in the order it is spent: 8 MiB on the board, minus what
+// XIP copies there at boot (1.3 MB of instructions for the current 5.8 MB
+// image; rodata stays in flash), minus the two full-height draw buffers
+// (2 x 434 KB), minus this pool. That is ~6.7 MB free, 2.9 MB of it taken
+// here. Shrinking this pool to 1 MiB also fits, but LVGL then runs out of
+// layer memory during the boot screen's first refresh and spins inside
+// lv_draw_buf_create_ex, so the design's 2 MiB stands.
 constexpr std::size_t kLvglExtraPoolBytes = 2U * 1024U * 1024U;
 static_assert(kLvglExtraPoolBytes <= LV_MEM_POOL_EXPAND_SIZE,
               "LVGL TLSF must support the board's extra PSRAM pool");

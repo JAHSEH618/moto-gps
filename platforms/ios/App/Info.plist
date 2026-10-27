@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>MOTOGPSGatewayBaseURL</key>
 	<string>https://example.invalid/moto-gps/api/</string>
 	<key>NSAppleMusicUsageDescription</key>
@@ -50,6 +52,8 @@
 		<string>location</string>
 		<string>bluetooth-central</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
