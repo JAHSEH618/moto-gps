@@ -414,6 +414,10 @@ struct Ui {
     std::uint8_t nav_route_target_count = 0;
     std::uint32_t nav_route_identity = 0;
     std::uint32_t nav_route_generation = 0;
+    // The latest motion frame's heading was already smoothed upstream (the
+    // parked compass slew): route_motion_tick() lands it without blending.
+    // Any navigation frame clears it, so position changes still glide.
+    bool nav_heading_presmoothed = false;
     lv_timer_t *nav_route_motion_timer = nullptr;
     lv_obj_t *nav_marker = nullptr;
     lv_obj_t *nav_status = nullptr;
@@ -1913,7 +1917,10 @@ void route_motion_tick(lv_timer_t *) {
     // the old 0.56 at 40 ms, but supplies smaller and more frequent steps.
     // Screen coordinates need subpixel precision, not geographic doubles.
     // Float uses the ESP32-S3 FPU for every point in this 40 Hz hot loop.
-    const float blend = ui.reduce_motion ? 1.0F : 0.39F;
+    // A parked compass frame is a pure rotation the device has already
+    // slewed; blending it again added about 50 ms of lag on its own.
+    const float blend =
+        ui.reduce_motion || ui.nav_heading_presmoothed ? 1.0F : 0.39F;
 
     // A moving line dirties its whole span, not just the moved vertices: when
     // one end of a segment shifts, the line between them changes along its
@@ -5248,6 +5255,7 @@ void moto_ui_gta::set_ambient_night(uint8_t is_night) {
 
 void moto_ui_gta::set_state(const moto_ui_state_t *state) {
     if(state == nullptr || !ui.live) return;
+    ui.nav_heading_presmoothed = false;
     ui.nav_speed_kph = state->speed_kph;
     // The envelope is a record of the ride, not of the time spent looking.
     accumulate_gg(state);
@@ -5287,10 +5295,15 @@ void moto_ui_gta::set_motion_state(const moto_ui_state_t *state) {
     // compass rose actually changes with yaw; labels, arcs and hidden pages
     // remain untouched so LVGL submits a small, bounded dirty region.
     if(ui.page == MOTO_UI_PAGE_NAVIGATION) {
+        ui.nav_heading_presmoothed = state->heading_presmoothed != 0;
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);
         update_radar_ring(state);
+        // Nothing left to interpolate: apply the frame now rather than on
+        // the next 25 ms tick, so the caller's refresh can draw it at once.
+        // That tick then finds every point settled and draws nothing.
+        if(ui.nav_heading_presmoothed) route_motion_tick(nullptr);
     } else if(ui.page == MOTO_UI_PAGE_COMPASS) {
         update_compass(state);
     } else if(ui.page == MOTO_UI_PAGE_LEAN) {

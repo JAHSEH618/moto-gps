@@ -206,6 +206,10 @@ typedef struct {
     uint8_t has_home;
     int16_t home_x;
     int16_t home_y;
+    /* 1 when heading_deg is already smoothed upstream (the parked compass
+       slew). A motion frame with this set is a pure rotation and the map
+       lands on it instead of blending; navigation frames ignore it. */
+    uint8_t heading_presmoothed;
 } moto_ui_state_t;
 
 /* Radius of the minimap ring, in canvas pixels. The ring carries the route

@@ -10,6 +10,9 @@
 #include "demo_fixture/jinan_big_data_demo.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
+#ifdef ESP_PLATFORM
+#include "esp_lv_adapter.h"
+#endif
 #include "moto_nav_ui.h"
 
 namespace {
@@ -467,6 +470,10 @@ void PhoneNavBridge::on_imu_sample(
         heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
       snapshot_.heading_deg = heading_fusion_.heading_deg();
     }
+    // Parked, the fusion's compass slew is the heading's only smoothing; the
+    // UI lands these frames instead of blending them a second time.
+    snapshot_.heading_presmoothed =
+        !demo_active_ && heading_fusion_.compass_driven();
 
     // The QMI8658 runs at 125 Hz. Reproject at the display's unified 40 Hz
     // cadence; requests still coalesce if one physical refresh runs long.
@@ -1313,6 +1320,7 @@ void PhoneNavBridge::render_pending() {
       // navigation frame's, so the 8 KB snapshot is not copied under the lock
       // the IMU and BLE tasks wait on, 40 times a second.
       render_snapshot_.heading_deg = snapshot_.heading_deg;
+      render_snapshot_.heading_presmoothed = snapshot_.heading_presmoothed;
       render_snapshot_.has_attitude = snapshot_.has_attitude;
       render_snapshot_.lean_deg = snapshot_.lean_deg;
       render_snapshot_.pitch_deg = snapshot_.pitch_deg;
@@ -1370,6 +1378,16 @@ void PhoneNavBridge::render_pending() {
     presenter_.apply_to_lvgl();
   } else if (motion) {
     moto_nav_ui_set_motion_state(&presenter_.ui_state());
+#ifdef ESP_PLATFORM
+    // Draw the frame now instead of on the LVGL worker's next 25 ms timer
+    // (about 12 ms of waiting on average). The adapter lock is recursive, so
+    // this runs inside the board_port_lock() held above and the worker cannot
+    // start the same frame in between: whichever refresh comes second finds
+    // no dirty area and draws nothing. The draw costs what the worker (priority
+    // 6) would have spent anyway; while it holds the lock, this task inherits
+    // priority 6 at most, still below the IMU task (7) and the NimBLE host.
+    esp_lv_adapter_refresh_now(nullptr);
+#endif
   }
   if ((requested & RenderHomeError) != 0U) {
     moto_nav_ui_show_home_error();

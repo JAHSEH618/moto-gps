@@ -401,6 +401,7 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
       static_cast<double>(snapshot.speed_mps) * 3.6);
   ui_state_.speed_limit_kph = snapshot.speed_limit_kph;
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
+  ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
   map_attitude(snapshot, ui_state_);
   project_map(snapshot);
   ui_state_.road_name = road_name_.empty() ? nullptr : road_name_.c_str();
@@ -410,6 +411,7 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
 
 void NavPresenter::update_motion(const NavSnapshot& snapshot) {
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
+  ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
   map_attitude(snapshot, ui_state_);
   // Parked, or riding straight inside the gyro deadband, the heading holds
   // and the projected map is already the right one: skip the hundreds of

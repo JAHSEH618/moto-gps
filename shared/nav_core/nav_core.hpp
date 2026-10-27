@@ -139,6 +139,9 @@ struct NavSnapshot {
   float pitch_deg = 0.0F;
   float longitudinal_g = 0.0F;
   float lateral_g = 0.0F;
+  // heading_deg already glides on its own (the parked compass slew), so the
+  // UI should land it instead of smoothing it a second time.
+  bool heading_presmoothed = false;
 
   TimestampMs now_ms = 0;
   TimestampMs last_fix_ms = 0;
