@@ -15,7 +15,7 @@ test("the published firmware manifest matches the served image", () => {
   assert.match(manifest.sha256, /^[0-9a-f]{64}$/u);
   assert.equal(manifest.size_bytes, image.byteLength);
   assert.ok(image.byteLength >= 1 << 20 && image.byteLength <= 7 << 20);
-  assert.equal(manifest.url, `https://doupaw.site/firmware/${manifest.file}`);
+  assert.equal(manifest.url, `https://www.doupaw.site/firmware/${manifest.file}`);
 
   // The digest the phone will send is the digest of the bytes Vercel serves.
   const digest = createHash("sha256").update(image).digest("hex");

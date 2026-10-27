@@ -82,7 +82,7 @@ public enum FirmwareUpdate {
 /// phone reads it so the rider never has to copy a digest by hand.
 public struct FirmwareRelease: Equatable, Sendable {
     public static let defaultManifestURL = URL(
-        string: "https://doupaw.site/firmware/latest.json"
+        string: "https://www.doupaw.site/firmware/latest.json"
     )!
 
     public let version: String

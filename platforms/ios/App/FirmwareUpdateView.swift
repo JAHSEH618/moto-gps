@@ -17,6 +17,14 @@ struct FirmwareUpdateView: View {
     @State private var picked: PickedImage?
     @State private var pasteURL = ""
     @State private var pastedDigest = ""
+    @State private var release: FirmwareRelease?
+    @State private var releaseChecked = false
+    @State private var pendingVersion: String?
+    // What this phone last flashed into the device. The protocol carries no
+    // firmware version, so "is there an update" can only be judged against
+    // what we handed over — not against what the round screen reports.
+    @AppStorage("firmware.installedVersion") private var installedVersion = ""
+    @State private var manualEntry = false
     @State private var formError: String?
     @State private var showingPicker = false
     @State private var releaseMessage: String?
@@ -110,43 +118,92 @@ struct FirmwareUpdateView: View {
             }
 
             VStack(alignment: .leading, spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "03", text: "或使用发布地址")
-                MotoBandButton("获取 doupaw.site 最新固件",
-                               identifier: "firmware-release-button") {
-                    Task { await loadRelease() }
+                MotoSectionTitle(index: "03", text: "发布地址")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "检查") {
+                            MotoLabel(text: checkStateText, tone: checkTone,
+                                      uppercased: false)
+                                .accessibilityIdentifier("firmware-release-state")
+                        }
+                        if let release {
+                            MotoRule()
+                            MotoRow(title: "版本") {
+                                MotoLabel(text: release.version, tone: .ink,
+                                          uppercased: false)
+                                    .textSelection(.enabled)
+                                    .accessibilityIdentifier("firmware-release-version")
+                            }
+                            MotoRule()
+                            MotoRow(title: "大小") {
+                                MotoLabel(text: byteCount(release.sizeBytes),
+                                          tone: .ink, uppercased: false)
+                                    .accessibilityIdentifier("firmware-release-size")
+                            }
+                            MotoRule()
+                            MotoRow(title: "SHA-256") {
+                                MotoLabel(text: String(release.sha256Hex.prefix(16)) + "…",
+                                          tone: .muted, uppercased: false)
+                                    .accessibilityIdentifier("firmware-release-digest")
+                            }
+                        }
+                    }
                 }
-                .disabled(isLoadingRelease)
-                .opacity(isLoadingRelease ? 0.5 : 1)
                 if let releaseMessage {
                     MotoProse(text: releaseMessage, tone: .muted)
                         .accessibilityIdentifier("firmware-release-message")
                 }
-                MotoPanel(padding: 0) {
-                    VStack(spacing: 0) {
-                        TextField("https://…/moto-GPS.bin", text: $pasteURL)
-                            .textContentType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                            .modifier(FirmwareFieldStyle(palette: palette))
-                            .accessibilityIdentifier("firmware-url-field")
-                        MotoRule()
-                        TextField("SHA-256（64 位十六进制）", text: $pastedDigest)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .modifier(FirmwareFieldStyle(palette: palette))
-                            .accessibilityIdentifier("firmware-digest-field")
+                if release == nil && !isLoadingRelease {
+                    MotoBandButton("重新检查", identifier: "firmware-release-button") {
+                        Task { await loadRelease() }
                     }
                 }
-                MotoProse(
-                    text: "发布地址适合把同一份固件发给多台车，或让圆屏自己从 HTTPS 下载（圆屏内存有限，请先连上热点）。清单里的 SHA-256 会填到下面的摘要栏，更新前请确认版本。",
-                    tone: .muted
-                )
-                MotoBandButton("从地址更新", identifier: "firmware-url-button") {
-                    startReleaseURL()
+                if let release, isUpdateAvailable {
+                    MotoBandButton("更新圆屏到 \(release.version)",
+                                   identifier: "firmware-release-start-button") {
+                        startReleaseURL()
+                    }
+                    .disabled(!canStartFromRelease)
+                    .opacity(canStartFromRelease ? 1 : 0.5)
                 }
-                .disabled(!canStartFromURL)
-                .opacity(canStartFromURL ? 1 : 0.5)
+                MotoProse(text: releaseCaption, tone: .muted)
+            }
+
+            VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "04", text: "手动指定")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoToggleRow(title: "填写地址与摘要", isOn: $manualEntry,
+                                      identifier: "firmware-manual-toggle")
+                        if manualEntry {
+                            MotoRule()
+                            TextField("https://…/moto-gps.bin", text: $pasteURL)
+                                .textContentType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .keyboardType(.URL)
+                                .modifier(FirmwareFieldStyle(palette: palette))
+                                .accessibilityIdentifier("firmware-url-field")
+                            MotoRule()
+                            TextField("SHA-256（64 位十六进制）", text: $pastedDigest)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .modifier(FirmwareFieldStyle(palette: palette))
+                                .accessibilityIdentifier("firmware-digest-field")
+                        }
+                    }
+                }
+                if manualEntry {
+                    MotoProse(
+                        text: "把同一份固件固定在某台车、或临时换一个镜像地址时才用这里。地址必须是 HTTPS，圆屏不跟跳转，也要能直连。",
+                        tone: .muted
+                    )
+                    MotoBandButton("从地址更新", identifier: "firmware-url-button") {
+                        startReleaseURL()
+                    }
+                    .disabled(!canStartFromURL)
+                    .opacity(canStartFromURL ? 1 : 0.5)
+                }
             }
         }
         .motoTheme(appearance.theme)
@@ -158,6 +215,19 @@ struct FirmwareUpdateView: View {
             importImage(result)
         }
         .onChange(of: picked?.sha256) { _, _ in formError = nil }
+        .onChange(of: model.firmwareUpdate?.state) { _, state in
+            // The device only reports Ready after the digest matched and the
+            // slot was written, so that is the one moment this phone can
+            // claim a version is on the round screen.
+            guard state == .ready, let pendingVersion else { return }
+            installedVersion = pendingVersion
+            self.pendingVersion = nil
+            releaseMessage = "圆屏已写入 \(pendingVersion)，正在重启。"
+        }
+        .task {
+            guard model.deviceSupportsOta, !releaseChecked else { return }
+            await loadRelease()
+        }
         .onDisappear { model.stopFirmwareServer() }
     }
 
@@ -169,6 +239,47 @@ struct FirmwareUpdateView: View {
     private var canStartFromURL: Bool {
         model.deviceSupportsOta && !pasteURL.isEmpty && !pastedDigest.isEmpty &&
             model.firmwareUpdate?.isRunning != true
+    }
+
+    private var canStartFromRelease: Bool {
+        model.deviceSupportsOta && release != nil &&
+            !pasteURL.isEmpty && !pastedDigest.isEmpty &&
+            model.firmwareUpdate?.isRunning != true
+    }
+
+    /// True when the published manifest is not the version this phone last
+    /// flashed. With nothing on record the answer is "no", because the app
+    /// cannot see the device's firmware version.
+    private var isUpdateAvailable: Bool {
+        guard let release else { return false }
+        return release.version != installedVersion
+    }
+
+    private var checkStateText: String {
+        if isLoadingRelease { return "检查中…" }
+        if release == nil { return releaseChecked ? "检查失败" : "尚未检查" }
+        return isUpdateAvailable ? "有新版本" : "已是最新"
+    }
+
+    private var checkTone: MotoLabel.Tone {
+        if isLoadingRelease { return .muted }
+        if release == nil { return .abort }
+        return isUpdateAvailable ? .ink : .ok
+    }
+
+    private var releaseCaption: String {
+        guard let release else {
+            return releaseChecked
+                ? "没读到 doupaw.site 上的清单。确认网络后点「重新检查」。"
+                : "打开这一页就会读一次发布清单，只在按确认后才会让圆屏下载。"
+        }
+        if !isUpdateAvailable {
+            return "这台手机上次给圆屏刷的就是 \(release.version)，没有更新的发布。"
+        }
+        if installedVersion.isEmpty {
+            return "还没有记录圆屏的版本，会按最新发布更新。"
+        }
+        return "这台手机上次给圆屏刷的是 \(installedVersion)。圆屏经手机热点下载，并按清单里的 SHA-256 校验后才切换启动分区。"
     }
 
     private var statusTitle: String {
@@ -239,9 +350,13 @@ struct FirmwareUpdateView: View {
     private func loadRelease() {
         releaseMessage = nil
         formError = nil
+        release = nil
         isLoadingRelease = true
         Task {
-            defer { isLoadingRelease = false }
+            defer {
+                isLoadingRelease = false
+                releaseChecked = true
+            }
             do {
                 var request = URLRequest(url: FirmwareRelease.defaultManifestURL)
                 request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -252,12 +367,14 @@ struct FirmwareUpdateView: View {
                         "官网返回 HTTP \(http.statusCode)，请稍后再试。")
                 }
                 let value = try FirmwareRelease.decode(data)
+                release = value
                 pasteURL = value.url
                 pastedDigest = value.sha256Hex
                 let size = ByteCountFormatter.string(
                     fromByteCount: Int64(value.sizeBytes), countStyle: .file)
-                releaseMessage =
-                    "已获取 \(value.version) · \(size)。确认后点下面的「从地址更新」。"
+                releaseMessage = value.version == installedVersion
+                    ? nil
+                    : "最新发布 \(value.version) · \(size)。"
             } catch {
                 releaseMessage = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
@@ -267,6 +384,7 @@ struct FirmwareUpdateView: View {
 
     private func startReleaseURL() {
         formError = nil
+        pendingVersion = release?.version
         do {
             try model.startFirmwareUpdate(url: pasteURL.trimmingCharacters(
                                               in: .whitespacesAndNewlines),
@@ -274,6 +392,7 @@ struct FirmwareUpdateView: View {
                                               .trimmingCharacters(in: .whitespacesAndNewlines),
                                           sizeBytes: 0)
         } catch {
+            pendingVersion = nil
             formError = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
         }

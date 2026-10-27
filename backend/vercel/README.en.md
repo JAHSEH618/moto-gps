@@ -188,8 +188,8 @@ The ESP32 firmware needs no change.
 `backend/public/` is Vercel's static root, so the OTA image and its manifest need no Function:
 
 ```text
-https://doupaw.site/firmware/moto-gps.bin  ESP32 app image
-https://doupaw.site/firmware/latest.json   version, URL, SHA-256, size
+https://www.doupaw.site/firmware/moto-gps.bin  ESP32 app image
+https://www.doupaw.site/firmware/latest.json   version, URL, SHA-256, size
 ```
 
 Publish from the repository root:
@@ -209,8 +209,8 @@ the file. `--check` catches a manifest that is behind the image, in CI or before
 Verify:
 
 ```sh
-curl -sS https://doupaw.site/firmware/latest.json
-curl -sSI https://doupaw.site/firmware/moto-gps.bin   # 200 + application/octet-stream
+curl -sS https://www.doupaw.site/firmware/latest.json
+curl -sSI https://www.doupaw.site/firmware/moto-gps.bin   # 200 + application/octet-stream
 ```
 
 The app's 05 Firmware → "Get latest from doupaw.site" reads the manifest and fills the URL and

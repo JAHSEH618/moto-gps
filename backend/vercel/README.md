@@ -193,8 +193,8 @@ ESP32 固件不需要改。
 Function：
 
 ```text
-https://doupaw.site/firmware/moto-gps.bin   ESP32 app 镜像
-https://doupaw.site/firmware/latest.json   版本、URL、SHA-256、字节数
+https://www.doupaw.site/firmware/moto-gps.bin   ESP32 app 镜像
+https://www.doupaw.site/firmware/latest.json   版本、URL、SHA-256、字节数
 ```
 
 发布（在仓库根目录）：
@@ -213,8 +213,8 @@ cd backend && npx vercel --prod
 验收：
 
 ```sh
-curl -sS https://doupaw.site/firmware/latest.json
-curl -sSI https://doupaw.site/firmware/moto-gps.bin   # 200 + application/octet-stream
+curl -sS https://www.doupaw.site/firmware/latest.json
+curl -sSI https://www.doupaw.site/firmware/moto-gps.bin   # 200 + application/octet-stream
 ```
 
 App 的 05 固件 →「获取 doupaw.site 最新固件」会读取这个清单并填入下载地址与摘要；

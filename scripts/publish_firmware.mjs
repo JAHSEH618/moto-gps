@@ -8,7 +8,7 @@
 //   node scripts/publish_firmware.mjs --check
 //
 // Vercel serves backend/public at the site root, so the default files are
-// https://doupaw.site/firmware/moto-gps.bin and .../latest.json.
+// https://www.doupaw.site/firmware/moto-gps.bin and .../latest.json.
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -20,7 +20,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = {
   bin: resolve(repositoryRoot, "platforms/esp32/build/moto_gps_esp32.bin"),
   out: resolve(repositoryRoot, "backend/public/firmware"),
-  baseURL: "https://doupaw.site/firmware",
+  baseURL: "https://www.doupaw.site/firmware",
   name: "moto-gps.bin",
   version: "",
 };
@@ -100,7 +100,7 @@ export function main(argv = process.argv.slice(2)) {
 
   --bin=PATH       built image (default platforms/esp32/build/moto_gps_esp32.bin)
   --out=DIR        static output (default backend/public/firmware)
-  --base-url=URL   public base (default https://doupaw.site/firmware)
+  --base-url=URL   public base (default https://www.doupaw.site/firmware)
   --name=FILE      served name (default moto-gps.bin)
   --version=TEXT   override the manifest version
   --check          fail if latest.json is behind the published bin`);
