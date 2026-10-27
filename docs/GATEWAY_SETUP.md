@@ -14,7 +14,9 @@ iPhone → 你自己的 HTTPS 网关 → 高德 Web 服务（搜索、路线、�
               保存 Key       → Protomaps / OSM（道路、建筑；服务端缓存）
 ```
 
-如果不想维护服务器，可使用新增的 [Cloudflare Workers + R2 方案](../backend/cloudflare/README.md)。本页继续介绍 Node.js 自建服务器部署。
+如果不想维护服务器，可使用 [Cloudflare Workers + R2 方案](../backend/cloudflare/README.md)或
+[Vercel Functions 方案](../backend/vercel/README.md)（两者共用同一份网关代码，后者带域名绑定与 HTTPS 步骤）。
+本页继续介绍 Node.js 自建服务器部署。
 
 ## 1. 准备 Key 和服务环境
 
@@ -208,7 +210,7 @@ MOTOGPSGatewayBaseURL: https://nav.example.com/moto-gps/api/
 这样才能确认手机定位、公开网关、实际 Key、路线请求和 App 地址全部配合正常。
 
 首页“地图与离线下载”可搜索城市/区县，选好路线后也可下载沿途。下载需要 App 保持运行，
-中断后可继续。断网时使用下载与缓存，内置济南基础地图仍保留；这些只提供道路与建筑背景，
+中断后可继续。断网时使用下载与缓存；这些只提供道路与建筑背景，
 不替代离线搜索、路线重算、实时路况、限速或读秒。
 
 后续更换 Key 只需要更新服务端环境并重启服务；更换 App 使用的域名/路径只需在“网关设置”中保存新地址。

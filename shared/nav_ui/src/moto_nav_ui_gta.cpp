@@ -9,6 +9,8 @@
 
 #include "lvgl.h"
 #include "moto_nav_ui_backends.h"
+#include "moto_nav_ui_memory.h"
+#include "moto_nav_ui_text.h"
 
 LV_FONT_DECLARE(moto_font_nav_16);
 // GB2312 level 1 (3,755 characters) plus Latin at two sizes. Track titles and
@@ -88,6 +90,18 @@ struct MapPalette {
     // The Lean arc: an unlit segment, and a lit one past 45 degrees.
     lv_color_t gauge_off;
     lv_color_t gauge_hot;
+    // The radar plate, navigation map only: the land the streets are cut
+    // through and the two tones real footprints are filled in. `background`
+    // and `building` stay as they were because the skyline, the link cover
+    // and the boot grid paint with them too.
+    lv_color_t map_land;
+    lv_color_t map_block;
+    lv_color_t map_block_landmark;
+    // The day skyline's two print greys. They used to be read out of
+    // road_class[3] and [4]; the radar's streets have their own tones now,
+    // and the skyline must not move with them.
+    lv_color_t skyline_far;
+    lv_color_t skyline_near;
 };
 
 // GTA III, Liberty City by day: the cover's white field as the paper and the
@@ -115,17 +129,24 @@ constexpr MapPalette kGtaDayPalette = {
     LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // paper on a black plate
     LV_COLOR_MAKE(0x11, 0x11, 0x11),  // counter slab
     LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),
+    // A step under the paper: streets are wide now, so none of them may be
+    // as bright as the numerals printed over the map.
     {
         LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // motorway: neon pink
-        LV_COLOR_MAKE(0xF7, 0xF5, 0xEF),  // primary
-        LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // secondary
-        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // residential
-        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // service
-        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // other: almost the block
+        LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // primary
+        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // secondary
+        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // residential
+        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // service
+        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: almost the block
     },
     LV_COLOR_MAKE(0x11, 0x11, 0x11),  // hud numerals: ink
     LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // gauge off: a pale print grey
     LV_COLOR_MAKE(0xC8, 0x32, 0x1E),  // gauge hot: HUD red, darkened for paper
+    LV_COLOR_MAKE(0x4E, 0x4E, 0x4A),  // radar land: the grey radar
+    LV_COLOR_MAKE(0x40, 0x40, 0x3C),  // blocks a shade under the land
+    LV_COLOR_MAKE(0x5C, 0x5C, 0x57),
+    LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // skyline: far towers
+    LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // skyline: near towers
 };
 
 // GTA III, Liberty City at night: true black, box-art white type, and the
@@ -153,17 +174,27 @@ constexpr MapPalette kGtaNightPalette = {
     LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // black on a white plate
     LV_COLOR_MAKE(0x00, 0x00, 0x00),  // counter slab
     LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),
+    // Radar grey, not box-art white: the streets are the plate, the route and
+    // the numerals are the only things that light up on it.
     {
         LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // motorway: neon pink
-        LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // primary
-        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // secondary
-        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // residential
-        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // service
-        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: into the dark
+        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // primary
+        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // secondary
+        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // residential
+        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // service
+        LV_COLOR_MAKE(0x4B, 0x46, 0x3E),  // other: into the dark
     },
     LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // hud numerals: neon pink
     LV_COLOR_MAKE(0x2A, 0x2A, 0x2A),  // gauge off: unlit glass
     LV_COLOR_MAKE(0xFF, 0x4B, 0x3A),  // gauge hot: HUD red
+    // DESIGN.md's night radar: the city is charcoal block, not a void, so the
+    // black road casing has something to cut against; footprints are raised.
+    LV_COLOR_MAKE(0x22, 0x22, 0x22),  // radar land: block charcoal
+    LV_COLOR_MAKE(0x2E, 0x2E, 0x2E),  // raised footprints
+    LV_COLOR_MAKE(0x3A, 0x3A, 0x3A),  // landmarks: the radar's land grey
+    // Unused by night: the night skyline is lit towers in building tones.
+    LV_COLOR_MAKE(0x2E, 0x2E, 0x2E),
+    LV_COLOR_MAKE(0x24, 0x24, 0x24),
 };
 
 // Frame colours shared by both themes. Neon pink is the HUD's own colour, the
@@ -188,14 +219,17 @@ const MapPalette &palette_for_theme(moto_ui_theme_t theme, bool ambient_night) {
 }
 
 // Stroke for one MapRoadClass. Width carries the hierarchy as much as colour:
-// a glance at 466 px reads thickness before hue.
+// a glance at 466 px reads thickness before hue. At the radar's 0.57 px/m a
+// 20 m arterial is 11 px and a 7 m street 4 px, so these widths are the
+// streets' own scale, GTA radar-chunky rather than hairlines.
 struct RoadStroke {
     lv_color_t color;
     int width_design;
 };
 
 RoadStroke road_stroke(const MapPalette &palette, std::uint8_t road_class) {
-    static constexpr int kWidths[6] = {5, 4, 4, 3, 2, 2};
+    // The route ribbon is 9: no street, not even a motorway, is as wide.
+    static constexpr int kWidths[6] = {8, 7, 6, 5, 3, 3};
     const std::uint8_t index = road_class < 6U ? road_class : 5U;
     return {palette.road_class[index], kWidths[index]};
 }
@@ -233,6 +267,12 @@ constexpr int kPerfSegmentCount = 12;
 // A stop has to look deliberate: braking to 0 for a red light is not a new
 // run until the wheels have been still for a moment.
 constexpr std::uint32_t kPerfRearmStillMs = 1'500;
+// A run that is not going to reach the target has to end, not tick forever:
+// rolling off the throttle, stopping at a light, or a missed launch are all
+// ordinary ways for a 0-100 attempt to die. DESIGN_V2 §5 specifies the same
+// abort window (30 s, a >5 km/h fall from the peak).
+constexpr std::uint32_t kPerfTimeoutMs = 30'000;
+constexpr std::uint16_t kPerfAbortDropKph = 5;
 // Home is only reachable while the bike is effectively stopped; see
 // home_shortcut_event().
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
@@ -308,14 +348,18 @@ struct Ui {
     lv_obj_t *page_frames[MOTO_UI_PAGE_COUNT]{};
     lv_obj_t *page_dots[MOTO_UI_PAGE_COUNT]{};
     lv_timer_t *page_dots_timer = nullptr;
-    moto_ui_page_t page = MOTO_UI_PAGE_NAVIGATION;
-    bool page_dots_visible = true;
+    // The page, theme and palette defaults are restored by reset_ui_state().
+    // They are deliberately not member initialisers: a non-zero initialiser
+    // moves this ~11 KiB object from .bss into .data, and .data cannot be
+    // placed in PSRAM by EXT_RAM_BSS_ATTR.
+    moto_ui_page_t page;
+    bool page_dots_visible;
 
     lv_obj_t *nav_map = nullptr;
     lv_obj_t *nav_map_background = nullptr;
     // GTA is the product's own look, so it is the default rather than an
     // opt-in. MOTO_UI_THEME_OFFICIAL is the classic backend, not a palette.
-    moto_ui_theme_t theme = MOTO_UI_THEME_GTA_DAY;
+    moto_ui_theme_t theme;
     // Day/night signal supplied by the phone. Only MOTO_UI_THEME_AUTO reads
     // it; an explicit theme stays authoritative.
     bool ambient_night = false;
@@ -324,7 +368,7 @@ struct Ui {
     // competes with the roads that matter while moving, and the phone owns
     // the trade through SettingsState.show_buildings.
     bool show_buildings = false;
-    MapPalette palette = kGtaDayPalette;
+    MapPalette palette;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_obj_t *nav_building_fill = nullptr;
     MapPolyline nav_building_lines[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
@@ -337,6 +381,11 @@ struct Ui {
     float nav_building_target_y[MOTO_UI_BUILDING_POINT_CAPACITY]{};
     moto_ui_building_span_t
         nav_building_spans[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
+    // 0xFF means "this slot has never been styled"; a map scene revision
+    // changes on every window, but a slot's class usually does not, and
+    // restyling a full-canvas line invalidates it for no visual change.
+    std::uint8_t nav_building_applied_class
+        [MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     std::uint8_t nav_building_point_count = 0;
     std::uint8_t nav_building_footprint_count = 0;
     std::uint32_t nav_building_scene_revision = 0;
@@ -352,6 +401,8 @@ struct Ui {
     float nav_road_target_y[MOTO_UI_ROAD_POINT_CAPACITY]{};
     moto_ui_polyline_span_t
         nav_road_spans[MOTO_UI_ROAD_POLYLINE_CAPACITY]{};
+    std::uint8_t nav_road_applied_class
+        [MOTO_UI_ROAD_POLYLINE_CAPACITY]{};
     std::uint8_t nav_road_point_count = 0;
     std::uint8_t nav_road_polyline_count = 0;
     std::uint32_t nav_road_scene_revision = 0;
@@ -369,13 +420,17 @@ struct Ui {
     std::uint8_t nav_route_target_count = 0;
     std::uint32_t nav_route_identity = 0;
     std::uint32_t nav_route_generation = 0;
+    // The latest motion frame's heading was already smoothed upstream (the
+    // parked compass slew): route_motion_tick() lands it without blending.
+    // Any navigation frame clears it, so position changes still glide.
+    bool nav_heading_presmoothed = false;
     lv_timer_t *nav_route_motion_timer = nullptr;
     lv_obj_t *nav_marker = nullptr;
     lv_obj_t *nav_status = nullptr;
     lv_obj_t *nav_distance = nullptr;
     lv_obj_t *nav_unit = nullptr;
     lv_obj_t *nav_maneuver = nullptr;
-    moto_maneuver_t nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
+    moto_maneuver_t nav_maneuver_type;
     lv_obj_t *nav_limit = nullptr;
     lv_obj_t *nav_limit_value = nullptr;
     lv_obj_t *nav_home = nullptr;
@@ -394,7 +449,7 @@ struct Ui {
     lv_obj_t *nav_ring = nullptr;
     lv_obj_t *nav_north = nullptr;
     std::uint8_t nav_radar_progress = 0;
-    moto_traffic_t nav_radar_traffic = MOTO_TRAFFIC_UNKNOWN;
+    moto_traffic_t nav_radar_traffic;
 
     // A full-screen empty-state surface replaces the old tiny
     // WAITING FOR PHONE / WAITING FOR ROUTE caption. It is kept inside the
@@ -415,9 +470,9 @@ struct Ui {
     lv_obj_t *lifecycle_bar = nullptr;
     lv_obj_t *lifecycle_bar_fill = nullptr;
     lv_obj_t *lifecycle_cursor = nullptr;
-    const char *lifecycle_message = "";
+    const char *lifecycle_message;
     std::uint32_t lifecycle_started_ms = 0;
-    int lifecycle_bar_steps = -1;
+    int lifecycle_bar_steps;
     ThemedText themed_text[kThemedTextCapacity]{};
     std::uint8_t themed_text_count = 0;
 
@@ -431,9 +486,9 @@ struct Ui {
     ThemedFill themed_fills[32]{};
     std::uint8_t themed_fill_count = 0;
     lv_timer_t *nav_success_timer = nullptr;
-    moto_ui_phone_connection_t phone_connection = MOTO_UI_PHONE_OFFLINE;
-    LifecycleVisual lifecycle_visual = LifecycleVisual::Hidden;
-    LifecycleVisual lifecycle_target = LifecycleVisual::Hidden;
+    moto_ui_phone_connection_t phone_connection;
+    LifecycleVisual lifecycle_visual;
+    LifecycleVisual lifecycle_target;
     bool lifecycle_success_active = false;
     bool navigation_has_guidance = false;
     bool navigation_route_request_in_flight = false;
@@ -474,11 +529,17 @@ struct Ui {
     lv_obj_t *perf_strip = nullptr;
     lv_timer_t *perf_timer_task = nullptr;
     enum class PerfState : std::uint8_t { Armed, Running, Launched };
-    PerfState perf_state = PerfState::Armed;
+    PerfState perf_state;
     std::uint32_t perf_run_start_ms = 0;
     std::uint32_t perf_still_since_ms = 0;
     std::uint16_t perf_best_centis = 0;
     std::uint32_t perf_last_centis = 0;
+    // Highest speed seen since the clock started; the abort rule compares
+    // against this, not the target, so a run that never gets close still ends.
+    std::uint16_t perf_peak_kph = 0;
+    // An aborted attempt must not restart from a rolling 5 km/h: the rider
+    // stopped that run on purpose. Rearm needs a real 1.5 s standstill.
+    bool perf_require_still = false;
     lv_obj_t *perf_long_g = nullptr;
     lv_obj_t *perf_lat_g = nullptr;
     lv_obj_t *perf_gg_dot = nullptr;
@@ -495,7 +556,7 @@ struct Ui {
     float lean_peak_left = 0.0F;
     float lean_peak_right = 0.0F;
     bool lean_has = false;
-    bool lean_scene_dirty = true;
+    bool lean_scene_dirty;
     // The numerals' own clock and value (DESIGN_V2 §2.7: 10 Hz, 0.6 deg
     // hysteresis). The horizon, sun and blip follow lean_deg every frame.
     std::uint32_t lean_text_tick_ms = 0;
@@ -558,9 +619,9 @@ struct Ui {
     volatile uint8_t lean_flag_poll = 0;
     volatile uint8_t lean_flag_full = 0;
     volatile uint8_t lean_flag_dirty = 0;
-    uint8_t lean_cal_applied = 255;
-    uint8_t lean_cal_value_applied = 255;
-    uint8_t lean_flags_applied = 255;
+    uint8_t lean_cal_applied;
+    uint8_t lean_cal_value_applied;
+    uint8_t lean_flags_applied;
     bool lean_countdown_pending = false;
     uint32_t lean_countdown_ms = 0;
     uint32_t lean_result_ms = 0;
@@ -570,16 +631,23 @@ struct Ui {
     // A terminal screen clears it, so every mutator becomes inert in the
     // shutdown window instead of trusting a pointer that still looks valid.
     bool live = false;
-} ui;
+};
+
+// Every other tree state is a few hundred bytes; this one is ~11 KiB because
+// it owns the map, GG and lean buffers. Internal DRAM is the scarce pool (the
+// BLE stack and all task stacks come from it), so keep it in PSRAM. The
+// object must stay zero-initialised for EXT_RAM_BSS_ATTR to place it there;
+// reset_ui_state() restores the handful of non-zero defaults.
+MOTO_UI_EXT_RAM Ui ui;
 
 void reset_ui_state() {
     static_assert(std::is_trivially_copyable_v<Ui>,
                   "Ui must remain safe to reset without a stack temporary");
 
-    // `ui = {}` materializes the complete aggregate as a temporary.  The
-    // offline map buffers make Ui about 15 KiB, so that temporary can consume
-    // nearly the whole ESP-IDF main-task stack before LVGL is called.  Clear
-    // the retained instance in place and restore the two non-zero defaults.
+    // `ui = {}` materializes the complete aggregate as a temporary. The
+    // offline map buffers make Ui about 14 KiB, so that temporary can consume
+    // nearly the whole ESP-IDF main-task stack before LVGL is called. Clear
+    // the retained instance in place and restore the non-zero defaults.
     //
     // This also clears `ui.live` and the four callbacks, so a caller that
     // intends to receive taps must install them *after* create(); a callback
@@ -588,9 +656,22 @@ void reset_ui_state() {
     ui.page = MOTO_UI_PAGE_NAVIGATION;
     ui.page_dots_visible = true;
     ui.nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
+    ui.nav_radar_traffic = MOTO_TRAFFIC_UNKNOWN;
     ui.phone_connection = MOTO_UI_PHONE_OFFLINE;
     ui.theme = MOTO_UI_THEME_GTA_DAY;
     ui.palette = kGtaDayPalette;
+    // The cover's first paint reads these before any lifecycle refresh.
+    ui.lifecycle_message = "";
+    ui.lifecycle_bar_steps = -1;
+    // 255 is "never applied", so the first Lean sample always reaches the
+    // status plate even when its state is zero.
+    ui.lean_cal_applied = 255;
+    ui.lean_cal_value_applied = 255;
+    ui.lean_flags_applied = 255;
+    std::memset(ui.nav_road_applied_class, 0xFF,
+                sizeof(ui.nav_road_applied_class));
+    std::memset(ui.nav_building_applied_class, 0xFF,
+                sizeof(ui.nav_building_applied_class));
     ui.lifecycle_visual = LifecycleVisual::Hidden;
     ui.lifecycle_target = LifecycleVisual::Hidden;
     // The Lean page's first state must apply its text even when it has no
@@ -970,13 +1051,6 @@ void apply_text_colors() {
     }
 }
 
-void copy_text(char *destination, std::size_t capacity, const char *source,
-               const char *fallback) {
-    if(capacity == 0) return;
-    const char *value = source != nullptr && source[0] != '\0' ? source : fallback;
-    std::snprintf(destination, capacity, "%s", value != nullptr ? value : "");
-}
-
 const char *cardinal_name(std::uint16_t heading) {
     static const char *names[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
     return names[((heading + 22U) / 45U) % 8U];
@@ -1204,9 +1278,9 @@ void draw_skyline(lv_event_t *event) {
     const bool own = given != nullptr;
     const lv_color_t window = (night && !own) ? palette.hud : palette.ground;
     const lv_color_t far = (night || own) ? palette.building_landmark
-                                          : palette.road_class[3];
+                                          : palette.skyline_far;
     const lv_color_t near = (night || own) ? palette.building
-                                           : palette.road_class[4];
+                                           : palette.skyline_near;
     draw_towers(layer, kFarTowers, sizeof(kFarTowers) / sizeof(kFarTowers[0]),
                 cx, cy, far, window, night && !own, reach);
     draw_towers(layer, kNearTowers,
@@ -1450,8 +1524,16 @@ void draw_building_fills(lv_event_t *event) {
     lv_area_t area;
     lv_obj_get_coords(object, &area);
     lv_layer_t *layer = lv_event_get_layer(event);
+    // A motion frame now invalidates only the streets/buildings that moved.
+    // Building fills are drawn one scanline at a time, so reject the rows and
+    // columns outside that dirty area instead of submitting thousands of
+    // fully clipped rectangles to LVGL.
+    const lv_area_t clip = layer->_clip_area;
     const int32_t local_width = area.x2 - area.x1;
     const int32_t local_height = area.y2 - area.y1;
+    const int32_t clip_left = std::max<int32_t>(0, clip.x1 - area.x1);
+    const int32_t clip_right = std::min<int32_t>(local_width,
+                                                  clip.x2 - area.x1);
 
     lv_draw_rect_dsc_t fill;
     lv_draw_rect_dsc_init(&fill);
@@ -1467,19 +1549,129 @@ void draw_building_fills(lv_event_t *event) {
         const lv_point_precise_t *points =
             &ui.nav_building_points[packed_index];
         fill.bg_color = span.building_class == 1U
-                            ? ui.palette.building_landmark
-                            : ui.palette.building;
+                            ? ui.palette.map_block_landmark
+                            : ui.palette.map_block;
 
+        float minimum_x = static_cast<float>(points[0].x);
+        float maximum_x = static_cast<float>(points[0].x);
         float minimum_y = static_cast<float>(points[0].y);
         float maximum_y = static_cast<float>(points[0].y);
         for(std::uint8_t i = 1; i < count; ++i) {
+            minimum_x = std::min(minimum_x, static_cast<float>(points[i].x));
+            maximum_x = std::max(maximum_x, static_cast<float>(points[i].x));
             minimum_y = std::min(minimum_y, static_cast<float>(points[i].y));
             maximum_y = std::max(maximum_y, static_cast<float>(points[i].y));
         }
-        const int32_t first_row = std::max<int32_t>(
-            0, static_cast<int32_t>(std::ceil(minimum_y)));
-        const int32_t last_row = std::min<int32_t>(
-            local_height, static_cast<int32_t>(std::floor(maximum_y)));
+        if(area.x1 + maximum_x < clip.x1 ||
+           area.x1 + minimum_x > clip.x2) {
+            packed_index += static_cast<std::size_t>(count) + 1U;
+            continue;
+        }
+        // Convex footprints are the common case, and a triangle fan is O(n)
+        // draw tasks instead of one per scanline. The fan triangles are
+        // expanded about their own centroid by a fraction of the inradius so
+        // neighbouring triangles overlap along the shared spokes; without that
+        // overlap LVGL's antialiased triangle edges leave a visible seam.
+        bool convex = count >= 3;
+        int turn_sign = 0;
+        for(std::uint8_t i = 0; i < count && convex; ++i) {
+            const lv_point_precise_t &a = points[i];
+            const lv_point_precise_t &b = points[(i + 1U) % count];
+            const lv_point_precise_t &c = points[(i + 2U) % count];
+            const float cross =
+                (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            if(std::abs(cross) < 0.01F) continue;
+            const int sign = cross > 0 ? 1 : -1;
+            if(turn_sign == 0) {
+                turn_sign = sign;
+            } else if(turn_sign != sign) {
+                convex = false;
+            }
+        }
+        if(convex) {
+            float centre_x = 0.0F;
+            float centre_y = 0.0F;
+            for(std::uint8_t i = 0; i < count; ++i) {
+                centre_x += static_cast<float>(points[i].x);
+                centre_y += static_cast<float>(points[i].y);
+            }
+            centre_x /= static_cast<float>(count);
+            centre_y /= static_cast<float>(count);
+            lv_draw_triangle_dsc_t triangle;
+            lv_draw_triangle_dsc_init(&triangle);
+            triangle.color = fill.bg_color;
+            triangle.opa = LV_OPA_COVER;
+            for(std::uint8_t i = 0; i < count; ++i) {
+                const lv_point_precise_t &a = points[i];
+                const lv_point_precise_t &b = points[(i + 1U) % count];
+                const float tri_cx =
+                    (centre_x + static_cast<float>(a.x) +
+                     static_cast<float>(b.x)) / 3.0F;
+                const float tri_cy =
+                    (centre_y + static_cast<float>(a.y) +
+                     static_cast<float>(b.y)) / 3.0F;
+                const float ab = std::hypot(
+                    static_cast<float>(b.x - a.x),
+                    static_cast<float>(b.y - a.y));
+                const float ca = std::hypot(
+                    static_cast<float>(a.x - centre_x),
+                    static_cast<float>(a.y - centre_y));
+                const float cb = std::hypot(
+                    static_cast<float>(b.x - centre_x),
+                    static_cast<float>(b.y - centre_y));
+                const float twice_area = std::abs(
+                    (static_cast<float>(a.x - centre_x) *
+                         static_cast<float>(b.y - centre_y)) -
+                    (static_cast<float>(a.y - centre_y) *
+                         static_cast<float>(b.x - centre_x)));
+                const float perimeter = ab + ca + cb;
+                const float inradius =
+                    perimeter > 0.0F ? twice_area / perimeter : 1.0F;
+                const float scale =
+                    1.0F + 0.75F / std::max(1.0F, inradius);
+                const auto expand = [&](float x, float y, int slot) {
+                    triangle.p[slot] = {
+                        static_cast<lv_value_precise_t>(
+                            area.x1 + tri_cx + (x - tri_cx) * scale),
+                        static_cast<lv_value_precise_t>(
+                            area.y1 + tri_cy + (y - tri_cy) * scale),
+                    };
+                };
+                expand(centre_x, centre_y, 0);
+                expand(static_cast<float>(a.x), static_cast<float>(a.y), 1);
+                expand(static_cast<float>(b.x), static_cast<float>(b.y), 2);
+                lv_draw_triangle(layer, &triangle);
+            }
+            packed_index += static_cast<std::size_t>(count) + 1U;
+            continue;
+        }
+
+        const int32_t first_row = std::max(
+            std::max<int32_t>(0, clip.y1 - area.y1),
+            static_cast<int32_t>(std::ceil(minimum_y)));
+        const int32_t last_row = std::min(
+            std::min<int32_t>(local_height, clip.y2 - area.y1),
+            static_cast<int32_t>(std::floor(maximum_y)));
+        // Most OSM footprints are rectangles: the scanline span repeats for
+        // every row. Merge identical spans into one rectangle instead of
+        // submitting one draw task per row. The old row-per-rect path was the
+        // dominant cost of a moving map frame once building fills were on.
+        bool run_active = false;
+        int32_t run_x1 = 0;
+        int32_t run_x2 = 0;
+        int32_t run_y1 = 0;
+        int32_t run_y2 = 0;
+        const auto flush_run = [&]() {
+            if(!run_active) return;
+            lv_area_t run_area = {
+                area.x1 + run_x1,
+                area.y1 + run_y1,
+                area.x1 + run_x2,
+                area.y1 + run_y2,
+            };
+            lv_draw_rect(layer, &fill, &run_area);
+            run_active = false;
+        };
         for(int32_t row = first_row; row <= last_row; ++row) {
             const float scan_y = static_cast<float>(row) + 0.5F;
             float crossings[MOTO_UI_BUILDING_POINT_CAPACITY];
@@ -1499,13 +1691,36 @@ void draw_building_fills(lv_event_t *event) {
                          static_cast<float>(points[i].x));
             }
             std::sort(crossings, crossings + crossing_count);
+            if(crossing_count == 2) {
+                const int32_t first_column = std::max(
+                    clip_left, static_cast<int32_t>(
+                                   std::ceil(crossings[0] - 0.5F)));
+                const int32_t last_column = std::min(
+                    clip_right, static_cast<int32_t>(
+                                    std::floor(crossings[1] - 0.5F)));
+                if(first_column <= last_column) {
+                    if(run_active && run_x1 == first_column &&
+                       run_x2 == last_column && run_y2 + 1 == row) {
+                        run_y2 = row;
+                    } else {
+                        flush_run();
+                        run_active = true;
+                        run_x1 = first_column;
+                        run_x2 = last_column;
+                        run_y1 = row;
+                        run_y2 = row;
+                    }
+                    continue;
+                }
+            }
+            flush_run();
             for(std::size_t i = 0; i + 1 < crossing_count; i += 2) {
-                const int32_t first_column = std::max<int32_t>(
-                    0, static_cast<int32_t>(
-                           std::ceil(crossings[i] - 0.5F)));
-                const int32_t last_column = std::min<int32_t>(
-                    local_width, static_cast<int32_t>(
-                                     std::floor(crossings[i + 1] - 0.5F)));
+                const int32_t first_column = std::max(
+                    clip_left, static_cast<int32_t>(
+                                   std::ceil(crossings[i] - 0.5F)));
+                const int32_t last_column = std::min(
+                    clip_right, static_cast<int32_t>(
+                                    std::floor(crossings[i + 1] - 0.5F)));
                 if(first_column > last_column) continue;
                 lv_area_t row_area = {
                     area.x1 + first_column,
@@ -1516,12 +1731,14 @@ void draw_building_fills(lv_event_t *event) {
                 lv_draw_rect(layer, &fill, &row_area);
             }
         }
+        flush_run();
         packed_index += static_cast<std::size_t>(count) + 1U;
     }
 }
 
-// Total extra width of a road's casing (one pixel each side at 466 px).
-constexpr int32_t kRoadCasingPx = 3;
+// Total extra width of a road's casing: two pixels each side at 466 px, the
+// hard black edge that makes a radar street read as cut, not stroked.
+constexpr int32_t kRoadCasingPx = 4;
 
 void draw_map_polyline(lv_event_t *event) {
     lv_obj_t *object = lv_event_get_target_obj(event);
@@ -1600,12 +1817,20 @@ lv_obj_t *create_map_polyline(lv_obj_t *parent, MapPolyline &polyline) {
     return object;
 }
 
+// Rebind the line's shared point array. This deliberately does not invalidate
+// the object: it is full-canvas, so a scene with 40 roads used to submit 40
+// full-screen invalidations before the map itself was even marked dirty. The
+// caller batches the frame into one map invalidation (or a dirty-area union
+// during motion).
 void set_map_polyline_points(lv_obj_t *object, const lv_point_precise_t *points,
                             std::uint16_t count) {
     auto *polyline = static_cast<MapPolyline *>(lv_obj_get_user_data(object));
     polyline->points = points;
     polyline->count = count;
-    lv_obj_invalidate(object);
+}
+
+void invalidate_map() {
+    if(ui.nav_map != nullptr) lv_obj_invalidate(ui.nav_map);
 }
 
 bool apply_route_geometry_frame(bool rebind_lines = true) {
@@ -1692,9 +1917,9 @@ bool apply_building_geometry_frame(bool rebind_lines = true) {
         }
         ++packed_index;
     }
-    if(ui.nav_building_fill != nullptr) {
-        lv_obj_invalidate(ui.nav_building_fill);
-    }
+    // The fill is a child of nav_map; the caller's map invalidation already
+    // repaints the spans it covers. Invalidating the full-canvas fill object
+    // here doubled the work of every building frame.
     return pixels_changed || rebind_lines;
 }
 
@@ -1704,7 +1929,43 @@ void route_motion_tick(lv_timer_t *) {
     // the old 0.56 at 40 ms, but supplies smaller and more frequent steps.
     // Screen coordinates need subpixel precision, not geographic doubles.
     // Float uses the ESP32-S3 FPU for every point in this 40 Hz hot loop.
-    const float blend = ui.reduce_motion ? 1.0F : 0.39F;
+    // A parked compass frame is a pure rotation the device has already
+    // slewed; blending it again added about 50 ms of lag on its own.
+    const float blend =
+        ui.reduce_motion || ui.nav_heading_presmoothed ? 1.0F : 0.39F;
+
+    // A moving line dirties its whole span, not just the moved vertices: when
+    // one end of a segment shifts, the line between them changes along its
+    // length. Accumulate a union of old/new spine and its span bounds, then
+    // invalidate only that area. A pure map pan covers the circle and behaves
+    // like the old full-map invalidation; a route or a single street changing
+    // no longer repaints the whole panel.
+    bool dirty = false;
+    int32_t dirty_x1 = 0;
+    int32_t dirty_y1 = 0;
+    int32_t dirty_x2 = 0;
+    int32_t dirty_y2 = 0;
+    const auto include = [&](float x, float y) {
+        const int32_t px_x = static_cast<int32_t>(std::lround(x));
+        const int32_t px_y = static_cast<int32_t>(std::lround(y));
+        if(!dirty) {
+            dirty = true;
+            dirty_x1 = dirty_x2 = px_x;
+            dirty_y1 = dirty_y2 = px_y;
+            return;
+        }
+        dirty_x1 = std::min(dirty_x1, px_x);
+        dirty_y1 = std::min(dirty_y1, px_y);
+        dirty_x2 = std::max(dirty_x2, px_x);
+        dirty_y2 = std::max(dirty_y2, px_y);
+    };
+    const auto include_span = [&](const float *xs, const float *ys,
+                                  std::uint8_t first, std::uint8_t count) {
+        for(std::uint8_t i = 0; i < count; ++i) {
+            include(xs[first + i], ys[first + i]);
+        }
+    };
+
     bool route_moved = false;
     for(std::uint8_t i = 0; i < ui.nav_route_point_count; ++i) {
         const float dx = ui.nav_route_target_x[i] - ui.nav_route_x[i];
@@ -1714,36 +1975,71 @@ void route_motion_tick(lv_timer_t *) {
             ui.nav_route_y[i] = ui.nav_route_target_y[i];
             continue;
         }
+        include(ui.nav_route_x[i], ui.nav_route_y[i]);
         ui.nav_route_x[i] += dx * blend;
         ui.nav_route_y[i] += dy * blend;
+        include(ui.nav_route_x[i], ui.nav_route_y[i]);
         route_moved = true;
     }
+    if(route_moved) {
+        include_span(ui.nav_route_x, ui.nav_route_y, 0,
+                     ui.nav_route_point_count);
+    }
+
     bool roads_moved = false;
-    for(std::uint8_t i = 0; i < ui.nav_road_point_count; ++i) {
-        const float dx = ui.nav_road_target_x[i] - ui.nav_road_x[i];
-        const float dy = ui.nav_road_target_y[i] - ui.nav_road_y[i];
-        if(std::abs(dx) < 0.08F && std::abs(dy) < 0.08F) {
-            ui.nav_road_x[i] = ui.nav_road_target_x[i];
-            ui.nav_road_y[i] = ui.nav_road_target_y[i];
-            continue;
+    for(std::uint8_t line = 0; line < ui.nav_road_polyline_count; ++line) {
+        const moto_ui_polyline_span_t span = ui.nav_road_spans[line];
+        bool line_moved = false;
+        for(std::uint8_t j = 0; j < span.point_count; ++j) {
+            const std::uint8_t i = span.first_point_index + j;
+            const float dx = ui.nav_road_target_x[i] - ui.nav_road_x[i];
+            const float dy = ui.nav_road_target_y[i] - ui.nav_road_y[i];
+            if(std::abs(dx) < 0.08F && std::abs(dy) < 0.08F) {
+                ui.nav_road_x[i] = ui.nav_road_target_x[i];
+                ui.nav_road_y[i] = ui.nav_road_target_y[i];
+                continue;
+            }
+            include(ui.nav_road_x[i], ui.nav_road_y[i]);
+            ui.nav_road_x[i] += dx * blend;
+            ui.nav_road_y[i] += dy * blend;
+            include(ui.nav_road_x[i], ui.nav_road_y[i]);
+            line_moved = true;
         }
-        ui.nav_road_x[i] += dx * blend;
-        ui.nav_road_y[i] += dy * blend;
-        roads_moved = true;
+        if(line_moved) {
+            include_span(ui.nav_road_x, ui.nav_road_y,
+                         span.first_point_index, span.point_count);
+            roads_moved = true;
+        }
     }
+
     bool buildings_moved = false;
-    for(std::uint8_t i = 0; i < ui.nav_building_point_count; ++i) {
-        const float dx = ui.nav_building_target_x[i] - ui.nav_building_x[i];
-        const float dy = ui.nav_building_target_y[i] - ui.nav_building_y[i];
-        if(std::abs(dx) < 0.08F && std::abs(dy) < 0.08F) {
-            ui.nav_building_x[i] = ui.nav_building_target_x[i];
-            ui.nav_building_y[i] = ui.nav_building_target_y[i];
-            continue;
+    for(std::uint8_t footprint = 0;
+        footprint < ui.nav_building_footprint_count; ++footprint) {
+        const moto_ui_building_span_t span =
+            ui.nav_building_spans[footprint];
+        bool footprint_moved = false;
+        for(std::uint8_t j = 0; j < span.point_count; ++j) {
+            const std::uint8_t i = span.first_point_index + j;
+            const float dx = ui.nav_building_target_x[i] - ui.nav_building_x[i];
+            const float dy = ui.nav_building_target_y[i] - ui.nav_building_y[i];
+            if(std::abs(dx) < 0.08F && std::abs(dy) < 0.08F) {
+                ui.nav_building_x[i] = ui.nav_building_target_x[i];
+                ui.nav_building_y[i] = ui.nav_building_target_y[i];
+                continue;
+            }
+            include(ui.nav_building_x[i], ui.nav_building_y[i]);
+            ui.nav_building_x[i] += dx * blend;
+            ui.nav_building_y[i] += dy * blend;
+            include(ui.nav_building_x[i], ui.nav_building_y[i]);
+            footprint_moved = true;
         }
-        ui.nav_building_x[i] += dx * blend;
-        ui.nav_building_y[i] += dy * blend;
-        buildings_moved = true;
+        if(footprint_moved) {
+            include_span(ui.nav_building_x, ui.nav_building_y,
+                         span.first_point_index, span.point_count);
+            buildings_moved = true;
+        }
     }
+
     // The line objects retain pointers to the mutable point arrays. Ordinary
     // animation therefore only changes those arrays and invalidates the one
     // common map layer. Rebinding every road/building used to invalidate the
@@ -1758,7 +2054,21 @@ void route_motion_tick(lv_timer_t *) {
     if(route_moved) {
         pixels_changed = apply_route_geometry_frame(false) || pixels_changed;
     }
-    if(pixels_changed) lv_obj_invalidate(ui.nav_map);
+    if(!pixels_changed) return;
+    if(!dirty) {
+        invalidate_map();
+        return;
+    }
+    constexpr int32_t kPadding = 24;
+    lv_area_t map_area;
+    lv_obj_get_coords(ui.nav_map, &map_area);
+    lv_area_t area = {
+        map_area.x1 + dirty_x1 - kPadding,
+        map_area.y1 + dirty_y1 - kPadding,
+        map_area.x1 + dirty_x2 + kPadding,
+        map_area.y1 + dirty_y2 + kPadding,
+    };
+    lv_obj_invalidate_area(ui.nav_map, &area);
 }
 
 void update_road_geometry(const moto_ui_state_t *state) {
@@ -1810,18 +2120,33 @@ void update_road_geometry(const moto_ui_state_t *state) {
     if(spans_changed) {
         for(std::uint8_t i = 0; i < MOTO_UI_ROAD_POLYLINE_CAPACITY; ++i) {
             if(i < polyline_count) {
-                const RoadStroke stroke =
-                    road_stroke(ui.palette, ui.nav_road_spans[i].road_class);
-                lv_obj_set_style_line_width(ui.nav_roads[i],
-                                            px(stroke.width_design), 0);
-                lv_obj_set_style_line_color(ui.nav_roads[i], stroke.color, 0);
-                lv_obj_remove_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
-            } else {
+                const std::uint8_t road_class =
+                    ui.nav_road_spans[i].road_class;
+                // The class, not the revision, chooses the stroke. A new
+                // window usually keeps the same classes, and restyling a
+                // full-canvas line object would invalidate the whole map.
+                if(ui.nav_road_applied_class[i] != road_class) {
+                    const RoadStroke stroke =
+                        road_stroke(ui.palette, road_class);
+                    lv_obj_set_style_line_width(ui.nav_roads[i],
+                                                px(stroke.width_design), 0);
+                    lv_obj_set_style_line_color(ui.nav_roads[i], stroke.color,
+                                                0);
+                    ui.nav_road_applied_class[i] = road_class;
+                }
+                if(lv_obj_has_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN)) {
+                    lv_obj_remove_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
+                }
+            } else if(!lv_obj_has_flag(ui.nav_roads[i],
+                                       LV_OBJ_FLAG_HIDDEN)) {
                 lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
             }
         }
     }
-    if(snap) apply_road_geometry_frame();
+    if(snap) {
+        apply_road_geometry_frame();
+        invalidate_map();
+    }
 }
 
 
@@ -1830,20 +2155,30 @@ void update_road_geometry(const moto_ui_state_t *state) {
 // so both are driven from this single place. Lives in the anonymous namespace
 // because the public setter only forwards to it.
 void apply_building_visibility() {
+    // Repeat calls arrive on every scene revision. Only touch a flag that is
+    // actually different: a redundant remove_flag/add_flag invalidates the
+    // full-canvas line and turns a no-op into a map repaint.
     if(ui.nav_building_fill != nullptr) {
-        if(ui.show_buildings) {
+        const bool hidden =
+            lv_obj_has_flag(ui.nav_building_fill, LV_OBJ_FLAG_HIDDEN);
+        if(ui.show_buildings && hidden) {
             lv_obj_remove_flag(ui.nav_building_fill, LV_OBJ_FLAG_HIDDEN);
-        } else {
+        } else if(!ui.show_buildings && !hidden) {
             lv_obj_add_flag(ui.nav_building_fill, LV_OBJ_FLAG_HIDDEN);
         }
     }
     for(std::uint8_t i = 0; i < MOTO_UI_BUILDING_FOOTPRINT_CAPACITY; ++i) {
         if(ui.nav_buildings[i] == nullptr) continue;
         // A slot past footprint_count is unused, not merely off-screen.
-        if(ui.show_buildings && i < ui.nav_building_footprint_count) {
-            lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
+        const bool want_hidden =
+            !ui.show_buildings || i >= ui.nav_building_footprint_count;
+        const bool hidden =
+            lv_obj_has_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
+        if(want_hidden == hidden) continue;
+        if(want_hidden) {
             lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
 }
@@ -1868,8 +2203,8 @@ void update_building_geometry(const moto_ui_state_t *state) {
         for(lv_obj_t *building : ui.nav_buildings) {
             lv_obj_add_flag(building, LV_OBJ_FLAG_HIDDEN);
         }
-        if(had_buildings && ui.nav_building_fill != nullptr) {
-            lv_obj_invalidate(ui.nav_building_fill);
+        if(had_buildings) {
+            invalidate_map();
         }
         return;
     }
@@ -1908,19 +2243,26 @@ void update_building_geometry(const moto_ui_state_t *state) {
         for(std::uint8_t i = 0;
             i < MOTO_UI_BUILDING_FOOTPRINT_CAPACITY; ++i) {
             if(i < footprint_count) {
-                const bool landmark =
-                    ui.nav_building_spans[i].building_class == 1U;
-                lv_obj_set_style_line_color(
-                    ui.nav_buildings[i],
-                    landmark ? ui.palette.building_landmark
-                             : ui.palette.building, 0);
-                lv_obj_set_style_line_width(
-                    ui.nav_buildings[i], px(landmark ? 2 : 1), 0);
+                const std::uint8_t building_class =
+                    ui.nav_building_spans[i].building_class;
+                if(ui.nav_building_applied_class[i] != building_class) {
+                    const bool landmark = building_class == 1U;
+                    lv_obj_set_style_line_color(
+                        ui.nav_buildings[i],
+                        landmark ? ui.palette.map_block_landmark
+                                 : ui.palette.map_block, 0);
+                    lv_obj_set_style_line_width(
+                        ui.nav_buildings[i], px(landmark ? 2 : 1), 0);
+                    ui.nav_building_applied_class[i] = building_class;
+                }
             }
         }
         apply_building_visibility();
     }
-    if(snap) apply_building_geometry_frame();
+    if(snap) {
+        apply_building_geometry_frame();
+        invalidate_map();
+    }
 }
 
 void update_route_geometry(const moto_ui_state_t *state) {
@@ -1971,7 +2313,10 @@ void update_route_geometry(const moto_ui_state_t *state) {
     lv_obj_remove_flag(ui.nav_route_shadow, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(ui.nav_route, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(ui.nav_marker, LV_OBJ_FLAG_HIDDEN);
-    if(snap) apply_route_geometry_frame();
+    if(snap) {
+        apply_route_geometry_frame();
+        invalidate_map();
+    }
 }
 
 lv_point_precise_t arrow_base(const lv_point_precise_t& previous,
@@ -2621,6 +2966,18 @@ void perf_report(std::uint32_t elapsed_ms) {
     ui.perf_callback(&run, ui.perf_context);
 }
 
+// Ends a live run without a result. The phone sees the same Armed transition
+// it gets after a completed run, so its race log does not keep a timer open.
+void perf_abort(const char *reason) {
+    ui.perf_state = Ui::PerfState::Armed;
+    ui.perf_still_since_ms = 0;
+    ui.perf_peak_kph = 0;
+    ui.perf_require_still = true;
+    if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, reason);
+    if(ui.perf_timer != nullptr) lv_label_set_text(ui.perf_timer, "-.-");
+    perf_report(0);
+}
+
 void perf_tick(lv_timer_t *) {
     if(ui.perf_timer == nullptr || !ui.live) return;
     if(ui.perf_state != Ui::PerfState::Running) return;
@@ -2635,17 +2992,38 @@ void update_performance(const moto_ui_state_t *state) {
     const std::uint32_t now = lv_tick_get();
     switch(ui.perf_state) {
         case Ui::PerfState::Armed:
+            if(ui.perf_require_still) {
+                // The aborted run's speed is not a launch. Wait for the bike
+                // to be still before arming the next attempt.
+                if(speed == 0) {
+                    if(ui.perf_still_since_ms == 0) {
+                        ui.perf_still_since_ms = now;
+                    } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
+                              kPerfRearmStillMs) {
+                        ui.perf_require_still = false;
+                        ui.perf_still_since_ms = 0;
+                    }
+                } else {
+                    ui.perf_still_since_ms = 0;
+                }
+                break;
+            }
             // Rolling away from a standstill starts the clock; the strip is
             // the only thing that moves until then.
             if(speed >= 1) {
                 ui.perf_state = Ui::PerfState::Running;
                 ui.perf_run_start_ms = now;
+                ui.perf_peak_kph = speed;
+                ui.perf_still_since_ms = 0;
+                ui.perf_require_still = false;
                 ++ui.perf_run_id;
+                if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "");
                 perf_set_elapsed(0);
                 perf_report(0);
             }
             break;
         case Ui::PerfState::Running:
+            if(speed > ui.perf_peak_kph) ui.perf_peak_kph = speed;
             if(speed >= kPerfTargetKph) {
                 const std::uint32_t elapsed_ms =
                     lv_tick_elaps(ui.perf_run_start_ms);
@@ -2676,8 +3054,26 @@ void update_performance(const moto_ui_state_t *state) {
                     }
                 }
                 ui.perf_state = Ui::PerfState::Launched;
+                ui.perf_peak_kph = 0;
+                ui.perf_still_since_ms = 0;
                 perf_report(elapsed_ms);
+            } else if(lv_tick_elaps(ui.perf_run_start_ms) >= kPerfTimeoutMs) {
+                perf_abort("TIME");
+            } else if(static_cast<int>(ui.perf_peak_kph) -
+                          static_cast<int>(speed) >
+                      static_cast<int>(kPerfAbortDropKph)) {
+                // Lifting off or braking means this attempt is over. Waiting
+                // for the bike to reach 0 would keep a dead clock on screen.
+                perf_abort("ABORT");
+            } else if(speed == 0) {
+                if(ui.perf_still_since_ms == 0) {
+                    ui.perf_still_since_ms = now;
+                } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
+                          kPerfRearmStillMs) {
+                    perf_abort("ABORT");
+                }
             } else {
+                ui.perf_still_since_ms = 0;
                 perf_set_elapsed(lv_tick_elaps(ui.perf_run_start_ms) / 10U);
             }
             break;
@@ -2691,6 +3087,8 @@ void update_performance(const moto_ui_state_t *state) {
                           kPerfRearmStillMs) {
                     ui.perf_state = Ui::PerfState::Armed;
                     ui.perf_still_since_ms = 0;
+                    ui.perf_peak_kph = 0;
+                    ui.perf_require_still = false;
                     perf_report(0);
                     if(ui.perf_delta != nullptr) {
                         lv_label_set_text(ui.perf_delta, "");
@@ -2970,6 +3368,34 @@ void lean_refresh_start(lv_event_t *) {
     ui.lean_drawn_arc = arc;
 }
 
+// The marquee's speed, in design pixels per second. A 40 px face at 64 px/s
+// crosses the 288 px plate in about four seconds: fast enough to read a long
+// title, slow enough that the glyphs are not a blur on a handlebar.
+constexpr int kMusicTitleScrollPxPerSecond = 64;
+
+void update_music_title_scroll() {
+    if(ui.music_title == nullptr) return;
+    const lv_font_t *font =
+        lv_obj_get_style_text_font(ui.music_title, LV_PART_MAIN);
+    lv_point_t text_size;
+    lv_text_get_size(&text_size, ui.music_title_text, font, 0, 0, LV_COORD_MAX,
+                     LV_TEXT_FLAG_NONE);
+    const int32_t window = lv_obj_get_width(ui.music_title);
+    if(window <= 0 || text_size.x <= window) {
+        // Fits: LVGL deletes the scroll animation by itself, and a zero
+        // duration means "never start one".
+        lv_obj_set_style_anim_duration(ui.music_title, 0, 0);
+        return;
+    }
+    // LVGL adds a gap of a few spaces and scrolls the text past the window, so
+    // the duration covers both to keep the speed constant.
+    const int32_t distance = text_size.x + window;
+    const auto duration_ms = static_cast<std::uint32_t>(
+        (static_cast<std::int64_t>(distance) * 1000) /
+        kMusicTitleScrollPxPerSecond);
+    lv_obj_set_style_anim_duration(ui.music_title, duration_ms, 0);
+}
+
 void update_music_view() {
     if(ui.music_source == nullptr) return;
     lv_label_set_text(ui.music_source,
@@ -2977,6 +3403,7 @@ void update_music_view() {
                                          : "NO SIGNAL");
     lv_label_set_text(ui.music_title, ui.music_title_text);
     lv_label_set_text(ui.music_artist, ui.music_artist_text);
+    update_music_title_scroll();
     lv_label_set_text(ui.music_button_labels[1],
                       ui.music.playing ? "II" : ">");
     lv_label_set_text(ui.music_button_labels[3],
@@ -3137,7 +3564,7 @@ void create_navigation_page() {
     // drawn over its edge. Nothing square ever shows inside the glass.
     lv_obj_set_style_radius(ui.nav_map, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_clip_corner(ui.nav_map, true, 0);
-    lv_obj_set_style_bg_color(ui.nav_map, ui.palette.background, 0);
+    lv_obj_set_style_bg_color(ui.nav_map, ui.palette.map_land, 0);
     lv_obj_set_style_bg_opa(ui.nav_map, LV_OPA_COVER, 0);
 
     // The map owns a solid land colour so the GTA day theme can switch the
@@ -3150,7 +3577,7 @@ void create_navigation_page() {
                     MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_pos(ui.nav_map_background, 0, 0);
     lv_obj_set_style_bg_color(ui.nav_map_background,
-                              ui.palette.background, 0);
+                              ui.palette.map_land, 0);
     lv_obj_set_style_bg_opa(ui.nav_map_background, LV_OPA_COVER, 0);
 
     // Footprint fills sit beneath the building outlines. A triangle fan from
@@ -3176,7 +3603,7 @@ void create_navigation_page() {
         lv_obj_set_size(ui.nav_buildings[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
         lv_obj_set_style_line_width(ui.nav_buildings[i], px(1), 0);
         lv_obj_set_style_line_color(ui.nav_buildings[i],
-                                     ui.palette.building, 0);
+                                     ui.palette.map_block, 0);
         lv_obj_set_style_line_opa(ui.nav_buildings[i], LV_OPA_COVER, 0);
         lv_obj_set_style_line_rounded(ui.nav_buildings[i], false, 0);
         lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
@@ -3204,14 +3631,17 @@ void create_navigation_page() {
         lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
     }
 
+    // The route is the loudest thing on the plate: a health-orange ribbon a
+    // step wider than an arterial, on a casing that swallows the street under
+    // it, so it reads as the GPS line laid over the city rather than a road.
     ui.nav_route_shadow = create_map_polyline(ui.nav_map, ui.nav_route_shadow_line);
     lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_set_style_line_width(ui.nav_route_shadow, px(13), 0);
+    lv_obj_set_style_line_width(ui.nav_route_shadow, px(15), 0);
     lv_obj_set_style_line_color(ui.nav_route_shadow, ui.palette.route_shadow, 0);
     lv_obj_set_style_line_rounded(ui.nav_route_shadow, true, 0);
     ui.nav_route = create_map_polyline(ui.nav_map, ui.nav_route_line);
     lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_set_style_line_width(ui.nav_route, px(6), 0);
+    lv_obj_set_style_line_width(ui.nav_route, px(9), 0);
     lv_obj_set_style_line_color(ui.nav_route, ui.palette.route, 0);
     lv_obj_set_style_line_rounded(ui.nav_route, true, 0);
     ui.nav_route_motion_timer = lv_timer_create(route_motion_tick,
@@ -3583,6 +4013,11 @@ void create_compass_page() {
     ui.compass_speed = lv_obj_get_child(speed, 0);
 }
 
+void perf_stop_event(lv_event_t *) {
+    if(!ui.live) return;
+    if(ui.perf_state == Ui::PerfState::Running) perf_abort("STOP");
+}
+
 void create_performance_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_PERFORMANCE];
     make_page_surface(page, MOTO_UI_PAGE_PERFORMANCE);
@@ -3634,6 +4069,11 @@ void create_performance_page() {
     // The stopwatch runs on its own timer: state snapshots arrive at the BLE
     // cadence, but the clock has to move between them.
     ui.perf_timer_task = lv_timer_create(perf_tick, 50, nullptr);
+
+    // A deliberate tap is the rider's own stop. It only affects a live run;
+    // a finished result stays on screen until the bike stops or a new run
+    // starts, exactly as before.
+    lv_obj_add_event_cb(page, perf_stop_event, LV_EVENT_CLICKED, nullptr);
 }
 
 void clear_lean_peaks() {
@@ -4396,8 +4836,11 @@ void create_music_page() {
     ui.music_title = make_text(page, &moto_font_display_40_cjk,
                                TextRole::Display, "NIGHT RIDE");
     lv_obj_set_width(ui.music_title, px(288));
-    lv_obj_set_style_text_align(ui.music_title, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(ui.music_title, LV_LABEL_LONG_WRAP);
+    // A long title runs across the plate like a station ident instead of
+    // stacking into the artist line. One line, always: the label grows to the
+    // rendered face's line height (the CJK fallback is the taller one), never
+    // to a second line.
+    lv_label_set_long_mode(ui.music_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_align(ui.music_title, LV_ALIGN_TOP_MID, 0, px(110));
 
     ui.music_artist = make_text(page, &moto_font_display_24_cjk,
@@ -4795,7 +5238,10 @@ void apply_theme_colors() {
     }
     if(ui.nav_map_background != nullptr) {
         lv_obj_set_style_bg_color(ui.nav_map_background,
-                                  ui.palette.background, 0);
+                                  ui.palette.map_land, 0);
+    }
+    if(ui.nav_map != nullptr) {
+        lv_obj_set_style_bg_color(ui.nav_map, ui.palette.map_land, 0);
     }
     if(ui.lean_scene != nullptr) {
         lv_obj_set_style_bg_color(ui.lean_scene, ui.palette.ground, 0);
@@ -4831,7 +5277,7 @@ void apply_theme_colors() {
         const bool landmark = ui.nav_building_spans[i].building_class == 1U;
         lv_obj_set_style_line_color(
             ui.nav_buildings[i],
-            landmark ? ui.palette.building_landmark : ui.palette.building, 0);
+            landmark ? ui.palette.map_block_landmark : ui.palette.map_block, 0);
     }
     for(std::uint8_t i = 0; i < ui.nav_road_polyline_count; ++i) {
         lv_obj_set_style_line_color(
@@ -4884,6 +5330,7 @@ void moto_ui_gta::set_ambient_night(uint8_t is_night) {
 
 void moto_ui_gta::set_state(const moto_ui_state_t *state) {
     if(state == nullptr || !ui.live) return;
+    ui.nav_heading_presmoothed = false;
     ui.nav_speed_kph = state->speed_kph;
     // The envelope is a record of the ride, not of the time spent looking.
     accumulate_gg(state);
@@ -4923,10 +5370,15 @@ void moto_ui_gta::set_motion_state(const moto_ui_state_t *state) {
     // compass rose actually changes with yaw; labels, arcs and hidden pages
     // remain untouched so LVGL submits a small, bounded dirty region.
     if(ui.page == MOTO_UI_PAGE_NAVIGATION) {
+        ui.nav_heading_presmoothed = state->heading_presmoothed != 0;
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);
         update_radar_ring(state);
+        // Nothing left to interpolate: apply the frame now rather than on
+        // the next 25 ms tick, so the caller's refresh can draw it at once.
+        // That tick then finds every point settled and draws nothing.
+        if(ui.nav_heading_presmoothed) route_motion_tick(nullptr);
     } else if(ui.page == MOTO_UI_PAGE_COMPASS) {
         update_compass(state);
     } else if(ui.page == MOTO_UI_PAGE_LEAN) {
@@ -5012,12 +5464,18 @@ void moto_ui_gta::set_page_change_callback(
 void moto_ui_gta::set_music_state(const moto_music_state_t *state) {
     if(state == nullptr || !ui.live) return;
     ui.music = *state;
-    copy_text(ui.music_source_text, sizeof(ui.music_source_text),
-              state->source_name, "PHONE MEDIA");
-    copy_text(ui.music_title_text, sizeof(ui.music_title_text),
-              state->track_title, "--");
-    copy_text(ui.music_artist_text, sizeof(ui.music_artist_text),
-              state->artist_name, "--");
+    moto::nav_ui::copy_display_text(ui.music_source_text,
+                                    sizeof(ui.music_source_text),
+                                    &moto_font_display_24, state->source_name,
+                                    "PHONE MEDIA");
+    moto::nav_ui::copy_display_text(ui.music_title_text,
+                                    sizeof(ui.music_title_text),
+                                    &moto_font_display_40_cjk,
+                                    state->track_title, "--");
+    moto::nav_ui::copy_display_text(ui.music_artist_text,
+                                    sizeof(ui.music_artist_text),
+                                    &moto_font_display_24_cjk,
+                                    state->artist_name, "--");
     ui.music.source_name = ui.music_source_text;
     ui.music.track_title = ui.music_title_text;
     ui.music.artist_name = ui.music_artist_text;

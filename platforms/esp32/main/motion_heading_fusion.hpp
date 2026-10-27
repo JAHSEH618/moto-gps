@@ -21,6 +21,10 @@ class MotionHeadingFusion {
     heading_deg_ = 0.0F;
     filtered_rate_dps_ = 0.0F;
     last_sample_ms_ = 0;
+    has_compass_target_ = false;
+    compass_slewed_ = false;
+    compass_target_deg_ = 0.0F;
+    slew_last_ms_ = 0;
   }
 
   void anchor(float phone_heading_deg, float speed_mps,
@@ -51,6 +55,7 @@ class MotionHeadingFusion {
       initialized_ = true;
       has_phone_reference_ = true;
       has_moving_course_ = moving_course;
+      has_compass_target_ = false;
       return;
     }
 
@@ -86,11 +91,28 @@ class MotionHeadingFusion {
       heading_deg_ = compass;
       initialized_ = true;
       has_phone_reference_ = true;
+      has_compass_target_ = false;
       return;
     }
-    // The phone filters its own compass and reports about once a second;
-    // most of the error per report keeps a parked bike's pivot readable
-    // without a visible snap.
+    if (stationary_) {
+      // Parked, the gyro is frozen and this compass is the whole heading.
+      // Applying it here moved the map once per report (once a second, then
+      // 70% of the way), so a turned phone took two or three seconds to show
+      // on the dial. Instead it becomes a target that integrate() glides to
+      // at the sensor rate. A slew no IMU sample has advanced since the last
+      // report means there is no IMU: land that one so the compass still
+      // steps without a QMI8658.
+      if (has_compass_target_ && !compass_slewed_) {
+        heading_deg_ = compass_target_deg_;
+      }
+      compass_target_deg_ = compass;
+      has_compass_target_ = true;
+      compass_slewed_ = false;
+      return;
+    }
+    // Rolling slowly the gyro integrates between reports; the phone filters
+    // its own compass, and most of the error per report keeps a slow pivot
+    // readable without a visible snap.
     const float error = shortest_delta(compass, heading_deg_);
     heading_deg_ = normalize(heading_deg_ + error * kCompassCorrection);
   }
@@ -102,10 +124,14 @@ class MotionHeadingFusion {
       return false;
     }
     if (stationary_) {
-      // Parked: hold the heading exactly. Keep last_sample_ms_ untouched so
-      // the first sample after pulling away only sees a normal-rate gap.
-      return false;
+      // Parked: the gyro is ignored and only a compass target moves the
+      // heading. Keep last_sample_ms_ untouched so the first sample after
+      // pulling away only sees a normal-rate gap.
+      return slew_to_compass(sample_ms);
     }
+    // A target left from parking is stale once the gyro integrates again.
+    has_compass_target_ = false;
+    slew_last_ms_ = 0;
     if (!initialized_) {
       // Relative motion remains useful before the first trustworthy course;
       // zero degrees is explicitly just a temporary local reference.
@@ -144,6 +170,11 @@ class MotionHeadingFusion {
 
   [[nodiscard]] bool initialized() const noexcept { return initialized_; }
   [[nodiscard]] float heading_deg() const noexcept { return heading_deg_; }
+  // Parked with a phone reference, only the compass slew moves the heading,
+  // so it is already smoothed and the map only rotates under the rider.
+  [[nodiscard]] bool compass_driven() const noexcept {
+    return stationary_ && has_phone_reference_;
+  }
 
  private:
   static constexpr float kCourseAnchorSpeedMps = 1.5F;
@@ -151,6 +182,36 @@ class MotionHeadingFusion {
   static constexpr float kDeadbandDps = 0.65F;
   static constexpr float kCompassCorrection = 0.7F;
   static constexpr std::uint64_t kMaximumIntegrationGapMs = 160;
+  // 40 ms: a compass step is 99% drawn before the phone's next 5 Hz report,
+  // and still spans several 40 Hz map frames, so it shows as a turn rather
+  // than a jump. The steady lag behind a phone turning at a constant rate is
+  // about tau. This is the only smoothing the map gets while parked: the UI
+  // lands compass frames without its own blend (heading_presmoothed).
+  static constexpr float kCompassSlewTauMs = 40.0F;
+  static constexpr float kCompassSettledDeg = 0.05F;
+
+  // Runs on every parked IMU sample. The clock advances even without a
+  // target, so a new target's first step sees one sample period, not the
+  // time since the last report.
+  bool slew_to_compass(std::uint64_t sample_ms) noexcept {
+    const std::uint64_t previous_ms = slew_last_ms_;
+    if (sample_ms <= previous_ms) return false;
+    slew_last_ms_ = sample_ms;
+    if (!has_compass_target_ || previous_ms == 0) return false;
+    compass_slewed_ = true;
+    const float error = shortest_delta(compass_target_deg_, heading_deg_);
+    if (std::abs(error) < kCompassSettledDeg) {
+      heading_deg_ = compass_target_deg_;
+      has_compass_target_ = false;
+      return true;
+    }
+    const std::uint64_t elapsed_ms =
+        std::min(sample_ms - previous_ms, kMaximumIntegrationGapMs);
+    const float step = 1.0F - std::exp(-static_cast<float>(elapsed_ms) /
+                                       kCompassSlewTauMs);
+    heading_deg_ = normalize(heading_deg_ + error * step);
+    return true;
+  }
 
   static float normalize(float value) noexcept {
     float result = std::fmod(value, 360.0F);
@@ -172,4 +233,8 @@ class MotionHeadingFusion {
   float heading_deg_ = 0.0F;
   float filtered_rate_dps_ = 0.0F;
   std::uint64_t last_sample_ms_ = 0;
+  bool has_compass_target_ = false;
+  bool compass_slewed_ = false;
+  float compass_target_deg_ = 0.0F;
+  std::uint64_t slew_last_ms_ = 0;
 };

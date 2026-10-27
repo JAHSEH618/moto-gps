@@ -10,6 +10,9 @@
 #include "demo_fixture/jinan_big_data_demo.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
+#ifdef ESP_PLATFORM
+#include "esp_lv_adapter.h"
+#endif
 #include "moto_nav_ui.h"
 
 namespace {
@@ -408,6 +411,7 @@ void PhoneNavBridge::on_link_state(bool active) {
     } else {
       phone_session_id_ = 0;
       phone_capabilities_ = 0;
+      has_pending_display_page_ = false;
       attitude_pending_ = false;
       phone_snapshot.network = moto::nav::NetworkState::Offline;
       phone_snapshot.gnss_stale = true;
@@ -467,6 +471,10 @@ void PhoneNavBridge::on_imu_sample(
         heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
       snapshot_.heading_deg = heading_fusion_.heading_deg();
     }
+    // Parked, the fusion's compass slew is the heading's only smoothing; the
+    // UI lands these frames instead of blending them a second time.
+    snapshot_.heading_presmoothed =
+        !demo_active_ && heading_fusion_.compass_driven();
 
     // The QMI8658 runs at 125 Hz. Reproject at the display's unified 40 Hz
     // cadence; requests still coalesce if one physical refresh runs long.
@@ -765,7 +773,12 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
             }
           }
           if (home_refused) request_render(RenderHomeError);
-        } else if constexpr (std::is_same_v<T, moto::ble::DeviceCommand>) {
+        } else if constexpr (std::is_same_v<T, moto::ble::DeviceCommand> ||
+                             std::is_same_v<T, moto::ble::WifiStatus>) {
+          return moto::ble::AckStatus::Unsupported;
+        } else if constexpr (std::is_same_v<T, moto::ble::WifiConfig>) {
+          // app_main routes WifiConfig to WifiLink, which checks the bond.
+          // Reaching here means no WiFi owner is installed.
           return moto::ble::AckStatus::Unsupported;
         }
         return moto::ble::AckStatus::Ok;
@@ -804,6 +817,9 @@ void PhoneNavBridge::consume_navigation(
   SpeedListener speed_listener = nullptr;
   void* speed_context = nullptr;
   moto::motion::SpeedFix fix;
+  NavigationListener navigation_listener = nullptr;
+  void* navigation_context = nullptr;
+  bool route_active = false;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     // A valid phone snapshot is always authoritative. Older firmware allowed
@@ -851,8 +867,27 @@ void PhoneNavBridge::consume_navigation(
     }
 
     phone_snapshot.state = map_state(input.state);
+    navigation_listener = navigation_listener_;
+    navigation_context = navigation_listener_context_;
+    route_active = phone_snapshot.state == moto::nav::NavState::Navigating ||
+                   phone_snapshot.state == moto::nav::NavState::Rerouting;
     phone_snapshot.network = map_network(input.network);
-    phone_snapshot.display_page = map_page(input.display_page);
+    // A swipe changes the page on the glass immediately and tells the phone
+    // afterwards. Snapshots already on the wire carry the page from before
+    // that tap; applying one would show the old page for a frame and then the
+    // new one, which reads as a stutter. Hold the rider's choice until the
+    // phone echoes it, or for a short bounded window on an older phone that
+    // never does.
+    const moto::nav::DisplayPage incoming_page = map_page(input.display_page);
+    if (has_pending_display_page_) {
+      if (incoming_page == pending_display_page_) {
+        has_pending_display_page_ = false;
+      } else if (monotonic_ms() - pending_display_page_ms_ >= 2'000U) {
+        has_pending_display_page_ = false;
+      }
+    }
+    phone_snapshot.display_page =
+        has_pending_display_page_ ? pending_display_page_ : incoming_page;
     phone_snapshot.has_destination = has_flag(
         input.flags, moto::ble::NavigationHasDestination);
     phone_snapshot.has_usable_fix = has_usable_fix;
@@ -870,6 +905,21 @@ void PhoneNavBridge::consume_navigation(
     phone_snapshot.heading_deg = heading_fusion_.initialized()
                                      ? heading_fusion_.heading_deg()
                                      : phone_heading_deg;
+    // The compass page is the one readout a rider can check against a second
+    // instrument, so log what the phone actually claimed: a frozen `compass=0`
+    // is a dead flag, a plausible-but-wrong value is a fusion problem.
+    const std::uint32_t now_ms = static_cast<std::uint32_t>(monotonic_ms());
+    static std::uint32_t last_heading_log_ms = 0;
+    if (now_ms - last_heading_log_ms >= 2000U) {
+      last_heading_log_ms = now_ms;
+      ESP_LOGI(kTag,
+               "heading phone=%.1f compass=%d speed=%.2f fix=%d shown=%.1f",
+               static_cast<double>(phone_heading_deg),
+               has_flag(input.flags, moto::ble::NavigationHeadingCompass) ? 1 : 0,
+               static_cast<double>(phone_speed_mps),
+               has_usable_fix ? 1 : 0,
+               static_cast<double>(phone_snapshot.heading_deg));
+    }
     phone_snapshot.horizontal_accuracy_m =
         static_cast<float>(input.accuracy_dm) / 10.0F;
     phone_snapshot.cross_track_distance_m =
@@ -928,6 +978,9 @@ void PhoneNavBridge::consume_navigation(
     }
   }
   if (speed_listener != nullptr) speed_listener(fix, speed_context);
+  if (navigation_listener != nullptr) {
+    navigation_listener(route_active, navigation_context);
+  }
   present_navigation();
 }
 
@@ -1165,6 +1218,13 @@ void PhoneNavBridge::set_speed_listener(SpeedListener listener,
   speed_listener_context_ = context;
 }
 
+void PhoneNavBridge::set_navigation_listener(NavigationListener listener,
+                                             void* context) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  navigation_listener_ = listener;
+  navigation_listener_context_ = context;
+}
+
 void PhoneNavBridge::apply_settings(
     const moto::device::DeviceSettings& settings, bool ambient_night) {
   {
@@ -1288,8 +1348,22 @@ void PhoneNavBridge::render_pending() {
   const bool media = (requested & RenderMedia) != 0U;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
-    if (navigation || motion) {
+    if (navigation) {
       render_snapshot_ = snapshot_;
+    } else if (motion) {
+      // A motion frame needs only what on_imu_sample() writes. Every other
+      // writer requests RenderNavigation, except a completed RouteGeometry,
+      // which waits for the NavigationSnapshot queued right behind it (see
+      // consume_geometry). The rest of render_snapshot_ stays the last
+      // navigation frame's, so the 8 KB snapshot is not copied under the lock
+      // the IMU and BLE tasks wait on, 40 times a second.
+      render_snapshot_.heading_deg = snapshot_.heading_deg;
+      render_snapshot_.heading_presmoothed = snapshot_.heading_presmoothed;
+      render_snapshot_.has_attitude = snapshot_.has_attitude;
+      render_snapshot_.lean_deg = snapshot_.lean_deg;
+      render_snapshot_.pitch_deg = snapshot_.pitch_deg;
+      render_snapshot_.longitudinal_g = snapshot_.longitudinal_g;
+      render_snapshot_.lateral_g = snapshot_.lateral_g;
     }
     if (navigation) {
       render_phone_connection_ = ui_phone_connection_;
@@ -1315,8 +1389,10 @@ void PhoneNavBridge::render_pending() {
   // Projection is the expensive part of a motion frame (hundreds of map
   // points and trigonometry), but it does not call LVGL. Keep it outside the
   // display mutex so the LVGL worker can finish the previous flush in parallel.
-  if (navigation || motion) {
+  if (navigation) {
     presenter_.update(render_snapshot_);
+  } else if (motion) {
+    presenter_.update_motion(render_snapshot_);
   }
 
   // The BLE worker has already returned before this point in firmware. The
@@ -1338,8 +1414,26 @@ void PhoneNavBridge::render_pending() {
     moto_nav_ui_set_phone_connection(render_phone_connection_);
     moto_nav_ui_set_demo_active(render_demo_active_ ? 1U : 0U);
     presenter_.apply_to_lvgl();
+#ifdef ESP_PLATFORM
+    // A swipe has already waited for gesture recognition; do not add the
+    // worker's refresh period on top. The dirty area is the new page, and
+    // the refresh the worker would have run next finds nothing left to do.
+    if ((requested & RenderPage) != 0U) {
+      esp_lv_adapter_refresh_now(nullptr);
+    }
+#endif
   } else if (motion) {
     moto_nav_ui_set_motion_state(&presenter_.ui_state());
+#ifdef ESP_PLATFORM
+    // Draw the frame now instead of on the LVGL worker's next 25 ms timer
+    // (about 12 ms of waiting on average). The adapter lock is recursive, so
+    // this runs inside the board_port_lock() held above and the worker cannot
+    // start the same frame in between: whichever refresh comes second finds
+    // no dirty area and draws nothing. The draw costs what the worker (priority
+    // 6) would have spent anyway; while it holds the lock, this task inherits
+    // priority 6 at most, still below the IMU task (7) and the NimBLE host.
+    esp_lv_adapter_refresh_now(nullptr);
+#endif
   }
   if ((requested & RenderHomeError) != 0U) {
     moto_nav_ui_show_home_error();
@@ -1379,9 +1473,14 @@ void PhoneNavBridge::page_changed(moto_ui_page_t page, void* context) {
   auto* self = static_cast<PhoneNavBridge*>(context);
   {
     const std::lock_guard<std::mutex> lock(self->state_mutex_);
-    self->snapshot_.display_page = map_nav_page(page);
+    const moto::nav::DisplayPage selected = map_nav_page(page);
+    self->snapshot_.display_page = selected;
+    self->pending_display_page_ = selected;
+    self->pending_display_page_ms_ = monotonic_ms();
+    self->has_pending_display_page_ = true;
   }
-  self->present_navigation();
+  self->request_render(static_cast<std::uint32_t>(RenderNavigation) |
+                       static_cast<std::uint32_t>(RenderPage));
   self->send_page_command(page);
 }
 

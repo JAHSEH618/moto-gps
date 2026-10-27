@@ -11,6 +11,12 @@
 # existing payload moved.
 # PerformanceRun (0x19) is additive: the device sends it only to a phone that
 # advertises CapabilityPerformanceRun.
+# WifiConfig (0x1A) and WifiStatus (0x1B) are additive: both are gated on
+# CapabilityWifiHotspot and no existing payload moved. The wifi_config PSK is a
+# fixture value, not a credential.
+# OtaCommand (0x1C) and OtaStatus (0x1D) are additive and gated on
+# CapabilityOta. The URL is a fixture value; the digest is a pattern, not a
+# released image, and the phone sends the real one when the rider updates.
 connection.payload=01010101017f00000078563412b900e803
 connection.frame=b701010301000000110001010101017f00000078563412b900e8035469
 navigation.payload=0103020007029300a61062bf040302012a0000007801000039300000fc030000340800006d380000e3013200a32326007d00000ce4b89ce995bfe5ae89e8a19712e5898de696b9e8b7afe58fa3e58fb3e8bdac
@@ -22,3 +28,7 @@ home.payload=01020103000000d09b2f024027fb06
 settings.payload=01034101283c001f83ff010105000000
 gnss.payload=0103785634124001f5052800
 performance.payload=01026400030000000613000002120000
+wifi_config.payload=01010b4d4f544f206950686f6e650e726964652d736166652d32303236
+wifi_status.payload=01020001ac140a02c6
+ota_command.payload=013268747470733a2f2f6578616d706c652e696e76616c69642f6d6f746f2d4750532d302e322e322d72656c656173652e62696ea0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf30205a00
+ota_status.payload=0101002b00c22600

@@ -6,10 +6,10 @@ get_filename_component(MOTO_REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." AB
 set(MOTO_LVGL_COMPONENT_DIR "${MOTO_REPOSITORY_ROOT}/third_party/lvgl")
 set(MOTO_LV_CONF_PATH "${MOTO_REPOSITORY_ROOT}/config/lv_conf.h")
 
-# esp_lvgl_adapter 0.6.4 cannot discover the version of an override_path LVGL
+# esp_lvgl_adapter 0.6.4 cannot discover the version of a project-local LVGL
 # component during ESP-IDF's early requirements pass.  The component supports
 # LVGL_VERSION as its explicit, inherited override; keep it pinned to the same
-# checkout declared in main/idf_component.yml.
+# version declared in main/idf_component.yml.
 set(ENV{LVGL_VERSION} "9.5.0")
 
 if(NOT EXISTS "${MOTO_LVGL_COMPONENT_DIR}/CMakeLists.txt")
@@ -27,10 +27,12 @@ if(NOT DEFINED ENV{IDF_PATH} OR
         "ESP-IDF is not exported. Source ESP-IDF's export.sh before configuring.")
 endif()
 
-# main/idf_component.yml overrides lvgl/lvgl to this exact checkout. Keeping
-# the source selection in the Component Manager prevents the Waveshare BSP
-# from resolving a second LVGL component while Web and firmware still share
-# one lv_conf.h.
+# The submodule is a project component named `lvgl`. The Component Manager
+# satisfies every lvgl/lvgl dependency (main, the Waveshare BSP, the LVGL
+# adapter) with a local component of that name instead of downloading one, so
+# the firmware and Web builds compile the same checkout with one lv_conf.h, and
+# dependencies.lock records only the version, never this checkout's path.
+list(APPEND EXTRA_COMPONENT_DIRS "${MOTO_LVGL_COMPONENT_DIR}")
 add_compile_definitions(LV_CONF_PATH="${MOTO_LV_CONF_PATH}")
 
 if(NOT DEFINED IDF_TARGET)

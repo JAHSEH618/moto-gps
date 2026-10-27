@@ -1,0 +1,18 @@
+menu "Moto GPS"
+
+config MOTO_TLOG_DISABLE
+    bool "Turn off the tlog telemetry recorder (release builds)"
+    default n
+    help
+        The tlog recorder is a development tool: raw IMU samples, attitude,
+        acquisition stats and phone GNSS fixes go to the `tlog` flash
+        partition for `moto_replay`. Release builds set this (see
+        sdkconfig.release): the partition table stays the same, but nothing
+        reads, writes or erases the partition, and the sensor task loses its
+        4 KiB page writes.
+
+        Phrased as "disable" on purpose: a build directory configured before
+        this option existed has no macro at all, and that must mean the
+        recorder stays on.
+
+endmenu

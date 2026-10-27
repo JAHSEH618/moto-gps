@@ -39,6 +39,13 @@ class BleNavTransport {
   bool send_message(const moto::ble::Message& message,
                     std::uint8_t frame_flags = 0);
 
+  // True only while the phone's link is encrypted with a stored bond. The
+  // GATT permission already requires encryption; this is for messages that
+  // carry secrets (WifiConfig), which a freshly encrypted but unbonded
+  // stranger must not be able to write.
+  bool link_encrypted_and_bonded() const;
+  static bool link_encrypted_and_bonded_from(void* context);
+
   // Signature-compatible adapter for PhoneNavBridge::set_sender().
   static bool send_from_bridge(const moto::ble::Message& message,
                                std::uint8_t frame_flags,

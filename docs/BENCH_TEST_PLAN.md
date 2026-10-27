@@ -34,8 +34,8 @@ esptool.py --chip esp32s3 -p <PORT> flash_id
 
 | 抓 | 期望 |
 |---|---|
-| 关键字 | `above-16-MB self-test passed at 0x1ff000` |
-| 关键字 | `recording at 0x0 of 0x1000000`（首块从 0 开始） |
+| 关键字 | `above-16-MB self-test passed at 0xdff000` |
+| 关键字 | `recording at 0x0 of 0xe00000`（首块从 0 开始） |
 | 通过 | 自测通过；若失败，记录 `above-16-MB ... failed` 并停止后续记录测试 |
 | 备注 | 失败时记录器禁用，`LOG FULL` 不出现；把完整日志发回 |
 
@@ -162,16 +162,24 @@ python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
 ./build/native/tests/native/moto_replay /tmp/tlog.bin > /tmp/ride.csv
 ```
 
-**擦除 tlog 分区。** 固件运行时不再擦扇区，所以这是硬性前置条件。以下三种情况必须由主机擦一次（先 `read_partition` 备份，擦除不可恢复）：
+**擦除 tlog 分区。** 以下三种情况需要清一次（先 `read_partition` 备份，擦除不可恢复）：
 
 - 首次刷入这版分区表之后；
 - 一次中断的写之后（倾角页状态槽显示 `LOG DIRTY`，录制保持关闭）；
 - 分区写满之后（开机日志 `tlog partition is full`，状态槽 `LOG FULL`）。
 
+主机路径：
+
 ```bash
 python $IDF_PATH/components/partition_table/parttool.py -p <PORT> \
   erase_partition --partition-name tlog
 ```
+
+或在串口输入 `tlog clear`：固件写 NVS 标志并重启，`app_main` 在显示、BLE、IMU 任务启动前擦除整个 14 MB 分区，然后从 0x0 重新录制。擦除期间不要断电；失败时标志保留，下次开机会重试。
+
+**6 小时未点亮自动清理。** 屏幕点亮时把当前 RTC 计数写进 `RTC_DATA_ATTR`（每 60 s 刷新，进入深度睡眠前再写一次）。下一次启动时，如果该计数显示屏幕已熄灭超过 6 小时，`app_main` 会在显示、BLE、IMU 任务启动前擦除 tlog，并在串口打印 `screen unlit for ... min; clearing tlog`。`tlog status` 可查看当前未点亮时长和是否会触发清理。
+
+限制：这块板没有 RTC 芯片（0x51 PCF85063 在扫描中不存在），所以该机制依赖 ESP32 的 RTC 计数器，能跨深度睡眠，**不能跨 AXP2101 完全断电**；完全断电后 RTC 域清零，只能当作一次全新启动，不会误删日志。要在完全断电后仍计 6 小时，需要手机下发墙钟时间或补 RTC 芯片。
 
 | 抓 | 期望 |
 |---|---|

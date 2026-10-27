@@ -1,5 +1,6 @@
 #include "board_port.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -32,6 +33,13 @@ constexpr char kTag[] = "board_waveshare";
 // QSPI DMA. A 32-row internal-buffer experiment exhausted BLE startup memory.
 constexpr std::uint16_t kDrawBufferHeight = MOTO_DISPLAY_HEIGHT;
 constexpr bool kDrawBuffersUsePsram = true;
+// The PSRAM budget, in the order it is spent: 8 MiB on the board, minus what
+// XIP copies there at boot (1.3 MB of instructions for the current 5.8 MB
+// image; rodata stays in flash), minus the two full-height draw buffers
+// (2 x 434 KB), minus this pool. That is ~6.7 MB free, 2.9 MB of it taken
+// here. Shrinking this pool to 1 MiB also fits, but LVGL then runs out of
+// layer memory during the boot screen's first refresh and spins inside
+// lv_draw_buf_create_ex, so the design's 2 MiB stands.
 constexpr std::size_t kLvglExtraPoolBytes = 2U * 1024U * 1024U;
 static_assert(kLvglExtraPoolBytes <= LV_MEM_POOL_EXPAND_SIZE,
               "LVGL TLSF must support the board's extra PSRAM pool");
@@ -77,6 +85,13 @@ esp_lcd_panel_handle_t panel = nullptr;
 i2c_master_dev_handle_t pmic = nullptr;
 bool display_revealed = false;
 void* lvgl_extra_pool_storage = nullptr;
+esp_lcd_touch_handle_t touch_handle = nullptr;
+lv_indev_t* touch_indev = nullptr;
+// Burn-in orbit offset. Written under the LVGL lock, read by the flush on the
+// LVGL worker, which holds that lock while it renders.
+int orbit_dx = 0;
+int orbit_dy = 0;
+bool screen_dark = false;
 
 struct TeSyncState {
   std::int64_t last_edge_us = 0;
@@ -345,6 +360,33 @@ void round_draw_area(lv_area_t* area, void*) {
   area->y1 = (area->y1 >> 1) << 1;
   area->x2 = ((area->x2 >> 1) << 1) + 1;
   area->y2 = ((area->y2 >> 1) << 1) + 1;
+}
+
+// Every flush goes through here, so the orbit moves the whole composed frame:
+// the paper disc, the bezel and the battery ring on the top layer stay aligned
+// with each other. Offsets are even, so a rounded area stays on the CO5300's
+// two-pixel grid. Columns have room: the panel window starts at column 6
+// (set_gap above) inside the controller's wider GRAM. Rows start at 0, so the
+// rows pushed above or below the glass are dropped here.
+esp_err_t draw_with_orbit(lv_display_t*, esp_lcd_panel_handle_t target,
+                          int x_start, int y_start, int x_end, int y_end,
+                          const void* color_map, void*) {
+  constexpr int kBytesPerPixel = MOTO_DISPLAY_BITS_PER_PIXEL / 8;
+  const auto* pixels = static_cast<const std::uint8_t*>(color_map);
+  const int width = x_end - x_start;
+  x_start += orbit_dx;
+  x_end += orbit_dx;
+  y_start += orbit_dy;
+  y_end += orbit_dy;
+  if (y_start < 0) {
+    pixels += static_cast<std::size_t>(-y_start) * width * kBytesPerPixel;
+    y_start = 0;
+  }
+  if (y_end > MOTO_DISPLAY_HEIGHT) y_end = MOTO_DISPLAY_HEIGHT;
+  // Nothing left on the glass: the adapter completes the flush itself.
+  if (y_end <= y_start) return ESP_ERR_NOT_ALLOWED;
+  return esp_lcd_panel_draw_bitmap(target, x_start, y_start, x_end, y_end,
+                                   pixels);
 }
 
 void IRAM_ATTR lcd_te_gpio_isr(void*) {
@@ -907,16 +949,19 @@ extern "C" esp_err_t board_port_init(void) {
   // CO5300 command values. Panel creation itself uses the public esp_lcd APIs
   // so DISPON can be deferred. Explicit PSRAM draw buffers feed direct DMA
   // without allocating a bounce buffer for each transaction.
-  const esp_lv_adapter_config_t adapter_config =
-      ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  // DESIGN_V2 §13: LVGL and the IMU share core 1, NimBLE host and controller
+  // stay on core 0. The two draw threads (lv_conf.h) are unpinned so a frame's
+  // draw tasks can use both cores.
+  esp_lv_adapter_config_t adapter_config = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  adapter_config.task_core_id = 1;
   ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), kTag,
                       "LVGL adapter initialization failed");
 
-  // The built-in 64 KiB LVGL heap is separate from the adapter's PSRAM draw
-  // buffers. A map-sized strip lets the boot Logo's opacity/transform layer
-  // exceed that tiny heap: LVGL keeps retrying the blocked layer and starves
-  // IDLE0 before BLE can start. Keep the internal pool for small allocations
-  // and add a bounded PSRAM pool for complete intermediate layers.
+  // The built-in 8 KiB LVGL heap is separate from the adapter's PSRAM draw
+  // buffers. It serves small allocations; a map-sized strip still lets the
+  // boot Logo's opacity/transform layer need a complete intermediate layer,
+  // which is why the bounded PSRAM pool below exists. Keeping this pool small
+  // is what keeps internal DRAM free for BLE and task stacks.
   static_assert(LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN,
                 "Review the LVGL pool setup after changing allocators");
   lvgl_extra_pool_storage = heap_caps_malloc(
@@ -953,6 +998,13 @@ extern "C" esp_err_t board_port_init(void) {
   ESP_RETURN_ON_ERROR(
       esp_lv_adapter_set_area_rounder_cb(display, round_draw_area, nullptr),
       kTag, "CO5300 area rounder registration failed");
+  const esp_lv_adapter_draw_bitmap_callbacks_t draw_callbacks = {
+      .custom_draw_bitmap = draw_with_orbit,
+  };
+  ESP_RETURN_ON_ERROR(
+      esp_lv_adapter_set_draw_bitmap_callbacks(display, &draw_callbacks,
+                                               nullptr),
+      kTag, "CO5300 orbit draw callback registration failed");
   ESP_RETURN_ON_ERROR(initialize_te_probe(display), kTag,
                       "CO5300 TE probe initialization failed");
 
@@ -969,9 +1021,11 @@ extern "C" esp_err_t board_port_init(void) {
   esp_lcd_touch_handle_t touch = nullptr;
   ESP_RETURN_ON_ERROR(bsp_touch_new(&touch_board_config, &touch), kTag,
                       "official Waveshare CST9217 initialization failed");
+  touch_handle = touch;
   const esp_lv_adapter_touch_config_t touch_config =
       ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(display, touch);
-  if (esp_lv_adapter_register_touch(&touch_config) == nullptr) {
+  touch_indev = esp_lv_adapter_register_touch(&touch_config);
+  if (touch_indev == nullptr) {
     ESP_LOGE(kTag, "LVGL could not register the CST9217 touch device");
     return ESP_FAIL;
   }
@@ -1031,6 +1085,83 @@ extern "C" esp_err_t board_port_reveal_display(void) {
   display_revealed = true;
   start_te_probe_after_reveal();
   return ESP_OK;
+}
+
+extern "C" void board_port_set_orbit_offset(int8_t dx, int8_t dy) {
+  const int x = std::clamp<int>(dx, -2, 2) & ~1;
+  const int y = std::clamp<int>(dy, -2, 2) & ~1;
+  if (display == nullptr || (x == orbit_dx && y == orbit_dy)) return;
+  orbit_dx = x;
+  orbit_dy = y;
+  // Every pixel moves, so every pixel is dirty. The screen covers the whole
+  // display area, and a refresh of an area paints the top layer over it too.
+  lv_obj_invalidate(lv_display_get_screen_active(display));
+}
+
+extern "C" esp_err_t board_port_set_brightness(uint8_t percent) {
+  if (panel == nullptr || !display_revealed || screen_dark) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  // Under the LVGL lock no frame is in flight, so 0x51 cannot land between
+  // two strips of one frame.
+  return esp_lcd_panel_co5300_set_brightness(panel, percent);
+}
+
+extern "C" esp_err_t board_port_screen_off(void) {
+  if (panel == nullptr || !display_revealed) return ESP_ERR_INVALID_STATE;
+  if (screen_dark) return ESP_OK;
+  // The worker acknowledges between frames, so nothing is queued on QSPI
+  // when the panel commands below go out.
+  ESP_RETURN_ON_ERROR(esp_lv_adapter_pause(1'000), kTag,
+                      "LVGL worker did not pause");
+  esp_err_t result = esp_lcd_panel_co5300_set_brightness(panel, 0);
+  if (result == ESP_OK) result = esp_lcd_panel_disp_on_off(panel, false);
+  if (result != ESP_OK) {
+    ESP_LOGE(kTag, "could not blank AMOLED: %s", esp_err_to_name(result));
+    (void)esp_lcd_panel_co5300_set_brightness(panel, 100);
+    (void)esp_lv_adapter_resume();
+    return result;
+  }
+  screen_dark = true;
+  return ESP_OK;
+}
+
+extern "C" esp_err_t board_port_screen_on(uint8_t brightness_percent) {
+  if (panel == nullptr || !display_revealed) return ESP_ERR_INVALID_STATE;
+  if (!screen_dark) return ESP_OK;
+  ESP_RETURN_ON_ERROR(esp_lv_adapter_resume(), kTag,
+                      "LVGL worker did not resume");
+  if (!board_port_lock(UINT32_MAX)) return ESP_ERR_TIMEOUT;
+  // DISPON first, still at zero brightness: GRAM holds a frame from before
+  // the panel went dark, and the TE gate wants a scanning panel. Then one
+  // whole fresh frame, then light.
+  esp_err_t result = esp_lcd_panel_disp_on_off(panel, true);
+  if (result == ESP_OK) {
+    lv_obj_invalidate(lv_display_get_screen_active(display));
+    lv_refr_now(display);
+    result = esp_lcd_panel_co5300_set_brightness(panel, brightness_percent);
+  }
+  // The finger that woke the panel is not a tap on whatever is under it.
+  if (touch_indev != nullptr) lv_indev_wait_release(touch_indev);
+  screen_dark = false;
+  board_port_unlock();
+  return result;
+}
+
+extern "C" bool board_port_touch_pressed(void) {
+  if (touch_handle == nullptr || !screen_dark) return false;
+  if (esp_lcd_touch_read_data(touch_handle) != ESP_OK) return false;
+  esp_lcd_touch_point_data_t point{};
+  std::uint8_t count = 0;
+  if (esp_lcd_touch_get_data(touch_handle, &point, &count, 1) != ESP_OK) {
+    return false;
+  }
+  return count > 0;
+}
+
+extern "C" uint32_t board_port_touch_idle_ms(void) {
+  return display == nullptr ? UINT32_MAX
+                            : lv_display_get_inactive_time(display);
 }
 
 extern "C" bool board_port_lock(uint32_t timeout_ms) {

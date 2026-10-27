@@ -214,13 +214,6 @@ struct MapDownloadsView: View {
                             packRow(pack)
                         }
                     }
-                    if !store.packs.isEmpty { MotoRule() }
-                    MotoRow(title: "济南基础地图", subtitle: "随 App 提供") {
-                        Image(systemName: "internaldrive")
-                            .font(.system(.body))
-                            .foregroundStyle(palette.inkMuted)
-                            .accessibilityHidden(true)
-                    }
                 }
             }
 

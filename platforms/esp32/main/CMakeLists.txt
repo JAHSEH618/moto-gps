@@ -28,11 +28,13 @@ idf_component_register(
         "attitude_estimator.cpp"
         "ble_nav_transport_nimble.cpp"
         "board_port_waveshare_1_75c.cpp"
+        "burn_in.cpp"
         "device_settings.cpp"
         "dyn_record.cpp"
         "lean_estimator.cpp"
         "mount_basis.cpp"
         "motion_heading_sensor.cpp"
+        "ota_update.cpp"
         "qmi8658_fifo.cpp"
         "qmi8658_latch.cpp"
         "phone_nav_bridge.cpp"
@@ -40,6 +42,7 @@ idf_component_register(
         "settings_store.cpp"
         "speed_fusion.cpp"
         "tlog_logger.cpp"
+        "wifi_link.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"
         "${MOTO_SHARED_NAV_PRESENTER_SOURCE}"
         ${MOTO_SHARED_UI_FONTS}
@@ -64,6 +67,13 @@ idf_component_register(
         nvs_flash
         spi_flash
         bt
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_client
+        app_update
+        mbedtls
+        esp-tls
         esp32_s3_touch_amoled_1_75c
 )
 

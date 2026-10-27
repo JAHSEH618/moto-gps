@@ -26,10 +26,6 @@ targets:
       - path: ../../shared/nav_app/nav_app.cpp
       - path: ../../shared/protocol/fixtures/ble-navigation-v1.golden.txt
         buildPhase: resources
-      - path: ../../shared/demo_fixture/jinan_map_scene_sample.json
-        buildPhase: resources
-      - path: ../../shared/offline_map/jinan-v1.sqlite
-        buildPhase: resources
       - path: ../../assets/fonts/BarlowCondensed-SemiBold.ttf
         buildPhase: resources
       - path: ../../assets/fonts/BarlowCondensed-ExtraBold.ttf
@@ -55,6 +51,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
+        # The firmware screen picks a .bin out of Files. Exposing the app's
+        # Documents folder is what makes the sideloaded build able to receive
+        # one at all (no AirDrop from a laptop, no TestFlight in this fork).
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen:
           UIColorName: LaunchBackground
           UIImageName: LaunchLogo
@@ -62,6 +63,7 @@ targets:
         NSLocationWhenInUseUsageDescription: MOTO GPS 需要定位来规划路线并更新骑行位置。
         NSLocationAlwaysAndWhenInUseUsageDescription: 导航开始后，MOTO GPS 需要在锁屏或切换应用时继续更新骑行位置。
         NSBluetoothAlwaysUsageDescription: MOTO GPS 使用蓝牙连接车把上的 ESP32-S3 圆屏设备。
+        NSLocalNetworkUsageDescription: MOTO GPS 通过 iPhone 个人热点连接车把上的圆屏，用于下载骑行日志、更新固件和传输地图。
         NSAppleMusicUsageDescription: 圆屏无法直接控制正在播放的 App 时，MOTO GPS 改为读取并控制 Apple Music 播放，以便在车把圆屏上切歌和暂停。
         UIAppFonts:
           - BarlowCondensed-SemiBold.ttf
@@ -120,6 +122,10 @@ targets:
     sources:
       - path: AppTests
       - path: ../../shared/demo_fixture/jinan_map_scene_sample.json
+        buildPhase: resources
+      # Development/bench fixture only. The shipping app no longer carries a
+      # 9.7 MB Jinan database; real maps come from the gateway's map tiles.
+      - path: ../../shared/offline_map/jinan-v1.sqlite
         buildPhase: resources
     dependencies:
       - target: MotoGPS

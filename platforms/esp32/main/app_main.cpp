@@ -2,6 +2,9 @@
 #include <cmath>
 #include <cstdint>
 
+#include "esp_heap_caps.h"  // HEAPPROBE
+#include "sdkconfig.h"
+#define HEAPPROBE(label) ESP_LOGW("heapprobe", "%-14s free %u min %u largest %u", label, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))  // HEAPPROBE
 #include "ams_client_nimble.h"
 #include "ble_nav_transport_nimble.h"
 #include "bsp/esp-bsp.h"
@@ -9,6 +12,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -20,12 +24,19 @@
 #include "phone_nav_bridge.h"
 #include "settings_store.h"
 #include "esp_app_desc.h"
+#include "esp_attr.h"
+#include "esp_rtc_time.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include "tlog_logger.hpp"
 #include "battery_ring.hpp"
+#include "burn_in.h"
+#include "wifi_link.h"
+#include "ota_update.hpp"
+
+#include <new>
 
 #include "driver/i2c_master.h"
 #include "esp_flash.h"
@@ -33,16 +44,73 @@
 namespace {
 constexpr char kTag[] = "moto_gps";
 
-// Development recorder. Absent when the tlog partition is missing or its
-// above-16-MB self-test failed; every append is then a no-op.
+// Development recorder. Absent when the tlog partition is missing, its
+// above-16-MB self-test failed, or the build sets CONFIG_MOTO_TLOG_DISABLE; every
+// append is then a no-op.
+#ifdef CONFIG_MOTO_TLOG_DISABLE
+constexpr bool kTlogEnabled = false;
+#else
+constexpr bool kTlogEnabled = true;
+#endif
 static moto::device::TlogLogger tlog;
 static bool g_calibration_unverified = true;
 static MotionHeadingSensor* g_sensor = nullptr;
 static PhoneNavBridge* g_bridge = nullptr;
+static WifiLink* g_wifi = nullptr;
+static moto::device::OtaUpdate* g_ota = nullptr;
+// PhoneNavBridge is the largest static object in the firmware (~25 KB: three
+// NavSnapshots with their map windows, the route-view assembly). Nothing in it
+// is touched from an ISR or with the cache off, so it lives in PSRAM and its
+// internal RAM goes to the WiFi driver instead (WAVESHARE_OPTIMIZATION_PLAN
+// §3.6, W0). Constructed in app_main once the presenter exists.
+alignas(PhoneNavBridge) EXT_RAM_BSS_ATTR static std::uint8_t
+    g_phone_bridge_storage[sizeof(PhoneNavBridge)];
 static TaskHandle_t g_task_cmd = nullptr;
 static TaskHandle_t g_task_ui_flags = nullptr;
 static TaskHandle_t g_task_demo = nullptr;
 static TaskHandle_t g_task_power = nullptr;
+
+// "Screen unlit for 6 hours clears the tlog" retention. RTC memory survives
+// deep sleep, and the RTC counter keeps counting through it, so this measures
+// the screen-off interval without an RTC chip. A full power cut loses the RTC
+// domain; there is no wall clock on this board to recover that interval, so a
+// cold boot starts with no last-lit record rather than guessing.
+constexpr std::uint32_t kScreenLitMagic = 0x4D4F544FU;  // "MOTO"
+constexpr std::uint64_t kUnlitClearAfterUs =
+    6ULL * 60ULL * 60ULL * 1'000'000ULL;
+RTC_DATA_ATTR static std::uint64_t g_last_lit_rtc_us = 0;
+RTC_DATA_ATTR static std::uint32_t g_last_lit_magic = 0;
+// Set while the panel is lit. A software reset while the screen was on must
+// not be mistaken for six hours of darkness.
+RTC_DATA_ATTR static std::uint8_t g_screen_lit = 0;
+
+void note_screen_lit() {
+  g_last_lit_rtc_us = esp_rtc_get_time_us();
+  g_last_lit_magic = kScreenLitMagic;
+  g_screen_lit = 1;
+}
+
+void note_screen_unlit() {
+  g_last_lit_rtc_us = esp_rtc_get_time_us();
+  g_last_lit_magic = kScreenLitMagic;
+  g_screen_lit = 0;
+}
+
+bool screen_unlit_for_clear(std::uint64_t* elapsed_us = nullptr) {
+  // A lit screen is not unlit, even if the periodic stamp is a minute old.
+  if (g_screen_lit != 0) {
+    if (elapsed_us != nullptr) *elapsed_us = 0;
+    return false;
+  }
+  if (g_last_lit_magic != kScreenLitMagic || g_last_lit_rtc_us == 0) {
+    return false;
+  }
+  const std::uint64_t now_us = esp_rtc_get_time_us();
+  if (now_us <= g_last_lit_rtc_us) return false;
+  const std::uint64_t elapsed = now_us - g_last_lit_rtc_us;
+  if (elapsed_us != nullptr) *elapsed_us = elapsed;
+  return elapsed >= kUnlitClearAfterUs;
+}
 // Bench-only lean sweep: a repeatable 40 Hz UI load for the page frame-rate
 // measurement. Zero means off.
 static volatile std::uint32_t g_ui_bench_lean_until_ms = 0;
@@ -118,6 +186,10 @@ void log_tasks() {
   log_task_entry("moto_demo", g_task_demo);
   log_task_entry("moto_power", g_task_power);
   log_task_entry("moto_current", xTaskGetCurrentTaskHandle());
+  log_task_entry("nimble_host", xTaskGetHandle("nimble_host"));  // HEAPPROBE
+  log_task_entry("moto_ble_rx", xTaskGetHandle("moto_ble_rx"));  // HEAPPROBE
+  log_task_entry("btController", xTaskGetHandle("btController"));  // HEAPPROBE
+  ESP_LOGW("heapprobe", "internal free %u min %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));  // HEAPPROBE
   ESP_LOGI(kTag, "free heap: internal %u B, PSRAM %u B",
            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
@@ -309,6 +381,28 @@ void serial_command_task(void* context) {
       ESP_LOGI(kTag, "FIFO enabled for A/B; restarting acquisition");
     } else if (std::strcmp(line, "sys tasks") == 0) {
       log_tasks();
+    } else if (std::strcmp(line, "tlog clear") == 0 && !kTlogEnabled) {
+      ESP_LOGW(kTag, "tlog disabled in this build; nothing to clear");
+    } else if (std::strcmp(line, "tlog clear") == 0) {
+      // Deferred erase: write the flag and reboot. app_main erases the 14 MB
+      // partition before the display/BLE/IMU tasks exist, because the erase
+      // stalls the flash cache for seconds.
+      moto::device::request_tlog_clear();
+      ESP_LOGW(kTag, "tlog clear requested; rebooting to erase the partition");
+      vTaskDelay(pdMS_TO_TICKS(100));
+      esp_restart();
+    } else if (std::strcmp(line, "tlog status") == 0) {
+      std::uint64_t unlit_us = 0;
+      const bool unlit = screen_unlit_for_clear(&unlit_us);
+      ESP_LOGI(kTag,
+               "tlog status: ready=%d full=%d dirty=%d records=%lu blocks=%lu "
+               "unlit=%llu s unlit_clear=%d",
+               tlog.ready() ? 1 : 0, tlog.full() ? 1 : 0,
+               tlog.dirty() ? 1 : 0,
+               static_cast<unsigned long>(tlog.records()),
+               static_cast<unsigned long>(tlog.blocks()),
+               static_cast<unsigned long long>(unlit_us / 1'000'000ULL),
+               unlit ? 1 : 0);
     } else if (std::strncmp(line, "ui page ", 8) == 0) {
       // Bench-only page switch: lets the frame-time window be attributed to a
       // page without touching the screen. The touch path stays authoritative
@@ -392,6 +486,10 @@ void serial_command_task(void* context) {
         g_ui_bench_lean_until_ms = 0;
         ESP_LOGI(kTag, "lean bench cancelled");
       }
+    } else if (std::strncmp(line, "burnin", 6) == 0) {
+      // DESIGN_V2 §2.6 on the bench: force full/dim/off, pin the orbit, or
+      // `burnin fast` for 2 s orbit / 5 s dim / 15 s off.
+      burn_in_command(line + 6);
     } else if (std::strcmp(line, "ui dbg on") == 0) {
       moto_nav_ui_debug_set_enabled(1);
       ESP_LOGI(kTag, "lean profiling on");
@@ -471,6 +569,21 @@ void serial_command_task(void* context) {
                  static_cast<unsigned>(stats.hero_draws),
                  static_cast<unsigned>(moto_nav_ui_debug_hidden()));
       }
+    } else if (std::strcmp(line, "wifi up") == 0) {
+      // Bench only until a task (OTA, tlog, map batch) owns the link.
+      if (g_wifi != nullptr) g_wifi->request_up();
+    } else if (std::strcmp(line, "wifi down") == 0) {
+      if (g_wifi != nullptr) g_wifi->request_down();
+    } else if (std::strcmp(line, "wifi status") == 0) {
+      if (g_wifi != nullptr) g_wifi->log_status();
+    } else if (std::strcmp(line, "wifi forget") == 0) {
+      if (g_wifi != nullptr) g_wifi->request_forget();
+    } else if (std::strcmp(line, "ota status") == 0) {
+      if (g_ota != nullptr) g_ota->log_status();
+    } else if (std::strcmp(line, "ota confirm") == 0) {
+      // Bench: confirms the running image without waiting for a handshake, for
+      // a device being tested without a phone.
+      if (g_ota != nullptr) g_ota->confirm_running_image();
     } else if (std::strcmp(line, "ui perf reset") == 0) {
       board_port_reset_display_timing();
       ESP_LOGI(kTag, "display timing window reset");
@@ -552,6 +665,10 @@ void request_lean_calibration(void* context) {
   static_cast<MotionHeadingSensor*>(context)->request_static_calibration();
 }
 constexpr std::uint64_t kPowerHoldMs = 3'000;
+// A tap on PWR toggles the panel (DESIGN_V2 §2.5). The lower bound keeps a
+// bounce from blanking the screen and the upper bound leaves the 3 s hold to
+// the shutdown path.
+constexpr std::uint64_t kPowerShortPressMinMs = 80;
 
 // DeviceThemeMode and moto_ui_theme_t are different enums with different
 // orders (Auto is 1 on the wire and 3 in the UI), so never cast.
@@ -569,13 +686,76 @@ moto_ui_theme_t boot_theme_for(moto::device::DeviceThemeMode mode) {
   }
 }
 
+// Everything the phone's BLE session feeds. WifiConfig goes to WifiLink and
+// never reaches the bridge; the bridge has no use for a password.
+struct PhoneLinks {
+  PhoneNavBridge* bridge = nullptr;
+  WifiLink* wifi = nullptr;
+  moto::device::OtaUpdate* ota = nullptr;
+};
+
+// The OTA worker asks the WiFi link for the radio when it has an image to
+// fetch, and polls it for an address. Neither direction needs anything the
+// WiFi worker does not already own.
+void ota_request_network(void*) {
+  if (g_wifi != nullptr) g_wifi->request_up();
+}
+
+bool ota_network_connected(void*) {
+  return g_wifi != nullptr && g_wifi->connected();
+}
+
 moto::ble::AckStatus receive_phone_message(
     const moto::ble::ReassembledMessage& message, void* context) {
-  return static_cast<PhoneNavBridge*>(context)->on_message(message);
+  auto* links = static_cast<PhoneLinks*>(context);
+  if (message.type == moto::ble::MessageType::WifiConfig) {
+    auto decoded = moto::ble::decode_message(
+        message.type, moto::ble::ByteView(message.payload));
+    auto* config = decoded.ok()
+                       ? std::get_if<moto::ble::WifiConfig>(&decoded.value)
+                       : nullptr;
+    if (config == nullptr) {
+      // Only the error code: the payload holds the password.
+      ESP_LOGW(kTag, "drop WifiConfig: %s", moto::ble::to_string(decoded.error));
+      return moto::ble::AckStatus::Failed;
+    }
+    const moto::ble::AckStatus status = links->wifi->on_config(*config);
+    std::fill(config->psk.begin(), config->psk.end(), '\0');
+    return status;
+  }
+  if (message.type == moto::ble::MessageType::OtaCommand) {
+    auto decoded = moto::ble::decode_message(
+        message.type, moto::ble::ByteView(message.payload));
+    auto* command = decoded.ok()
+                        ? std::get_if<moto::ble::OtaCommand>(&decoded.value)
+                        : nullptr;
+    if (command == nullptr) {
+      ESP_LOGW(kTag, "drop OtaCommand: %s", moto::ble::to_string(decoded.error));
+      return moto::ble::AckStatus::Failed;
+    }
+    if (links->ota == nullptr) return moto::ble::AckStatus::InvalidState;
+    return links->ota->on_command(*command);
+  }
+  const moto::ble::AckStatus status = links->bridge->on_message(message);
+  if (message.type == moto::ble::MessageType::ConnectionStatus &&
+      status == moto::ble::AckStatus::Ok) {
+    const auto decoded = moto::ble::decode_message(
+        message.type, moto::ble::ByteView(message.payload));
+    if (const auto* phone =
+            decoded.ok()
+                ? std::get_if<moto::ble::ConnectionStatus>(&decoded.value)
+                : nullptr) {
+      links->wifi->on_phone_status(*phone);
+      if (links->ota != nullptr) links->ota->on_phone_status(*phone);
+    }
+  }
+  return status;
 }
 
 void update_phone_link(bool active, void* context) {
-  static_cast<PhoneNavBridge*>(context)->on_link_state(active);
+  auto* links = static_cast<PhoneLinks*>(context);
+  links->bridge->on_link_state(active);
+  links->wifi->on_link_state(active);
 }
 
 void update_motion_heading(
@@ -585,6 +765,16 @@ void update_motion_heading(
   if (g_ui_bench_lean_until_ms == 0) {
     static_cast<PhoneNavBridge*>(context)->on_imu_sample(
         heading_rate_dps, attitude, sample_ms);
+  }
+  // Vehicle motion keeps the panel lit (DESIGN_V2 §2.6): the same stillness
+  // gate the speed fusion calls parked. Four times a second is plenty for a
+  // minute-scale timer and keeps a mutex off most sensor samples.
+  static std::uint64_t last_motion_note_ms = 0;
+  if (g_sensor != nullptr && sample_ms - last_motion_note_ms >= 250U &&
+      g_sensor->lean().static_for_s() <
+          moto::motion::SpeedFusion::kParkedForS) {
+    last_motion_note_ms = sample_ms;
+    burn_in_note_motion();
   }
   const std::int64_t tlog_started_us = esp_timer_get_time();
   tlog.append(sample_ms, raw, attitude);
@@ -719,11 +909,18 @@ void power_button_task(void*) {
   // The bezel ring (DESIGN_V2 §2.9). The gauge moves by a percent every few
   // minutes, so five seconds is plenty and keeps the shared I2C bus quiet.
   constexpr std::uint64_t kBatteryPollMs = 5'000;
+  constexpr std::uint64_t kScreenLitNoteMs = 60'000;
   std::uint64_t battery_polled_ms = 0;
+  std::uint64_t screen_lit_noted_ms = 0;
   bool battery_logged = false;
   while (true) {
     const std::uint64_t now_ms =
         static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
+    if (screen_lit_noted_ms == 0 ||
+        now_ms - screen_lit_noted_ms >= kScreenLitNoteMs) {
+      screen_lit_noted_ms = now_ms;
+      note_screen_lit();
+    }
     if (battery_polled_ms == 0 || now_ms - battery_polled_ms >= kBatteryPollMs) {
       battery_polled_ms = now_ms;
       board_power_t power{};
@@ -743,6 +940,14 @@ void power_button_task(void*) {
       if (!released_once) {
         released_once = true;
         ESP_LOGI(kTag, "PWR ready: button released, hold detection armed");
+      } else if (pressed_since_ms != 0) {
+        const std::uint64_t held_ms = now_ms - pressed_since_ms;
+        if (held_ms >= kPowerShortPressMinMs && held_ms < kPowerHoldMs) {
+          const bool panel_on = burn_in_toggle_panel();
+          ESP_LOGI(kTag, "PWR short press (%llu ms): panel %s",
+                   static_cast<unsigned long long>(held_ms),
+                   panel_on ? "on" : "off");
+        }
       }
       pressed_since_ms = 0;
       vTaskDelay(pdMS_TO_TICKS(20));
@@ -776,8 +981,10 @@ void power_button_task(void*) {
       while (board_port_power_button_pressed()) {
         vTaskDelay(pdMS_TO_TICKS(20));
       }
-      // Flush the partial 4 KB sector before the rail drops: up to 2 s of
-      // records live in RAM between flushes.
+      // The screen is about to go dark; mark it unlit and stamp that moment
+      // for the retention clock, then flush the partial 4 KB sector before
+      // the rail drops (up to 2 s of records live in RAM between flushes).
+      note_screen_unlit();
       tlog.flush();
       ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
           1ULL << 3, ESP_EXT1_WAKEUP_ANY_HIGH));
@@ -805,6 +1012,30 @@ extern "C" void app_main(void) {
   const moto::device::DeviceSettings boot_settings =
       moto::device::load_settings();
 
+  // `tlog clear` and the 6-hour unlit retention both erase here: no display,
+  // BLE or IMU task exists yet, so the multi-second cache-off erase cannot
+  // drop samples or stall a frame.
+  std::uint64_t unlit_us = 0;
+  const bool unlit_clear = screen_unlit_for_clear(&unlit_us);
+  const bool requested_clear = moto::device::tlog_clear_requested();
+  if (unlit_clear) {
+    ESP_LOGW(kTag,
+             "screen unlit for %llu min (limit 360); clearing tlog",
+             static_cast<unsigned long long>(unlit_us / 60'000'000ULL));
+  }
+  if (kTlogEnabled && (requested_clear || unlit_clear)) {
+    ESP_LOGW(kTag, "tlog clear requested; erasing the 14 MB partition");
+    if (tlog.erase_all()) {
+      if (requested_clear) moto::device::clear_tlog_clear_request();
+      ESP_LOGI(kTag, "tlog partition erased; recording will start at 0x0");
+    } else {
+      ESP_LOGE(kTag,
+               "tlog erase failed; a requested clear stays for the next boot");
+    }
+  }
+
+  HEAPPROBE("before_board");  // HEAPPROBE
+  heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
     ESP_LOGE(kTag, "board initialization stopped before shared UI startup: %s",
@@ -843,10 +1074,15 @@ extern "C" void app_main(void) {
   // panel is still hidden, then reveal it.  This removes the white frame that
   // used to leak from LVGL's default startup screen.
   lv_refr_now(display);
+  HEAPPROBE("after_board");  // HEAPPROBE
   const esp_err_t reveal_result = board_port_reveal_display();
   if (reveal_result != ESP_OK) {
     ESP_LOGE(kTag, "could not reveal boot animation: %s",
              esp_err_to_name(reveal_result));
+  } else {
+    // This is the first moment the panel is actually lit. The 6-hour
+    // retention clock starts here, not at chip reset.
+    note_screen_lit();
   }
   board_port_unlock();
 
@@ -863,18 +1099,17 @@ extern "C" void app_main(void) {
   // The tree reset clears the theme and the building visibility, so the boot
   // settings are applied again after create(); the boot screen used a copy of
   // the same settings before the tree existed.
+  HEAPPROBE("before_ui");  // HEAPPROBE
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
-  static PhoneNavBridge phone_bridge(presenter);
+  PhoneNavBridge& phone_bridge =
+      *new (g_phone_bridge_storage) PhoneNavBridge(presenter);
   static BleNavTransport transport;
-  // NavSnapshot contains the complete bounded roads/buildings window and is
-  // several kilobytes.  A temporary here inflates app_main's stack frame for
-  // the entire display/BSP startup call chain, which can trip the FreeRTOS
-  // main-task canary before this line is even reached.  Keep the immutable
-  // initial state in static storage just like the bridge's retained snapshots.
   g_bridge = &phone_bridge;
-  static const moto::nav::NavSnapshot initial_snapshot{};
-  presenter.update(initial_snapshot);
+  // NavPresenter's constructor already applies an empty snapshot, so no
+  // second full NavSnapshot is kept in static storage just to repaint the
+  // same zeros. The map window is several kilobytes and internal DRAM is the
+  // scarce pool; the UI state lives in PSRAM, this one does not need to.
   presenter.apply_to_lvgl();
   // Replay after create(): the tree reset clears the theme and the building
   // visibility, so applying before it would leave defaults on screen.
@@ -888,6 +1123,7 @@ extern "C" void app_main(void) {
   lv_refr_now(display);
   board_port_unlock();
 
+  HEAPPROBE("after_ui");  // HEAPPROBE
   if (!phone_bridge.start_renderer()) {
     ESP_LOGE(kTag, "UI renderer startup failed; BLE was not started");
     vTaskDelete(nullptr);
@@ -895,8 +1131,36 @@ extern "C" void app_main(void) {
   }
 
   phone_bridge.set_sender(BleNavTransport::send_from_bridge, &transport);
+  phone_bridge.set_navigation_listener(
+      [](bool route_active, void*) { burn_in_note_navigation(route_active); },
+      nullptr);
+  // The radio stays off; this only loads the stored hotspot and starts the
+  // worker that will own it.
+  static WifiLink wifi;
+  wifi.set_sender(BleNavTransport::send_from_bridge, &transport);
+  wifi.set_secure_link_check(BleNavTransport::link_encrypted_and_bonded_from,
+                             &transport);
+  if (wifi.start() == ESP_OK) {
+    g_wifi = &wifi;
+  } else {
+    ESP_LOGW(kTag, "WiFi worker could not start; WiFi stays unavailable");
+  }
+  static PhoneLinks phone_links{&phone_bridge, &wifi, nullptr};
+  // Firmware update (W3): BLE carries the command and the status, the image
+  // comes over the hotspot the WiFi worker owns.
+  static moto::device::OtaUpdate ota;
+  ota.set_sender(BleNavTransport::send_from_bridge, &transport);
+  ota.set_secure_link_check(BleNavTransport::link_encrypted_and_bonded_from,
+                            &transport);
+  ota.set_network({ota_request_network, ota_network_connected, nullptr});
+  if (ota.start() == ESP_OK) {
+    phone_links.ota = &ota;
+    g_ota = &ota;
+  } else {
+    ESP_LOGW(kTag, "OTA worker could not start; updates stay unavailable");
+  }
   transport.set_callbacks(receive_phone_message, update_phone_link,
-                          &phone_bridge);
+                          &phone_links);
   // The music page follows whichever app owns the iPhone's Now Playing,
   // through Apple Media Service on the same bonded link. The phone app's
   // Apple Music relay remains the fallback while AMS is not available.
@@ -909,12 +1173,14 @@ extern "C" void app_main(void) {
       &phone_bridge);
   phone_bridge.set_music_key_handler(AmsClient::key_handler, &ams_client);
   transport.set_gap_observer(AmsClient::gap_observer, &ams_client);
+  HEAPPROBE("before_ble");  // HEAPPROBE
   const esp_err_t ble_result = transport.start();
   if (ble_result != ESP_OK) {
     ESP_LOGE(kTag, "BLE startup failed; display remains in offline mode: %s",
              esp_err_to_name(ble_result));
   }
 
+  HEAPPROBE("after_ble");  // HEAPPROBE
   static MotionHeadingSensor motion_sensor;
   // Restore the captured bracket before the sensor task starts: every sample
   // is mapped through this basis, so applying it later would mix frames.
@@ -937,6 +1203,7 @@ extern "C" void app_main(void) {
   if (const esp_app_desc_t* desc = esp_app_get_description()) {
     std::memcpy(&session_info.firmware_hash, desc->app_elf_sha256, 4);
   }
+  HEAPPROBE("before_tlog");  // HEAPPROBE
   tlog.begin(session_info);
   phone_bridge.set_speed_listener(
       [](const moto::motion::SpeedFix& fix, void* context) {
@@ -948,8 +1215,10 @@ extern "C" void app_main(void) {
   motion_sensor.set_calibration_callback(save_lean_calibration, nullptr);
   moto_nav_ui_set_lean_calibration_callback(request_lean_calibration,
                                             &motion_sensor);
+  HEAPPROBE("before_motion");  // HEAPPROBE
   const esp_err_t motion_result = motion_sensor.start(update_motion_heading,
                                                       &phone_bridge);
+  HEAPPROBE("after_motion");  // HEAPPROBE
   if (motion_result != ESP_OK) {
     ESP_LOGW(kTag, "QMI8658 heading assist could not start: %s",
              esp_err_to_name(motion_result));
@@ -964,6 +1233,7 @@ extern "C" void app_main(void) {
     }
   }
 
+  HEAPPROBE("after_cmd_tasks");  // HEAPPROBE
   // Demo generation fills the retained snapshot in place, but geometry and
   // LVGL projection still use deeper C++ call frames than a trivial task.
   if (xTaskCreate(demo_tick_task, "moto_demo", 6'144, &phone_bridge, 2,
@@ -974,6 +1244,10 @@ extern "C" void app_main(void) {
                   &g_task_power) != pdPASS) {
     ESP_LOGW(kTag, "PWR long-hold task could not start");
   }
+  burn_in_start();
+  HEAPPROBE("after_tasks");  // HEAPPROBE
+  ESP_LOGW("heapprobe", "main stack free %u B", (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));  // HEAPPROBE
+  heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE
 
   ESP_LOGI(kTag,
            "iPhone BLE + QMI heading -> NavPresenter -> shared LVGL running");

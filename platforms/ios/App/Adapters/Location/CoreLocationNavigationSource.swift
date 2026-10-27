@@ -11,13 +11,22 @@ final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
     /// The magnetometer, for when there is no GNSS course: a course exists
     /// only while moving, so a parked handlebar used to keep the last one
     /// (the phone said due east, the round screen 60 degrees).
-    private static let maximumCompassAgeS: TimeInterval = 3
+    ///
+    /// Core Location suppresses heading events while the heading is not
+    /// changing (`headingFilter`) and, on a still phone, can stop delivering
+    /// them altogether, so the age of the last reading is not evidence that
+    /// north moved. The guard is only here to stop showing a reading from a
+    /// session that ended; invalidation is handled where it is known, below.
+    private static let maximumCompassAgeS: TimeInterval = 30
     private var compassReading: (headingDeg: Double, at: Date)?
+    /// Called for every calibrated compass reading. A parked handlebar's
+    /// heading is this reading, so it should not wait for the next fix.
+    var onCompassHeading: (@MainActor () -> Void)?
 
     /// The phone's compass heading in degrees from true north (magnetic
     /// north when the true heading is unavailable), if a calibrated reading
-    /// is less than three seconds old. In a handlebar mount the phone points
-    /// where the bike points.
+    /// is recent enough. In a handlebar mount the phone points where the bike
+    /// points.
     var compassHeadingDeg: Double? {
         guard let reading = compassReading,
               Date().timeIntervalSince(reading.at) <= Self.maximumCompassAgeS
@@ -40,7 +49,10 @@ final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
         manager.allowsBackgroundLocationUpdates = true
         // The app runs in portrait, and the phone rides the bars in portrait.
         manager.headingOrientation = .portrait
-        manager.headingFilter = 2
+        // 1 degree, not 2: the handlebar mirrors this reading, and a 2 degree
+        // deadband is a visible gap against the system Compass app on a dial
+        // this size. The snapshot rate, not this filter, decides BLE traffic.
+        manager.headingFilter = 1
         #if os(iOS)
         manager.showsBackgroundLocationIndicator = true
         #endif
@@ -135,13 +147,19 @@ extension CoreLocationNavigationSource: @preconcurrency CLLocationManagerDelegat
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         // A negative accuracy means the compass is uncalibrated or disturbed;
-        // a wrong north is worse than the last course.
-        guard newHeading.headingAccuracy >= 0 else { return }
+        // a wrong north is worse than the last course. Drop the reading here,
+        // where the invalidation is actually known, rather than waiting for
+        // it to age out.
+        guard newHeading.headingAccuracy >= 0 else {
+            compassReading = nil
+            return
+        }
         let heading = newHeading.trueHeading >= 0
             ? newHeading.trueHeading
             : newHeading.magneticHeading
         guard heading.isFinite, heading >= 0 else { return }
         compassReading = (heading, newHeading.timestamp)
+        onCompassHeading?()
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

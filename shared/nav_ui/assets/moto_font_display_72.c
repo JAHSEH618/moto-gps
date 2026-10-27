@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 72 px
  * Bpp: 2
- * Opts: --font assets/fonts/BarlowCondensed-ExtraBold.ttf --size 72 --bpp 2 --format lvgl --no-compress --symbols ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/+-%()[]<>?!°·— -o shared/nav_ui/assets/moto_font_display_72.c
+ * Opts: --font assets/fonts/BarlowCondensed-ExtraBold.ttf --size 72 --bpp 2 --format lvgl --no-compress --symbols ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/+-%()[]<>?!°·— --force-fast-kern-format -o shared/nav_ui/assets/moto_font_display_72.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

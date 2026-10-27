@@ -22,6 +22,14 @@ idf.py -C platforms/esp32 build
 ```
 
 The first build downloads the Component Manager dependencies; the output is in `platforms/esp32/build/`.
+
+That is the development build, which records IMU data to the `tlog` partition (the default; `CONFIG_MOTO_TLOG_DISABLE` unset). The release build adds the `sdkconfig.release` overlay, which sets `CONFIG_MOTO_TLOG_DISABLE=y` and turns tlog off with the same partition table; its output is in `platforms/esp32/build-release/`:
+
+```sh
+idf.py -C platforms/esp32 -B platforms/esp32/build-release \
+  -DSDKCONFIG=build-release/sdkconfig \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
+```
 In `dependencies.lock` LVGL is a relative path under the project root; if a local tool rewrites it to
 an absolute path, do not commit your personal paths back to the repository. Do not modify
 `managed_components` by hand to keep the build going.

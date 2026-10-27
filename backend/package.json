@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "vercel:dev": "node vercel/dev-server.js"
   },
   "engines": {
     "node": ">=20"

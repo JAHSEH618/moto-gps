@@ -48,7 +48,7 @@
 | 部件 | 规格 | 对设计的影响 |
 |---|---|---|
 | MCU | ESP32-S3R8，240 MHz，8 MB PSRAM | 估算器全 float |
-| Flash | 32 MB（`sdkconfig` 已设 32 MB；`flash_id` 待复核） | tlog 16 MB @ 0x1000000 |
+| Flash | 32 MB（`sdkconfig` 已设 32 MB；`flash_id` 待复核） | tlog 14 MB @ 0x1200000 |
 | 屏幕 | CO5300 466×466 AMOLED | 烧屏防护；亮度走面板命令 |
 | 触摸 | CST9217，I2C 0x5A，INT GPIO11 | 行驶中只保留翻页 |
 | IMU | QMI8658 0x6B，**无磁力计**，INT2 引脚**待原理图确认** | FIFO 用 STATUSINT 轮询，不依赖 INT2 |
@@ -278,6 +278,18 @@ GNSS 航迹校正；**静止冻结，不积分**。HOLD 只计"行驶中无 GNSS
 - band 两态：路线进度；距机动 ≤300 m 切机动倒计时弧（左/右半圈，50 m 内闪一次）。
 - 限速牌单组件（导航 61 / 速度 52，奶油底 + 红环 + 黑数字）。
 
+**雷达底盘（2026-10-27，GTA III 雷达语法）**：地图是一块实心城市底盘，不是黑底细线。
+
+| 层 | 规则 |
+|---|---|
+| 地面 `map_land` | 夜 `#222222`（DESIGN.md 夜间雷达街区炭灰），昼 `#4E4E4A`（灰雷达） |
+| 街道 | 六级各自一条笔画；宽度按 0.57 px/m 的真实比例取 8/7/6/5/3/3 d（高速→其他），每条下垫一层两侧各 2 px 的黑 casing，路口由单次 casing pass 合并 |
+| 街道色阶 | 整体比纸面数字低一档：昼 `#EFECE4`→`#5E5B55`，夜 `#D6D2C8`→`#4B463E`；高速保持霓虹粉。任何街道都不比压在地图上的数字亮 |
+| 路线 | 9 d 健康橙，压在 15 d 黑 casing 上，比任何街道都宽：它是地图上唯一的"GPS 线" |
+| 建筑 `map_block` | 夜间抬起（`#2E2E2E`、地标 `#3A3A3A`），白天压下（`#40403C`、地标 `#5C5C57`）；仍由手机 `show_buildings` 控制 |
+
+地图色槽与 `background`/`building` 分开：天际线、连接封面、开机拼图不随地图改色。笔画更宽会增加运动帧的绘制量，上板需用 `ui perf` 复核导航页仍 ≥27 fps。
+
 ## 5. 0–100
 
 状态机：IDLE→ARMED→LAUNCH（g_lon>0.05 g）→DONE（插值到目标）→静止 1.5 s 重臂；ABORT（回落 >5 km/h、>30 s、|φ|>15°）。模式 0–100 / 0–60 / 100–0（B 长按 2 s）。精度 A/B/C，C 显示 `EST`。界面：chip `(0,−116)`、kicker `(0,−80)`、176 px 秒表 `(0,−14)`、12 段条 `(0,+72)`、BEST `(−52,+112)`、差值 `(+92,+112)`（40 px，进步实心/退步描边）、EST `(0,+150)`。BEST NVS 持久化，仅 A/B 级刷新。
@@ -306,7 +318,7 @@ band 速度表（12 点顺时针，v_max 可配）+ 刻度、限速标记、超�
 
 会话：首次 >10 km/h、TRACK 进入、静止 10 min、VBUS 消失 60 s。存储只用内部 flash。
 
-**分区（32 MB）**：nvs 0x9000/0x6000（24 KB，**保持**，`att.rmount` 存活）、otadata 0xf000/8 KB、phy_init 0x11000/4 KB、app0 0x20000/6 MB、app1 0x620000/6 MB、assets 0xc20000/3 MB、coredump 0xf20000/64 KB、tlog 0x1000000/16 MB。换表必须 USB 全片烧写；CI 门槛 6 MiB×90%。
+**分区（32 MB）**：nvs 0x9000/0x6000（24 KB，**保持**，`att.rmount` 存活）、otadata 0xf000/8 KB、phy_init 0x11000/4 KB、app0 0x20000/7 MB、app1 0x720000/7 MB、assets 0xe20000/3 MB、coredump 0x1120000/64 KB、tlog 0x1200000/14 MB（约 65 min @ 3.6 KB/s）。换表必须 USB 全片烧写；CI 门槛 7 MiB×90%。2026-10-27 为 WiFi 协议栈把 OTA 槽从 6 MB 扩到 7 MB，空间来自 tlog。
 
 **tlog 自描述**：4 KB 块（magic MTLG、版本、块序号、boot id、首样本序号、payload_len、CRC32）。块先写 payload、最后写头；崩溃最多丢一块，读时跳过坏块。每 boot 首块带 SessionMeta（固件 hash、模式/ODR、h、估算器 τ/门限、MountRecord）。**不使用 NVS 记追加位置**：开机二分查找第一个全 0xFF 扇区。写满即停，倾角页显示 `LOG FULL`。运行时不再擦除扇区（擦除会关缓存几十毫秒、卡住 IMU 总线）：一次中断的写会留下 `LOG DIRTY`，录制保持关闭，直到主机擦除分区（台架计划 §5）。导出 `parttool.py read_partition --name tlog` → `moto_replay`（跳过 0xFF 扇区、逐块 CRC、按会话输出）。
 

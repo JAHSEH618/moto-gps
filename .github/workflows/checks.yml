@@ -28,11 +28,18 @@ jobs:
         run: |
           cmake -S . -B build/native -DMOTO_BUILD_WEB=OFF -DMOTO_BUILD_TESTS=ON
           cmake --build build/native --parallel 4
-          ctest --test-dir build/native --output-on-failure
+          # tests/ is not tracked, so a CI checkout has none to run.
+          if [ -d tests/native ]; then
+            ctest --test-dir build/native --output-on-failure
+          else
+            echo "tests/ is not in this checkout; no native tests to run"
+          fi
       - name: Backend tests (no live API)
         run: |
           npm ci --prefix backend
           npm --prefix backend test
+      - name: Verify the published OTA image and manifest
+        run: node scripts/publish_firmware.mjs --check
       - name: Verify public map fixtures
         run: |
           node scripts/generate_jinan_demo_fixture.mjs --check

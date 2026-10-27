@@ -30,7 +30,9 @@ final class DeviceSettingsStore {
         } else {
             theme = .auto
         }
-        showBuildings = defaults.bool(forKey: Key.showBuildings)
+        // On unless the rider turned it off: the GTA radar's city-block look
+        // comes from the building layer.
+        showBuildings = defaults.object(forKey: Key.showBuildings) as? Bool ?? true
         ambientNight = false
         revision = UInt32(truncatingIfNeeded: defaults.integer(forKey: Key.revision))
         if revision == 0 {

@@ -107,10 +107,11 @@ App 会把窗口交给共享 C++ codec，按协商的 182-byte 帧长分片，�
 `Application Support/OfflineMaps/jinan-v1.sqlite`，也可把同名种子数据库直接放在
 App Bundle 根目录。全济南 JSON 不会一次性读进内存。
 
-全济南 SQLite 生成物已落在 `shared/offline_map/jinan-v1.sqlite` 并加入 iOS App Bundle：
-约 9.63 MiB，含 47,468 条道路/266,985 个道路点、26,702 个建筑/148,140 个建筑点。
-数据库全量几何解码和 SQLite `integrity_check` 均通过，D 栋区域也有实际道路和建筑
-查询结果。因此 iPhone 侧已经不是固定演示路线，而是可随当前位置查询全市包。
+全济南 SQLite 生成物保留在 `shared/offline_map/jinan-v1.sqlite`，作为单元测试和
+离线包验证夹具；发布版 App 不再把它放进 Bundle，地图改由网关瓦片和骑手下载的
+离线包提供。约 9.63 MiB，含 47,468 条道路/266,985 个道路点、26,702 个建筑/
+148,140 个建筑点。数据库全量几何解码和 SQLite `integrity_check` 均通过，D 栋区域
+也有实际道路和建筑查询结果。
 
 尚未完成的是离线包在线下载/版本增量更新，以及真实骑行中的 OSM 覆盖密度验收。
 终端接收、双缓冲原子提交与 LVGL 建筑填充/描边属于 ESP32 显示链路，应在独立改动

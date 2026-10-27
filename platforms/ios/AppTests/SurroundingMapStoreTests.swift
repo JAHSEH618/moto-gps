@@ -213,10 +213,10 @@ final class SurroundingMapStoreTests: XCTestCase {
         store.reset()
     }
 
-    func testOnlineFailureOutsideBundledCoverageDoesNotClaimOfflineCoverage() async throws {
+    func testOnlineFailureWithoutOfflineCoverageDoesNotClaimIt() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let finished = expectation(description: "Failed online request emits fallback")
+        let finished = expectation(description: "Failed online request emits an empty window")
         let store = SurroundingMapStore(baseURL: URL(string: "https://example.invalid/")!,
                                         storageURL: root, loader: { _ in throw URLError(.notConnectedToInternet) })
         var scenes = 0

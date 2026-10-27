@@ -19,6 +19,8 @@ struct ContentView: View {
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
     @State private var showsRaceTelemetry = false
+    @State private var showsWifiHotspot = false
+    @State private var showsFirmwareUpdate = false
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
@@ -690,7 +692,7 @@ struct ContentView: View {
 
     /// Original or GTA. Picking GTA restores the GTA mode used last.
     private var buildingsFootnote: String {
-        "建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。"
+        "建筑轮廓默认打开，给雷达成片的街区感；楼块太密、看不清道路时可以关掉。"
     }
 
     private var showBuildingsBinding: Binding<Bool> {
@@ -819,7 +821,26 @@ struct ContentView: View {
             }
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "03", text: "定位")
+                MotoSectionTitle(index: "03", text: "WiFi")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "个人热点", subtitle: wifiRowSubtitle) {
+                            MotoLabel(
+                                text: wifiRowStatus,
+                                tone: model.wifiStatus?.state == .connected ? .ok : .muted,
+                                uppercased: false
+                            )
+                        }
+                        MotoRule()
+                        Button("设置热点") { showsWifiHotspot = true }
+                            .buttonStyle(MotoSecondaryButtonStyle())
+                            .accessibilityIdentifier("device-wifi-action")
+                    }
+                }
+            }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "04", text: "定位")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoRow(title: "搜索位置") {
@@ -833,10 +854,46 @@ struct ContentView: View {
                     }
                 }
             }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "05", text: "固件")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "圆屏固件") {
+                            MotoLabel(text: firmwareRowStatus, tone: .muted, uppercased: false)
+                        }
+                        MotoRule()
+                        Button("更新固件") { showsFirmwareUpdate = true }
+                            .buttonStyle(MotoSecondaryButtonStyle())
+                            .accessibilityIdentifier("device-firmware-action")
+                    }
+                }
+            }
         }
         .motoTheme(theme)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showsWifiHotspot) { WifiHotspotView(model: model) }
+        .sheet(isPresented: $showsFirmwareUpdate) { FirmwareUpdateView(model: model) }
+    }
+
+    private var firmwareRowStatus: String {
+        guard model.deviceReady else { return "--" }
+        guard model.deviceSupportsOta else { return "固件不支持" }
+        return model.firmwareUpdate?.title ?? "可更新"
+    }
+
+    private var wifiRowStatus: String {
+        guard model.deviceReady else { return "--" }
+        guard model.deviceSupportsWifi else { return "固件不支持" }
+        return model.wifiStatus?.title ?? "等待圆屏"
+    }
+
+    private var wifiRowSubtitle: String? {
+        if let status = model.wifiStatus, status.state == .connected {
+            return status.ipv4Address
+        }
+        return model.wifiHotspotName.isEmpty ? nil : model.wifiHotspotName
     }
 
     /// The theme, one level under the menu. Four flat choices instead of a

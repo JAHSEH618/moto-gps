@@ -4,6 +4,18 @@ import { randomUUID } from "node:crypto";
 
 export const MAXIMUM_TILE_BYTES = 8 * 1024 * 1024;
 
+// A cached tile is only served if it is this provider's own output for the exact
+// requested tile. Every storage backend (disk, R2, memory) shares this check, so a
+// corrupted or foreign object becomes a cache miss instead of a fabricated map.
+export function isValidCachedTile(value, { z, x, y }) {
+  return value?.schema_version === 1 &&
+    value.coordinate_system === "GCJ-02" &&
+    value.tile?.z === z && value.tile?.x === x && value.tile?.y === y &&
+    Array.isArray(value.roads) && Array.isArray(value.buildings) &&
+    Number.isFinite(Date.parse(value.source?.retrieved_at)) &&
+    typeof value.source?.source_revision === "string" && value.source.source_revision !== "";
+}
+
 // Only this provider's generated filenames are managed; unrelated files are never removed.
 export class MapDiskCache {
   constructor(directory, maximumBytes = 1024 ** 3, maximumEntries = 100_000) {
@@ -66,12 +78,7 @@ export class MapDiskCache {
     try {
       if (entry.bytes > MAXIMUM_TILE_BYTES) throw new Error("oversized cached tile");
       const value = JSON.parse(await readFile(join(this.directory, name), "utf8"));
-      if (value.schema_version !== 1 || value.coordinate_system !== "GCJ-02" ||
-          value.tile?.z !== z || value.tile?.x !== x || value.tile?.y !== y ||
-          !Array.isArray(value.roads) || !Array.isArray(value.buildings) ||
-          typeof value.source?.retrieved_at !== "string" || !value.source?.source_revision) {
-        throw new Error("invalid cached tile");
-      }
+      if (!isValidCachedTile(value, { z, x, y })) throw new Error("invalid cached tile");
       entry.used = Date.now();
       // Persist LRU recency across restarts. Atomic replacement makes concurrent reads safe.
       await utimes(join(this.directory, name), new Date(), new Date()).catch(() => {});

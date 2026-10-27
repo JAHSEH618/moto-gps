@@ -328,6 +328,30 @@ void project_building_context(const NavSnapshot& snapshot,                      
       static_cast<std::uint8_t>(accepted_footprints);
 }
 
+void map_attitude(const NavSnapshot& snapshot, moto_ui_state_t& output) {
+  const bool attitude_valid =
+      snapshot.has_attitude && std::isfinite(snapshot.lean_deg) &&
+      std::isfinite(snapshot.pitch_deg) &&
+      std::isfinite(snapshot.longitudinal_g) &&
+      std::isfinite(snapshot.lateral_g);
+  output.has_attitude = attitude_valid ? 1 : 0;
+  // v2 valid range: |Lean| > 70° is not a riding attitude. Clamp it and flag
+  // it instead of letting a bench/tip-over sample become a 180° horizon.
+  output.lean_saturated =
+      (attitude_valid && std::fabs(snapshot.lean_deg) > 70.0F) ? 1 : 0;
+  output.lean_deg = attitude_valid
+                        ? std::clamp(snapshot.lean_deg, -70.0F, 70.0F)
+                        : 0.0F;
+  output.pitch_deg = attitude_valid
+                         ? std::clamp(snapshot.pitch_deg, -90.0F, 90.0F)
+                         : 0.0F;
+  output.longitudinal_g =
+      attitude_valid ? std::clamp(snapshot.longitudinal_g, -4.0F, 4.0F)
+                     : 0.0F;
+  output.lateral_g =
+      attitude_valid ? std::clamp(snapshot.lateral_g, -4.0F, 4.0F) : 0.0F;
+}
+
 }  // namespace
 
 NavPresenter::NavPresenter() { update(NavSnapshot{}); }
@@ -377,27 +401,28 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
       static_cast<double>(snapshot.speed_mps) * 3.6);
   ui_state_.speed_limit_kph = snapshot.speed_limit_kph;
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
-  const bool attitude_valid =
-      snapshot.has_attitude && std::isfinite(snapshot.lean_deg) &&
-      std::isfinite(snapshot.pitch_deg) &&
-      std::isfinite(snapshot.longitudinal_g) &&
-      std::isfinite(snapshot.lateral_g);
-  ui_state_.has_attitude = attitude_valid ? 1 : 0;
-  // v2 valid range: |Lean| > 70° is not a riding attitude. Clamp it and flag
-  // it instead of letting a bench/tip-over sample become a 180° horizon.
-  ui_state_.lean_saturated =
-      (attitude_valid && std::fabs(snapshot.lean_deg) > 70.0F) ? 1 : 0;
-  ui_state_.lean_deg = attitude_valid
-                           ? std::clamp(snapshot.lean_deg, -70.0F, 70.0F)
-                           : 0.0F;
-  ui_state_.pitch_deg = attitude_valid
-                            ? std::clamp(snapshot.pitch_deg, -90.0F, 90.0F)
-                            : 0.0F;
-  ui_state_.longitudinal_g =
-      attitude_valid ? std::clamp(snapshot.longitudinal_g, -4.0F, 4.0F)
-                     : 0.0F;
-  ui_state_.lateral_g =
-      attitude_valid ? std::clamp(snapshot.lateral_g, -4.0F, 4.0F) : 0.0F;
+  ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
+  map_attitude(snapshot, ui_state_);
+  project_map(snapshot);
+  ui_state_.road_name = road_name_.empty() ? nullptr : road_name_.c_str();
+  ui_state_.next_road_name =
+      next_road_name_.empty() ? nullptr : next_road_name_.c_str();
+}
+
+void NavPresenter::update_motion(const NavSnapshot& snapshot) {
+  ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
+  ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
+  map_attitude(snapshot, ui_state_);
+  // Parked, or riding straight inside the gyro deadband, the heading holds
+  // and the projected map is already the right one: skip the hundreds of
+  // points a 40 Hz motion frame would otherwise re-project unchanged. A
+  // non-finite heading never compares equal, so it always re-projects.
+  if (snapshot.heading_deg == projected_heading_deg_) return;
+  project_map(snapshot);
+}
+
+void NavPresenter::project_map(const NavSnapshot& snapshot) {
+  projected_heading_deg_ = snapshot.heading_deg;
   // Route, roads and buildings share one rider-centred transform. Besides
   // guaranteeing exact layer alignment, this avoids repeating trigonometry
   // hundreds of times on every high-rate IMU frame.
@@ -406,9 +431,6 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
   project_road_context(snapshot, transform, ui_state_);
   project_building_context(snapshot, transform, ui_state_);
   project_home(snapshot, transform, ui_state_);
-  ui_state_.road_name = road_name_.empty() ? nullptr : road_name_.c_str();
-  ui_state_.next_road_name =
-      next_road_name_.empty() ? nullptr : next_road_name_.c_str();
 }
 
 const moto_ui_state_t& NavPresenter::ui_state() const { return ui_state_; }

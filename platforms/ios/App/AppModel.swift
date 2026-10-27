@@ -2,10 +2,39 @@ import Combine
 import Foundation
 import MotoNavigationCore
 
+extension FirmwareUpdateStatus {
+    /// The ObjC bridge class stays in the app target: the core package models
+    /// the wire result, the bridge knows the wire.
+    init(_ message: MotoBLEOtaStatus) {
+        self.init(state: State(rawValue: message.state) ?? .failed,
+                  failure: Failure(rawValue: message.failure) ?? .network,
+                  progressPercent: message.progressPercent,
+                  bytesReceived: message.bytesReceived)
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var navigation = MotoNavCoreBridge().snapshot
     @Published private(set) var device = BLEDeviceSnapshot()
+    /// What the round screen last said about its WiFi link; nil while it is
+    /// not connected or has not reported yet.
+    @Published private(set) var wifiStatus: WifiHotspotStatus?
+    @Published private(set) var wifiSave: WifiHotspotSave = .idle
+    @Published private(set) var deviceSupportsWifi = false
+    /// What the round screen last said about a firmware update, and whether it
+    /// takes one at all.
+    @Published private(set) var firmwareUpdate: FirmwareUpdateStatus?
+    @Published private(set) var firmwareAccepted: Bool?
+    @Published private(set) var deviceSupportsOta = false
+    /// The URL the device is fetching while an update runs: the phone's own
+    /// hotspot server, or a release URL the rider pasted.
+    @Published private(set) var firmwareURL: String?
+    @Published private(set) var firmwareServing = false
+    /// The hotspot name the rider last saved. Kept so the form opens filled
+    /// in; the password is never stored on the phone.
+    @Published private(set) var wifiHotspotName =
+        UserDefaults.standard.string(forKey: AppModel.wifiHotspotNameKey) ?? ""
     /// Latest IMU sample from the device. Cleared on disconnect and expired by
     /// age, so a stalled link cannot leave a plausible lean on screen.
     @Published private(set) var attitude = AttitudeTelemetry()
@@ -18,6 +47,10 @@ final class AppModel: ObservableObject {
     private var raceLogPublishedAt = Date.distantPast
     private var raceLogSavedAt = Date.distantPast
     private var raceLogPersists = true
+    /// The hotspot file server, held while an update runs.
+    private var firmwareFileServer: FirmwareFileServer?
+    @Published private(set) var firmwareServedBytes: UInt32 = 0
+    @Published private(set) var lastFirmwareFileName = ""
     @Published private(set) var navigationFailure: String?
     @Published private(set) var isNavigationActive = false
     @Published private(set) var isDemoActive = false
@@ -66,6 +99,7 @@ final class AppModel: ObservableObject {
     private var routePreviewGeneration: UInt64 = 0
 
     private static let recentPlacesKey = "MotoGPS.RecentPlaces.v1"
+    private static let wifiHotspotNameKey = "MotoGPS.WifiHotspotName.v1"
 
     init(gatewayBaseURL: URL = AppConfiguration.gatewayBaseURL) {
         liveRouteProvider = AmapGatewayRouteProvider(baseURL: gatewayBaseURL)
@@ -81,7 +115,15 @@ final class AppModel: ObservableObject {
         bluetooth.onSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
             self.device = snapshot
+            self.deviceSupportsWifi = self.bluetooth.deviceSupportsWifiHotspot
+            self.deviceSupportsOta = self.bluetooth.deviceSupportsOta
             if case .connected = snapshot.connection { return }
+            self.wifiStatus = nil
+            // An update that dies with the link is not "still running": the
+            // device reports Failed over BLE, and the server is no longer read.
+            if self.firmwareUpdate?.isRunning == true {
+                self.stopFirmwareServer()
+            }
             self.attitude.clear()
             self.publishRaceLog(force: true)
         }
@@ -97,8 +139,44 @@ final class AppModel: ObservableObject {
             guard let self, let value = DevicePerformanceRun(run) else { return }
             if self.raceLog.record(value, at: Date()) { self.publishRaceLog(force: true) }
         }
+        bluetooth.onWifiStatus = { [weak self] status in
+            self?.wifiStatus = WifiHotspotStatus(
+                rawState: status.state,
+                rawFailure: status.failure,
+                deviceHasNetwork: status.hasCredentials,
+                ipv4Address: status.ipv4Address,
+                rssiDbm: status.rssiDbm
+            )
+        }
+        bluetooth.onOtaStatus = { [weak self] status in
+            guard let self else { return }
+            let value = FirmwareUpdateStatus(status)
+            self.firmwareUpdate = value
+            // Ready means the image is in place and the device is rebooting;
+            // Failed means nobody will read the file. Either way the hotspot
+            // server has done its job.
+            if value.state == .ready || value.state == .failed {
+                self.stopFirmwareServer()
+            }
+        }
+        bluetooth.onOtaCommandAck = { [weak self] status in
+            guard let self else { return }
+            self.firmwareAccepted = status == 0
+            if status != 0 { self.stopFirmwareServer() }
+        }
+        bluetooth.onWifiConfigAck = { [weak self] status in
+            guard let self else { return }
+            switch status {
+            case 0: self.wifiSave = .stored
+            case 2: self.wifiSave = .refused("圆屏拒绝了：蓝牙连接未加密绑定。请在系统蓝牙设置里忽略圆屏后重新配对。")
+            default: self.wifiSave = .refused("圆屏未能保存热点，请重试。")
+            }
+        }
         bluetooth.compassHeadingDeg = { [weak liveLocation] in
             liveLocation?.compassHeadingDeg
+        }
+        liveLocation.onCompassHeading = { [weak bluetooth] in
+            bluetooth?.compassHeadingDidChange()
         }
         bluetooth.onDeviceCommand = { [weak self] command in
             guard let self else { return .failed }
@@ -341,6 +419,11 @@ final class AppModel: ObservableObject {
     /// Mirror the saved home to the device. The address is converted to GCJ-02
     /// inside `HomeLocationBroadcast`, exactly once.
     private func broadcastHomeLocation() {
+        // Revision zero is the wire's "never seen" marker and is not
+        // encodable. A fresh install with nothing saved has no home to mirror
+        // yet, so it stays quiet instead of sending a message the codec
+        // refuses; setting or clearing a home advances the revision first.
+        guard homeStore.revision != 0 else { return }
         bluetooth.sendHomeLocation(
             HomeLocationBroadcast(
                 revision: homeStore.revision,
@@ -614,6 +697,76 @@ final class AppModel: ObservableObject {
         bluetooth.toggleConnection()
     }
 
+    /// Hands the hotspot to the round screen over the bonded BLE link. The
+    /// device stores it and joins only when a transfer needs WiFi.
+    func saveWifiHotspot(ssid: String, password: String) throws {
+        if let error = WifiHotspot.validate(ssid: ssid, password: password) { throw error }
+        UserDefaults.standard.set(ssid, forKey: Self.wifiHotspotNameKey)
+        wifiHotspotName = ssid
+        wifiSave = .waitingForDevice
+        bluetooth.sendWifiConfig(ssid: ssid, password: password)
+    }
+
+    func forgetWifiHotspot() {
+        UserDefaults.standard.removeObject(forKey: Self.wifiHotspotNameKey)
+        wifiHotspotName = ""
+        wifiSave = .waitingForDevice
+        bluetooth.sendWifiConfig(ssid: nil, password: "")
+    }
+
+    // MARK: - Firmware update (W3)
+
+    /// Serves the picked image over the hotspot and asks the round screen to
+    /// fetch it. The image never crosses BLE, so the phone stays the server
+    /// until the device reports Ready or Failed.
+    func startFirmwareUpdate(image: Data, sha256Hex: String,
+                             fileName: String) throws {
+        let size = UInt32(clamping: image.count)
+        if let error = FirmwareUpdate.validate(
+            url: FirmwareUpdate.servingURL(host: "0.0.0.0"),
+            sizeBytes: size, sha256Hex: sha256Hex
+        ) { throw error }
+        let server = firmwareFileServer ?? FirmwareFileServer()
+        firmwareFileServer = server
+        let url = try server.start(image: image) { [weak self] sent in
+            // The device's own OtaStatus drives the bar; this only proves the
+            // phone actually served the bytes.
+            self?.firmwareServedBytes = sent
+        }
+        firmwareURL = url
+        firmwareServing = true
+        firmwareAccepted = nil
+        firmwareUpdate = FirmwareUpdateStatus(
+            state: .downloading, failure: .none, progressPercent: 0,
+            bytesReceived: 0)
+        lastFirmwareFileName = fileName
+        bluetooth.sendOtaCommand(url: url, sha256Hex: sha256Hex,
+                                 sizeBytes: size)
+    }
+
+    /// A release URL the rider pasted, e.g. a GitHub asset with its SHA-256.
+    func startFirmwareUpdate(url: String, sha256Hex: String,
+                             sizeBytes: UInt32) throws {
+        if let error = FirmwareUpdate.validate(url: url, sizeBytes: sizeBytes,
+                                               sha256Hex: sha256Hex) {
+            throw error
+        }
+        stopFirmwareServer()
+        firmwareURL = url
+        firmwareAccepted = nil
+        firmwareUpdate = FirmwareUpdateStatus(
+            state: .downloading, failure: .none, progressPercent: 0,
+            bytesReceived: 0)
+        bluetooth.sendOtaCommand(url: url, sha256Hex: sha256Hex,
+                                 sizeBytes: sizeBytes)
+    }
+
+    func stopFirmwareServer() {
+        firmwareFileServer?.stop()
+        firmwareFileServer = nil
+        firmwareServing = false
+    }
+
     private func bind(_ runtime: SharedNavigationRuntime) {
         runtime.onFix = { [weak self] fix in
             self?.bluetooth.sendGnssFix(fix)
@@ -825,4 +978,13 @@ final class AppModel: ObservableObject {
 private enum GatewaySettingsError: LocalizedError {
     case navigationActive
     var errorDescription: String? { "请先结束导航，再更换网关地址。" }
+}
+
+/// Where the rider's last hotspot save stands.
+enum WifiHotspotSave: Equatable {
+    case idle
+    /// Sent, or held until the round screen connects.
+    case waitingForDevice
+    case stored
+    case refused(String)
 }

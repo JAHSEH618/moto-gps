@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -50,10 +51,10 @@ constexpr std::size_t kMaxRoutePointsPerChunk = 24;
 constexpr std::size_t kMaxTrafficSegments = 64;
 // One replaceable, rider-centred minimap window.  The complete Jinan database
 // remains on the phone; these limits bound ESP32 RAM and LVGL object counts.
-constexpr std::size_t kMaxMapSceneRoads = 24;
-constexpr std::size_t kMaxMapSceneRoadPoints = 192;
-constexpr std::size_t kMaxMapSceneBuildings = 16;
-constexpr std::size_t kMaxMapSceneBuildingPoints = 128;
+constexpr std::size_t kMaxMapSceneRoads = 40;
+constexpr std::size_t kMaxMapSceneRoadPoints = 255;
+constexpr std::size_t kMaxMapSceneBuildings = 24;
+constexpr std::size_t kMaxMapSceneBuildingPoints = 192;
 
 struct ByteView {
   const std::uint8_t* data = nullptr;
@@ -121,6 +122,10 @@ enum class MessageType : std::uint8_t {
   SettingsState = 0x17,
   GnssInput = 0x18,
   PerformanceRun = 0x19,
+  WifiConfig = 0x1A,
+  WifiStatus = 0x1B,
+  OtaCommand = 0x1C,
+  OtaStatus = 0x1D,
   DeviceCommand = 0x20,
 };
 
@@ -297,6 +302,16 @@ enum Capability : std::uint32_t {
   // Phone->device: the phone shows the device's 0-100 runs. Only a phone that
   // advertises this is sent PerformanceRun, so an older app never sees 0x19.
   CapabilityPerformanceRun = 1U << 13U,
+  // Both directions. The device advertises it when it takes WifiConfig and
+  // reports WifiStatus; the phone advertises it when it shows WifiStatus. The
+  // phone sends WifiConfig only to a device with this bit, and the device
+  // sends WifiStatus only to a phone with it.
+  CapabilityWifiHotspot = 1U << 14U,
+  // Both directions. The device advertises it when it takes OtaCommand and
+  // reports OtaStatus; the phone advertises it when it offers a firmware
+  // update. Gated like the wifi bit, so a device without an OTA path is
+  // never sent 0x1C.
+  CapabilityOta = 1U << 15U,
 };
 
 struct ConnectionStatus {
@@ -746,6 +761,173 @@ struct PerformanceRun {
   bool operator==(const PerformanceRun& rhs) const noexcept;
 };
 
+// The device joins the iPhone's Personal Hotspot as a station, on demand
+// (WAVESHARE_OPTIMIZATION_PLAN §4.3). BLE stays the control plane: WiFi is a
+// data plane that is off unless a task needs it, and nothing depends on it.
+enum class WifiPolicy : std::uint8_t {
+  // Forget the stored network and never bring WiFi up. SSID and PSK empty.
+  Disabled = 0,
+  // Keep the network; join it only while a task needs it.
+  OnDemand = 1,
+};
+
+// 802.11 SSID limit and the WPA2 passphrase range. A 64-byte PSK is the raw
+// key in hex; anything shorter than 8 bytes is not a WPA2 passphrase.
+inline constexpr std::size_t kMaxWifiSsidBytes = 32;
+inline constexpr std::size_t kMinWifiPskBytes = 8;
+inline constexpr std::size_t kMaxWifiPskBytes = 64;
+
+// Phone->device, sent with AckRequested when the rider saves the hotspot on
+// the phone (iOS cannot read its own hotspot name or password, so the rider
+// types them once). The device accepts it only on an encrypted, bonded link;
+// anything else is answered InvalidState and nothing is stored. The PSK is a
+// secret: the device keeps it in NVS and never logs it, and nothing echoes it.
+// Only sent to a peer that advertises CapabilityWifiHotspot.
+struct WifiConfig {
+  WifiPolicy policy = WifiPolicy::OnDemand;
+  std::string ssid;
+  std::string psk;
+
+  bool operator==(const WifiConfig& rhs) const noexcept;
+};
+
+enum class WifiLinkState : std::uint8_t {
+  // Radio off and its memory returned. The normal state.
+  Off = 0,
+  // Started, joining the network or waiting for DHCP.
+  Connecting = 1,
+  // Associated with an address; ipv4 and rssi are valid.
+  Connected = 2,
+  // The last attempt ended without an address; reason says why. The radio is
+  // already off again.
+  Failed = 3,
+};
+
+enum class WifiFailure : std::uint8_t {
+  None = 0,
+  // No network stored, or the policy is Disabled.
+  NoCredentials = 1,
+  // The SSID was not seen: hotspot off, or 5 GHz only ("Maximize
+  // Compatibility" off on iPhone 12 and later).
+  NetworkNotFound = 2,
+  AuthFailed = 3,
+  // Associated but no DHCP address in time, or the whole attempt timed out.
+  Timeout = 4,
+  // esp_wifi_init/start refused, usually for want of internal RAM.
+  NoMemory = 5,
+  // Joined, then lost the network.
+  Disconnected = 6,
+};
+
+enum WifiStatusFlag : std::uint8_t {
+  // The device has a network stored (the SSID only; the PSK never leaves it).
+  WifiStatusHasCredentials = 1U << 0U,
+};
+
+constexpr std::uint8_t kKnownWifiStatusFlags = WifiStatusHasCredentials;
+inline constexpr std::size_t kWifiStatusPayloadSize = 9;
+
+// Device->phone, on every state change, every few seconds while connected
+// (RSSI), and after each handshake, to a phone that advertises
+// CapabilityWifiHotspot. No Ack: the next status replaces a lost one.
+// `ipv4` is in dotted order, ipv4[0] being the first octet; it and `rssi_dbm`
+// are zero unless Connected, and `failure` is None unless Failed.
+struct WifiStatus {
+  WifiLinkState state = WifiLinkState::Off;
+  WifiFailure failure = WifiFailure::None;
+  std::uint8_t flags = 0;
+  std::array<std::uint8_t, 4> ipv4{};
+  std::int8_t rssi_dbm = 0;
+
+  bool operator==(const WifiStatus& rhs) const noexcept;
+};
+
+// Firmware update over the hotspot (WAVESHARE_OPTIMIZATION_PLAN §4.4, W3).
+//
+// The image never crosses BLE: the phone either serves it from the hotspot it
+// already shares with the device, or hands over a release URL, and the device
+// fetches it over that link. The device writes the idle OTA slot, verifies
+// SHA-256 against the command, and only then points the bootloader at it. A
+// build that comes up but never completes a handshake is rolled back by the
+// bootloader (development builds carry tlog; release overlay builds do not).
+inline constexpr std::size_t kOtaSha256Bytes = 32;
+// "https://" plus a host and a path; shorter is not a URL the device takes.
+inline constexpr std::size_t kMinOtaUrlBytes = 10;
+inline constexpr std::size_t kMaxOtaUrlBytes = 200;
+// One OTA slot is 7 MiB. Below a megabyte is not an image, and a size past
+// the slot is refused before a byte is written. Zero means "not stated".
+inline constexpr std::uint32_t kMinOtaImageBytes = 1U * 1024U * 1024U;
+inline constexpr std::uint32_t kMaxOtaImageBytes = 7U * 1024U * 1024U;
+
+// Phone->device, sent with AckRequested. Accepted only on an encrypted,
+// bonded link; anything else is answered InvalidState and nothing is written.
+// Only sent to a peer that advertises CapabilityOta. The device needs the
+// hotspot up (W1) for the fetch; the phone starts it from the same screen.
+struct OtaCommand {
+  // Absolute http:// or https:// URL the device fetches over the hotspot.
+  std::string url;
+  // SHA-256 of the whole image, as sent. A hash the payload cannot influence
+  // is the point: the device compares after the last byte and before the
+  // bootloader switch.
+  std::array<std::uint8_t, kOtaSha256Bytes> sha256{};
+  // Image size when the phone knows it; zero means the device only learns it
+  // from the response. Used, when set, to refuse an image that cannot fit and
+  // to drive the progress bar from the first byte.
+  std::uint32_t size_bytes = 0;
+
+  bool operator==(const OtaCommand& rhs) const noexcept;
+};
+
+enum class OtaState : std::uint8_t {
+  // No update has run since power-on.
+  Idle = 0,
+  // Fetching and writing the idle slot.
+  Downloading = 1,
+  // All bytes are in; SHA-256 and image header are being checked.
+  Verifying = 2,
+  // Verified and written. The device reboots into it shortly after this.
+  Ready = 3,
+  // The update stopped. failure says why; the slot was discarded.
+  Failed = 4,
+};
+
+enum class OtaFailure : std::uint8_t {
+  None = 0,
+  // The radio is off, or the hotspot never gave an address.
+  NoWifi = 1,
+  // No hotspot credentials stored: WifiConfig comes first.
+  NoCredentials = 2,
+  // The URL is not absolute http(s), or the phone asked for something the
+  // device cannot honour (scheme, port, length).
+  BadUrl = 3,
+  // DNS, connect, TLS, HTTP status or a broken body.
+  Network = 4,
+  // SHA-256 does not match the command. The image was not activated.
+  HashMismatch = 5,
+  // Right hash, but `esp_ota_end` refused it as an image for this chip.
+  ImageRejected = 6,
+  // No room for the TLS/download buffers, or the slot would not open.
+  NoMemory = 7,
+  // Another update is already running.
+  Busy = 8,
+  // The image is larger than the slot, or larger than the advertised size.
+  TooLarge = 9,
+};
+
+// Device->phone, on every state change and at most twice a second while
+// downloading, to a phone that advertises CapabilityOta. No Ack: the next
+// status replaces a lost one. bytes_received is what the device wrote, which
+// is what the progress bar shows; progress_percent is 0..100 and is zero
+// while the total is unknown.
+struct OtaStatus {
+  OtaState state = OtaState::Idle;
+  OtaFailure failure = OtaFailure::None;
+  std::uint8_t progress_percent = 0;
+  std::uint32_t bytes_received = 0;
+
+  bool operator==(const OtaStatus& rhs) const noexcept;
+};
+
 using Message = std::variant<ConnectionStatus,                             Heartbeat,
                              Ack,
                              NavigationSnapshot,
@@ -758,6 +940,10 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              SettingsState,
                              GnssInput,
                              PerformanceRun,
+                             WifiConfig,
+                             WifiStatus,
+                             OtaCommand,
+                             OtaStatus,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;

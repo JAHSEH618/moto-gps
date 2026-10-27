@@ -978,3 +978,116 @@ report tests; `battery_ring_tests`; protocol + golden; bridge), Swift package
 simulator and was reviewed in Liberty Day and Night with a DEBUG fixture.
 **Not verified:** nothing has run on the board or a real iPhone; the AXP2101
 register reads have never seen a fitted cell.
+
+## 2026-10-27T00:12:57+09:00 — Map density, map-frame latency, internal RAM, and no bundled Jinan map
+
+- Map window: roads 24 → 40 polylines / 192 → 255 points; buildings 16 → 24 / 128 → 192 points, mirrored in `ble_protocol.hpp`, `nav_core.hpp`, `moto_nav_ui.h`, the iOS `OfflineMapSceneLimits` and both protocol READMEs. The encoded worst case is ~2.8 KiB, still below the 4 KiB reassembly limit.
+- Phone selection: the SQLite candidate query is nearest-first (class only breaks ties), so the 512-candidate cap can no longer spend itself on arterials and starve the streets around the rider. The in-memory selector already sorted nearest first and now fills the larger budget.
+- Map-frame latency: rebinding a road/building line no longer invalidates the full-canvas object; a scene update batches 40+ invalidations into one map invalidation. Road/building strokes are only restyled when the class changes, and hidden/visible flags are only touched when they differ. Building fills skip scanlines outside the current clip.
+- Motion frames now invalidate the union of the moved spans (old/new vertices plus each span's bounds, 24 px padding) instead of the full 466 px map. `test_map_motion_invalidates_only_the_moved_span` pins it (a 12 px route move stays under 140 × 220 px).
+- Internal RAM: both UI trees (`moto_nav_ui_gta.cpp`, `moto_nav_ui_classic.cpp`) are now zero-initialised `MOTO_UI_EXT_RAM` objects in PSRAM. The GTA `Ui` had non-zero member initialisers, which put ~10.8 KiB in internal `.data`; `reset_ui_state()` restores those defaults. `sdkconfig.defaults` already enabled `CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY`, but the active `platforms/esp32/sdkconfig` had it off; it is on now. Built map: both `ui` objects at `0x3c4f...` in `.ext_ram.bss` (0x7834 total), internal `phone_bridge` 0x6278 and `initial_snapshot` 0x1f90 (grew with the larger map budget).
+- iOS app: the 9.7 MiB `jinan-v1.sqlite` and the Jinan scene sample are no longer app resources; `SurroundingMapStore` has no bundled fallback and reports an unreachable gateway honestly. The database stays in the repo as a unit-test/bench fixture, and the unit-test target keeps it.
+- Verified: native 17/17, Swift 55/55, iOS app build, iOS `build-for-testing` (AppTests compile), ESP32 image 0x509da0 (16% of the 6 MiB slot free).
+- Not done: the map has only been seen as PPM frames and code, not on the glass; building fills remain opt-in, so a fresh rider still sees roads only until the phone's buildings switch is on.
+
+## 2026-10-27T00:15:40+09:00 — Drop the redundant initial NavSnapshot
+
+- `presenter.update(initial_snapshot)` in `app_main.cpp` duplicated the zero snapshot that `NavPresenter()` already applies in its constructor. Removing the static snapshot saves its 0x1f90 bytes of internal DRAM (it had grown with the larger map budget) and leaves `presenter.apply_to_lvgl()` as the only first-frame step.
+- Rebuilt: `moto_gps_esp32.bin` 5,275,040 B; both `ui` objects still at `0x3c4f...` in `.ext_ram.bss`; `phone_bridge` 0x6278 internal; no `initial_snapshot` symbol.
+
+## 2026-10-27T00:30:00+09:00 — Deferred tlog clear
+
+- `tlog clear` on the serial console writes NVS `moto_device/tlog.clear` and reboots. `app_main` checks the flag after `load_settings()` and before `board_port_init()`/BLE/IMU, so `TlogLogger::erase_all()` erases the 16 MB partition in 1 MiB chunks with no live task to stall; success clears the flag, failure keeps it for the next boot.
+- `TlogLogger::erase_all()` resets block/sequence state; `begin()` starts again at 0x0. The host `parttool.py erase_partition` path remains for a device that cannot boot.
+- `docs/BENCH_TEST_PLAN.md` §5 documents both paths. Firmware rebuilt: `moto_gps_esp32.bin` 0x5081d0, 16% of the 6 MiB slot free.
+
+## 2026-10-27T00:50:00+09:00 — Six-hour unlit tlog retention
+
+- The screen stamps `esp_rtc_get_time_us()` into `RTC_DATA_ATTR` when it is revealed, refreshes it every 60 s in the PWR task, and stamps it again before deep sleep. `app_main` checks the gap before display/BLE/IMU startup: if the screen has been unlit for >= 6 h, it erases the tlog partition there and then, so the next lit session starts at 0x0.
+- The RTC counter and `RTC_DATA_ATTR` survive deep sleep but not an AXP2101 full power cut; the board has no PCF85063 (0x51 absent). A cold boot therefore starts without a last-lit record instead of guessing. This limit is documented in BENCH_TEST_PLAN §5.
+- `tlog status` prints ready/full/dirty/records/blocks, the current unlit duration and whether the 6 h rule would fire.
+- Rebuilt: `moto_gps_esp32.bin` 0x5084a0, 16% of the 6 MiB slot free; RTC data section 0x10 bytes at 0x50000000.
+
+## 2026-10-27T01:00:00+09:00 — Building fills: adjacent scanlines are one rectangle
+
+- On the board, the map page with building fills was rendering at 102–179 ms per frame. The scanline fill submitted one `lv_draw_rect` per row (16–24 footprints × tens of rows). Identical adjacent spans are now merged into one rectangle; concave rows still fall back to per-row spans.
+- Measured after flashing: render avg 12–13 ms (max 19–20 ms) on the stationary 24-road scene, internal heap 39–40 KiB free. The 2 fps figure is the idle map update rate, not the refresh ceiling.
+- `test_a_building_footprint_interior_is_filled` now samples the first and last rows of a merged run.
+- The 6-hour retention flag now distinguishes "lit" from "unlit": `RTC_DATA_ATTR g_screen_lit` is set at reveal and in the 60 s PWR refresh, cleared just before deep sleep. A software reset while the panel is on no longer looks like six hours of darkness, and `tlog status` reports `unlit=0` while lit.
+
+## 2026-10-27T01:15:00+09:00 — Convex building fills are a triangle fan
+
+- The merged-scanline path still cost ~478 ms per redraw on the new phone window (36 roads / 24 buildings) because the OSM footprints are rotated, so adjacent spans never matched exactly. The 24/16 window had only axis-aligned rectangles, which is why 12 ms looked representative.
+- Convex footprints now use a centroid fan: O(vertices) triangles instead of O(rows) rectangles. Each triangle is expanded about its own centroid by a fraction of its inradius so neighbouring triangles overlap along the shared spokes; without that overlap the LVGL antialiased triangle edges leave the old seam. Concave footprints keep the scanline fallback.
+- New `test_a_concave_footprint_uses_the_scanline_fill` covers an L-shaped building and asserts both legs fill while the notch stays ground.
+- Board measurement with the installed iPhone build sending 36 roads / 24 buildings: steady 11–13 ms average, max ~20 ms. The boot/map-scene transition still has a one-off ~0.5 s frame while the whole map is bound for the first time.
+- The new iPhone app is installed (bundle `com.friedhelmliu.motogps`); the device log now shows `roads=36/149 buildings=24/115` instead of the old 24/16 window.
+
+## 2026-10-27T01:30:00+09:00 — LVGL internal pool 64 KiB → 8 KiB
+
+- The 64 KiB `CONFIG_LV_MEM_SIZE_KILOBYTES` pool was the largest internal static allocation after the UI moved to PSRAM. The board also adds a 2 MiB PSRAM TLSF pool before the tree is built, so the internal pool only needs to serve small early allocations.
+- Native render tests pass with `8 KiB + 2 MiB` (was configured for 64 KiB). The board boots, builds the boot screen, receives the 36-road/24-building phone window, and holds 11–13 ms steady frames.
+- Internal heap on the board: **free 96 KiB, minimum 47 KiB** (was 40/7). `work_mem_int$4` dropped from 0x10000 to 0x2000.
+- Remaining large internal objects: `phone_bridge` 25,208 B, `tlog` 4,176 B, `presenter` 2,224 B. They are not moved yet: the bridge owns mutexes/strings and the tlog block is the flash-write source, so both need a deliberate PSRAM-safe design rather than a tag.
+- `sdkconfig.defaults`, the native CMake default and the board comment now all say 8 KiB.
+
+## 2026-10-27T13:45:00+09:00 — WiFi W0 + W1: memory moves, hotspot credentials over BLE, on-demand station
+
+- **W0.** `phone_bridge` (0x6288 = 25,224 B) is placement-constructed into an `EXT_RAM_BSS_ATTR` buffer, so it is PSRAM. Nothing in it is touched from an ISR or with the cache off (no IRAM, ISR or DMA use; its `std::mutex` is a pthread handle). `sdkconfig.defaults`: `SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`, `MBEDTLS_EXTERNAL_MEM_ALLOC=y`, static RX buffers 10 → 6, AMPDU RX window pinned to 6 (the PSRAM option would raise it to 16).
+- Linking WiFi with its default IRAM placement cost 22.2 KB of IRAM, which on the S3 is the same SRAM as the heap, radio on or off. That ate the whole phone_bridge saving (DIRAM used 183,607 → 185,343 B). `ESP_WIFI_IRAM_OPT` and `ESP_WIFI_RX_IRAM_OPT` are now off (plan §4.5's fallback): **DIRAM used 183,607 → 167,023 B, i.e. 16.6 KB more internal RAM at boot than before WiFi** (`.bss` 44,248 → 19,568, `.data` 23,760 → 27,968, `.text` 114,571 → 118,459). WiFi throughput is lower; it is a bulk, occasional transfer.
+- App image 0x50b900 → 0x57f620 (16% → 8% of the 6 MiB slot free). W3 (OTA + TLS) will need room.
+- **W1 wire.** `WifiConfig` 0x1A (phone→device, Acked: policy, SSID 1..32, WPA2 passphrase 8..63 printable or 64 hex) and `WifiStatus` 0x1B (device→phone, 9 bytes: state, failure, flags, IPv4, RSSI), both gated on bit 14 `CapabilityWifiHotspot`. Golden `wifi_config.payload` / `wifi_status.payload`; the v1 snapshot is untouched.
+- **Device.** `wifi_link.{h,cpp}`: WifiConfig is routed in `app_main` to WifiLink and never reaches the bridge. It is accepted only when `ble_gap_conn_find` reports the link encrypted **and** bonded (InvalidState otherwise), stored in NVS `moto_wifi` (unchanged configs are not rewritten), and the PSK is never logged; the driver runs with `WIFI_STORAGE_RAM` so it keeps no copy of its own. `wifi up` initialises netif/event loop/driver, joins with threshold WPA2-PSK (PMF capable), retries 3×20 s, reports the DHCP IP and RSSI; `wifi down` / failure / a 10 min cap run `esp_wifi_stop` + `deinit`, destroy the netif and delete the event loop it created. lwIP's tcpip task (from `esp_netif_init`) cannot be stopped, so it is started on the first `up` only. Each step logs internal free/min/largest under `wifi_link`. Bench: `wifi up|down|status|forget`.
+- **iOS.** Device sheet → 03 WiFi → 设置热点: SSID + password typed once, validated with the same rules, sent over the bonded link; the password is held in memory until the device Acks and is never stored on the phone (the SSID is, for the form). The screen shows state, IP and RSSI from WifiStatus. `NSLocalNetworkUsageDescription` added.
+- Verified: firmware builds; native 17/17 (`ble_protocol_tests` covers both messages); `swift test` passes (new `WifiHotspotTests`); iOS simulator build succeeds; new `BLEProtocolGoldenTests` pass on the simulator. `OnlineMapWireTests.testActualShanghaiGatewayTileReachesTheExistingBLESceneCodec` fails: it still asserts the old 24-road/16-building window that 24cca34 raised to 40/24, which this change does not touch (not re-run on the base commit).
+- **Not measured: runtime heap.** No board was attached. Board checks: internal free/min from HEAPPROBE `after_tasks` against 96/47 KiB, `wifi_link` lines at before up / started / connected / after down; join the iPhone hotspot with Maximize Compatibility on and see the IP in the app; BLE snapshots, AMS and touch unaffected while joined and after `wifi down`; a wrong password reports AuthFailed; an unbonded link is refused.
+
+## 2026-10-27T23:55:00+09:00 — W3 OTA: the image never crosses BLE
+
+- **Boot fix first.** The published HEAD did not boot on the board: `SPIRAM_RODATA` copied 4.3 MB of fonts into PSRAM, leaving 2.5 MB of heap where the board needs a 2 MiB LVGL pool plus two 434 KB full-height draw buffers. The second buffer failed to allocate and the CO5300 never registered. Rodata stays in flash now (`# CONFIG_SPIRAM_RODATA is not set`); only the 1.3 MB of instructions is copied, ~6.7 MB of PSRAM is free, and the board is back to 11–13 ms map frames with 83 KiB internal free. Shrinking the LVGL pool to 1 MiB also fits and is wrong: LVGL then spins inside `lv_draw_buf_create_ex` on the boot screen's first refresh and the task watchdog fires every 5 s. Measured on the board, both ways. `sdkconfig` was also stale (it predated the WiFi memory work), so it is regenerated from the defaults.
+- **Wire.** `OtaCommand` 0x1C (url ≤200 bytes, 32-byte SHA-256, size) and `OtaStatus` 0x1D (state, failure, percent, bytes) behind capability bit15 `CapabilityOta`; `AckStatus` Ack for the command, no Ack for the status. Codec refusals are pinned: no scheme, no digest, a size outside one 1 MiB..7 MiB slot, 200+ byte URL. Golden `ota_command.payload` / `ota_status.payload` regenerated with `--dump-golden` and checked from Swift, so both ends are pinned to one vector.
+- **Device.** `ota_update.{h,cpp}`: the worker is created on the first command (its 10 KiB stack is not worth keeping for a rider who never updates), asks the WiFi worker for the hotspot and polls for an address for 25 s, streams the body in 4 KiB pieces into the idle slot with `esp_ota_write` under `flash_guard`, hashes with mbedTLS as it goes, and only compares SHA-256 and calls `esp_ota_set_boot_partition` after the last byte. Every failure discards the slot with `esp_ota_abort`; the running image is untouched either way. `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, and the image is confirmed from the phone's `ConnectionStatus.Ready`, so a build that boots but cannot handshake rolls back on the next reset. Bench: `ota status`, `ota confirm`.
+- **Phone.** Device sheet 05 固件: pick a `.bin` from Files (SHA-256 via CryptoKit), or paste a release URL plus digest. The phone serves the picked file from `172.20.10.1:8123/moto-gps.bin` on the hotspot bridge address only (NWListener bound to that address), sends the URL and digest over the bonded link, and stops the server on Ready/Failed. `FirmwareUpdate` in the core package owns the capability bit, the URL/size/digest rules and the status wording; `FirmwareUpdateTests` covers them.
+- **Verified:** native 17/17 (new OTA codec checks), `swift test` 65/65, iOS app build, `build-for-testing` (AppTests compile), firmware builds at 0x5b2d00 (19% of the 7 MiB slot free), boots with `ota: ready; running app0 (state 2), target app1`, and the new app is installed on the iPhone Air.
+- **Not done:** no update has run end to end on the board. It needs the rider: iPhone hotspot on with "Maximize Compatibility", the hotspot saved in 03 WiFi, then a `.bin` picked in 05 固件. The expected device log is `ota: accepted …`, then `Downloading` percentages, `SHA-256` verify, and a reboot into app1 with rollback armed.
+
+## 2026-10-28T00:45:00+09:00 — PWR blank, an abortable launch clock, quieter page turns, hosted OTA
+
+**PWR short press** (DESIGN_V2 §2.5). A tap now blanks the panel and a second tap
+or a touch wakes it; the 3 s hold still requests software shutdown. The policy
+gained an explicit manual-off state: motion and a still-active route keep it
+dark, while touch/PWR clears it and restarts the 5/15 minute idle clocks. Waking
+from the 15-minute auto-off works on the first press because the toggle reads
+the panel's actual level, not the manual flag. `burnin toggle` covers the bench.
+New `burn_in_policy_tests` pin blank, motion, route hold, wake and force.
+
+**0-100 can stop.** The GTA page had no way out of RUNNING except reaching the
+target. It now ends a live run on a tap (`STOP`), a >5 km/h fall from the peak
+(`ABORT`), 30 s without the target (`TIME`), or 1.5 s at a standstill. The
+transition is reported as Armed so the phone's race log closes the run. An
+aborted attempt will not restart from a rolling 5 km/h; it needs a real 1.5 s
+standstill first. The render suite covers tap, drop and the no-immediate-restart
+rule.
+
+**Page turns.** The immediate cause was the wire, not the painter: a swipe
+changed the page locally, then a NavigationSnapshot already in flight carried
+the old page and flipped the screen back for a frame before the phone's echo
+arrived. `PhoneNavBridge` now holds the rider's page until the phone echoes it
+(2 s bound for an old phone), and a page change requests an immediate display
+refresh instead of waiting for the worker's next 25 ms tick. New bridge test:
+local change, stale snapshot, echo, then phone authority again.
+
+**OTA hosting.** `backend/public/firmware/` is the Vercel static tree:
+`https://doupaw.site/firmware/moto-gps.bin` and `latest.json`. The new
+`scripts/publish_firmware.mjs` copies a 1–7 MiB image, computes SHA-256 and
+writes the version/URL/size manifest; `--check` fails when the pair is stale.
+The iOS 05 Firmware sheet gained "获取 doupaw.site 最新固件", which reads the
+manifest and fills the URL and digest. `vercel.json` sets octet-stream and a
+60 s revalidating cache. Backend tests cover manifest/staleness and the App
+tests cover manifest decoding and rejection.
+
+**Verified:** native 18/18, backend 77/77, Swift 67/67, iOS simulator build,
+firmware image 0x5b3190 (19% of the 7 MiB slot free), published image
+5,976,464 B with SHA-256 `abb2abc8053d81c0414889c15b73ddbfbced2cf23cfe1207e6628f624dbd72a7`.
+**Not verified:** nothing ran on the board or a real iPhone; the PWR tap timing,
+page feel and an end-to-end OTA still need the rider.

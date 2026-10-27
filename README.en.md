@@ -87,7 +87,7 @@ prototyping has resumed or production acceptance has been completed.
 | Round-display navigation | White route line, next-manoeuvre icon and distance; live road speed limits and traffic-light countdown are not connected |
 | iPhone | Native navigation bars and grouped lists, light/dark appearance and large text, location-biased search, history, route preview and selection |
 | Navigation logic | Shared C++ core: route progress, off-route detection, online rerouting and periodic route / traffic refresh |
-| Grey roads / buildings | Surrounding OSM / Protomaps maps load online by default; city, district and route-corridor downloads, with the bundled Jinan map retained as a fallback |
+| Grey roads / buildings | Surrounding OSM / Protomaps maps load online by default; city, district and route-corridor downloads, and only saved offline packs are used when the network is unavailable |
 | Speedometer / heading | Phone positioning provides speed and direction of travel; the on-board QMI8658 assists with relative turning |
 | Music | Previous track, play/pause, next track for the Now Playing app (NetEase Cloud Music, QQ Music, Spotify, Apple Music…) |
 | Animation / touch | Black-and-white logo fade in and out, connection-state transitions, swipe page changes, auto-hiding page dots, long-press PWR to power off |
@@ -179,7 +179,7 @@ Progress on verifying background connections and cross-city routes is collected 
 
 The background mini-map uses OpenStreetMap / Protomaps roads and buildings. With a working gateway
 configured, navigation loads surrounding maps online by default and saves visited areas; local data
-is reused when the network is unavailable. Maps are no longer limited to the bundled Jinan data,
+is reused when the network is unavailable. Maps are no longer limited to a bundled city,
 but download availability and local road/building coverage depend on the source and the network.
 
 Open "地图与离线下载" (Maps and Offline Downloads) on the iPhone home screen:
@@ -189,22 +189,15 @@ Open "地图与离线下载" (Maps and Offline Downloads) on the iPhone home scr
 - Downloads can be paused, resumed and removed; automatic cache is limited to 128 MB and manual downloads to 512 MB, with shared tiles stored once.
 - Offline background maps do not include live traffic; place search, new route planning and online rerouting still need a network connection.
 
-The original Jinan SQLite database remains bundled with the app as a local fallback within its coverage:
-
-| Currently bundled data set | Count |
-| --- | ---: |
-| File size | 9.73 MiB |
-| Road polylines | 47,468 |
-| Road vertices | 266,985 |
-| Building outlines | 26,702 |
-| Building vertices | 148,140 |
+The shipping app no longer bundles a whole-city map. `shared/offline_map/jinan-v1.sqlite`
+remains in the repository only as a development and unit-test fixture; it is not packaged into
+the app.
 
 During navigation the phone selects roads and buildings within roughly 500 metres of its position
-from online tiles, saved maps or the available Jinan fallback, then sends them to the display over
-BLE. The query window moves with the position; the display does not store the complete city map.
+from online tiles or saved maps, then sends them to the display over BLE. The query window moves with the position; the display does not store the complete city map.
 
-A single display window currently holds at most 24 background roads with 192 road points, and 16
-buildings with 128 building points.
+A single display window currently holds at most 40 background roads with 255 road points, and 24
+buildings with 192 building points.
 This division of labour lets the phone keep the complete area data while the round display draws the
 current view. Map density depends on local OSM coverage, the feature-filtering strategy and window
 capacity; areas with more complete building coverage show richer block detail.

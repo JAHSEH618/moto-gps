@@ -70,6 +70,17 @@ struct OfflineMapSource: Codable, Equatable, Sendable {
     }
 }
 
+/// Mirrors `kMaxMapScene*` in `ble_protocol.hpp` and the shared nav_core /
+/// nav_ui capacities. The circle is a local window, not a city database: this
+/// is what the 466 px device can draw without every frame becoming a
+/// full-screen repaint.
+enum OfflineMapSceneLimits {
+    static let roads = 40
+    static let roadPoints = 255
+    static let buildings = 24
+    static let buildingPoints = 192
+}
+
 struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let coordinateSystem: String
@@ -96,10 +107,10 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
         guard value.schemaVersion == 1, value.coordinateSystem == "GCJ-02" else {
             throw OfflineMapSceneError.unsupportedFormat
         }
-        guard value.roads.count <= 24,
-              value.roads.reduce(0, { $0 + $1.points.count }) <= 192,
-              value.buildings.count <= 16,
-              value.buildings.reduce(0, { $0 + $1.points.count }) <= 128,
+        guard value.roads.count <= OfflineMapSceneLimits.roads,
+              value.roads.reduce(0, { $0 + $1.points.count }) <= OfflineMapSceneLimits.roadPoints,
+              value.buildings.count <= OfflineMapSceneLimits.buildings,
+              value.buildings.reduce(0, { $0 + $1.points.count }) <= OfflineMapSceneLimits.buildingPoints,
               value.roads.allSatisfy({ $0.points.count >= 2 }),
               value.buildings.allSatisfy({
                   $0.points.count >= 3 && $0.points.first != $0.points.last
@@ -219,8 +230,8 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         var roadPointCount = 0
         func take(_ index: Int) {
             let road = roadCandidates[index].road
-            guard selectedRoads.count < 24,
-                  roadPointCount + road.points.count <= 192
+            guard selectedRoads.count < OfflineMapSceneLimits.roads,
+                  roadPointCount + road.points.count <= OfflineMapSceneLimits.roadPoints
             else { return }
             selectedRoads.append(road)
             selectedIndices.insert(index)
@@ -236,7 +247,7 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             if selectedRoads.count > before { arterials += 1 }
         }
         for index in roadCandidates.indices where !selectedIndices.contains(index) {
-            guard selectedRoads.count < 24 else { break }
+            guard selectedRoads.count < OfflineMapSceneLimits.roads else { break }
             take(index)
         }
 
@@ -262,8 +273,9 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         var selectedBuildings: [OfflineMapBuilding] = []
         var buildingPointCount = 0
         for candidate in buildingCandidates {
-            guard selectedBuildings.count < 16 else { break }
-            guard buildingPointCount + candidate.building.points.count <= 128 else { continue }
+            guard selectedBuildings.count < OfflineMapSceneLimits.buildings else { break }
+            guard buildingPointCount + candidate.building.points.count <= OfflineMapSceneLimits.buildingPoints
+            else { continue }
             selectedBuildings.append(candidate.building)
             buildingPointCount += candidate.building.points.count
         }
@@ -519,8 +531,8 @@ final class OfflineMapSceneCoordinator {
                 #endif
                 return index
             } catch {
-                // An incomplete downloaded pack must not disable the intact
-                // city map shipped with the app.
+                // An incomplete downloaded pack must not disable a later
+                // intact pack in the search order.
                 #if DEBUG
                 print("[MotoMap] invalid map \(url.lastPathComponent): \(error)")
                 #endif

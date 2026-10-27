@@ -196,6 +196,10 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x17` | SettingsState | both ways | when settings or the theme change, and after every handshake |
 | `0x18` | GnssInput | phone→device | one per Core Location fix (about 1 Hz), no ACK |
 | `0x19` | PerformanceRun | device→phone | every state change of the 0-100 clock and after each handshake; only to a phone that advertises bit13, no ACK |
+| `0x1A` | WifiConfig | phone→device | when the rider saves or forgets the hotspot; only to a device that advertises bit14, ACK_REQUESTED |
+| `0x1B` | WifiStatus | device→phone | WiFi state change, RSSI while connected, and after each handshake; only to a phone that advertises bit14, no ACK |
+| `0x1C` | OtaCommand | phone→device | when the rider starts an update; only to a device that advertises bit15, ACK_REQUESTED, encrypted and bonded link only |
+| `0x1D` | OtaStatus | device→phone | every state change, at most 2 Hz while downloading; only to a phone that advertises bit15, no ACK |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -220,7 +224,9 @@ bit8 attitude telemetry, bit9 home location, bit10 device settings, bit11 compas
 device understands NavigationSnapshot's HeadingCompass flag; the phone sets that flag only for
 a peer that advertises this bit, because an older firmware rejects unknown flags), bit12 GNSS
 input (the device takes `0x18`), bit13 performance run (advertised by the phone: it shows the
-round screen's 0-100 results, so the device sends it `0x19`).
+round screen's 0-100 results, so the device sends it `0x19`), bit14 WiFi hotspot (both ends: the
+device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`), bit15 OTA (both ends: the
+phone offers an image and takes `0x1D`; the device takes `0x1C` and reports `0x1D`).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -402,20 +408,20 @@ u32 scene_revision          non-zero; strictly increasing for a new window
 i32 view_origin_lat_e6
 i32 view_origin_lon_e6
 u16 radius_m                100..1500
-u8  road_count              0..24
-u8  building_count          0..16
+u8  road_count              0..40
+u8  building_count          0..24
 
 repeat road_count:
   u8 road_class             0 motorway, 1 primary, 2 secondary,
                             3 residential, 4 service, 5 other
-  u8 point_count            2..255; total road points in the frame <=192
+  u8 point_count            2..255; total road points in the frame <=255
   repeat point_count:
     svarint lat_delta_e6     relative to view_origin
     svarint lon_delta_e6
 
 repeat building_count:
   u8 building_class         0 generic, 1 landmark, 2 parking
-  u8 point_count            3..255; total building points in the frame <=128
+  u8 point_count            3..255; total building points in the frame <=192
   repeat point_count:
     svarint lat_delta_e6     relative to view_origin
     svarint lon_delta_e6
@@ -428,8 +434,8 @@ complete payload should carry `ACK_REQUESTED` and is Acked only after validation
 successful commit. A higher `scene_revision` atomically replaces the old window; an old
 revision, a partial packet and a CRC error all leave the screen unchanged.
 
-This encoding is usually about 1.3–2.2 KiB for 192 road points + 128 building points; under a
-185-byte GATT value that is about 8–14 protocol fragments. It must not be sent at the
+This encoding is usually about 1.8–2.9 KiB for 255 road points + 192 building points; under a
+185-byte GATT value that is about 11–18 protocol fragments. It must not be sent at the
 positioning frame rate: refreshing once after about 100 m of travel, when approaching the window
 edge or when crossing a 500 m offline tile is enough. The current data path is connected:
 the iOS `SurroundingMapStore` selects a window, which `ESP32BLECentral` sends through the shared
@@ -596,6 +602,92 @@ u32 best_ms              best since power-on; 0 when there is none
 
 Running and Finished carry a non-zero `run_id`. The re-send after a handshake repeats the
 last Finished state; the phone deduplicates on `(run_id, elapsed_ms)` and records it once.
+
+### 6.15 WifiConfig (`0x1A`, phone→device, at most 100 bytes)
+
+The iPhone Personal Hotspot the device joins on demand (WAVESHARE_OPTIMIZATION_PLAN §4.3).
+iOS does not let an app read its own hotspot name or password, so the rider types them once.
+Sent with ACK_REQUESTED, only to a device that advertises bit14.
+
+```text
+u8  revision
+u8  policy               0 Disabled (forget the network), 1 OnDemand (keep it, join only when needed)
+u8  ssid_length          1..32 for OnDemand, 0 for Disabled
+u8[] ssid                UTF-8 bytes, no NUL
+u8  psk_length           8..64 for OnDemand, 0 for Disabled
+u8[] psk                 8..63 printable ASCII (0x20..0x7E), or exactly 64 hex digits (raw PSK)
+```
+
+The device accepts it **only on an encrypted, bonded link** (the characteristic already
+requires encryption; bonding is checked again before anything is stored) and answers
+`InvalidState` otherwise. On success it stores the network in NVS and answers `Ok`; an NVS
+failure is `Failed`. The PSK is never logged and never sent back; nothing echoes it.
+An identical config is acknowledged without rewriting flash. A link that is up keeps the
+network it joined until the next `up`; Disabled stops it at once.
+
+### 6.16 WifiStatus (`0x1B`, device→phone, fixed 9 bytes)
+
+Sent on every state change, about every 5 s while connected when the RSSI moves by 3 dB or
+more (at least every 30 s), and 500 ms after each handshake from a phone that advertises
+bit14 (the phone drops business messages until it has the device's final Ready). No ACK.
+
+```text
+u8  revision
+u8  state                0 Off (radio off, memory returned), 1 Connecting, 2 Connected, 3 Failed
+u8  failure              0 None, 1 NoCredentials, 2 NetworkNotFound, 3 AuthFailed, 4 Timeout,
+                         5 NoMemory, 6 Disconnected
+u8  flags                bit0 HasCredentials (a network is stored; nothing about it is sent)
+u8[4] ipv4               dotted order, ipv4[0] is the first octet
+i8  rssi_dbm
+```
+
+`ipv4` must be non-zero exactly when Connected, and it and `rssi_dbm` are zero otherwise.
+`failure` is non-zero exactly when Failed. After Failed the radio is already off again.
+The phone reaches the device at that address directly (the hotspot is `172.20.10.0/28`);
+no Bonjour is needed.
+
+### 6.17 OtaCommand (`0x1C`, phone→device, at most 238 bytes)
+
+Firmware update (WAVESHARE_OPTIMIZATION_PLAN §4.4, W3). The image **never crosses BLE**: the
+phone either serves the file over the hotspot it already shares with the round screen, or
+hands over a release URL and the device fetches it itself. Sent with ACK_REQUESTED, only to a
+device that advertises bit15, and accepted only on an **encrypted and bonded** link; anything
+else is answered `InvalidState` and not a byte is written.
+
+```text
+u8  revision
+u8  url_length           10..200
+u8[] url                  absolute http:// or https://, printable ASCII, no spaces, no NUL
+u8[32] sha256              SHA-256 of the whole image; all zero means the sender did not
+                          compute one and is refused
+u32 size_bytes            0 when not stated, otherwise 1 MiB..7 MiB (one OTA slot)
+```
+
+The device writes the idle OTA slot, verifies SHA-256 after the last byte, and only then points
+the bootloader at it and reboots. Development builds carry tlog; the release overlay
+(`sdkconfig.release`) turns it off, and both take the same OTA path. Once the new image is
+running, the firmware calls `esp_ota_mark_app_valid_cancel_rollback()` when a BLE handshake
+completes; if no handshake arrives, the next reset rolls back to the previous slot
+(`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`).
+
+### 6.18 OtaStatus (`0x1D`, device→phone, fixed 8 bytes)
+
+Sent on every state change and at most 2 Hz while downloading (only when the percentage moved
+by 2 or more). No ACK: the next status replaces a lost one.
+
+```text
+u8  revision
+u8  state                0 Idle, 1 Downloading, 2 Verifying, 3 Ready, 4 Failed
+u8  failure              0 None, 1 NoWifi, 2 NoCredentials, 3 BadUrl, 4 Network, 5 HashMismatch,
+                         6 ImageRejected, 7 NoMemory, 8 Busy, 9 TooLarge
+u8  progress_percent     0..100; 0 while the total is unknown
+u32 bytes_received        bytes written to the slot; zero while Idle
+```
+
+`failure` is non-zero exactly when Failed, and a Failed update has already discarded the slot
+(it cannot boot later). After Ready the device reboots within about a second: the phone treats
+that as a dropped link, not as a failure. Ready means the image is in place, not that the new
+version has run.
 
 ## 7. Display Snapshot to the shared NavSnapshot
 

@@ -15,10 +15,10 @@ constexpr std::size_t kRouteViewPointCapacity = 24;
 // One local 466 px map window: enough for a dense urban road graph without
 // turning the ESP32 snapshot into a city-wide map database. The bundled Jinan
 // verification fixture intentionally exercises both limits.
-constexpr std::size_t kRoadContextPointCapacity = 192;
-constexpr std::size_t kRoadContextPolylineCapacity = 24;
-constexpr std::size_t kBuildingContextPointCapacity = 128;
-constexpr std::size_t kBuildingContextFootprintCapacity = 16;
+constexpr std::size_t kRoadContextPointCapacity = 255;
+constexpr std::size_t kRoadContextPolylineCapacity = 40;
+constexpr std::size_t kBuildingContextPointCapacity = 192;
+constexpr std::size_t kBuildingContextFootprintCapacity = 24;
 
 enum class RoadContextClass : std::uint8_t {
   Motorway = 0,
@@ -139,6 +139,9 @@ struct NavSnapshot {
   float pitch_deg = 0.0F;
   float longitudinal_g = 0.0F;
   float lateral_g = 0.0F;
+  // heading_deg already glides on its own (the parked compass slew), so the
+  // UI should land it instead of smoothing it a second time.
+  bool heading_presmoothed = false;
 
   TimestampMs now_ms = 0;
   TimestampMs last_fix_ms = 0;

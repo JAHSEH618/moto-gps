@@ -3,10 +3,10 @@
 #include <stdint.h>
 
 #define MOTO_UI_ROUTE_POINT_CAPACITY 24
-#define MOTO_UI_ROAD_POINT_CAPACITY 192
-#define MOTO_UI_ROAD_POLYLINE_CAPACITY 24
-#define MOTO_UI_BUILDING_POINT_CAPACITY 128
-#define MOTO_UI_BUILDING_FOOTPRINT_CAPACITY 16
+#define MOTO_UI_ROAD_POINT_CAPACITY 255
+#define MOTO_UI_ROAD_POLYLINE_CAPACITY 40
+#define MOTO_UI_BUILDING_POINT_CAPACITY 192
+#define MOTO_UI_BUILDING_FOOTPRINT_CAPACITY 24
 #define MOTO_UI_CANVAS_WIDTH 466
 #define MOTO_UI_CANVAS_HEIGHT 466
 
@@ -206,6 +206,10 @@ typedef struct {
     uint8_t has_home;
     int16_t home_x;
     int16_t home_y;
+    /* 1 when heading_deg is already smoothed upstream (the parked compass
+       slew). A motion frame with this set is a pure rotation and the map
+       lands on it instead of blending; navigation frames ignore it. */
+    uint8_t heading_presmoothed;
 } moto_ui_state_t;
 
 /* Radius of the minimap ring, in canvas pixels. The ring carries the route

@@ -110,12 +110,15 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         WHERE x.max_lat_e6 >= ?1 AND x.min_lat_e6 <= ?2
           AND x.max_lon_e6 >= ?3 AND x.min_lon_e6 <= ?4
         ORDER BY
+          -- Nearest first. Ranking by class first spent the 512 candidate
+          -- slots on arterials and starved the residential streets around the
+          -- rider, which is exactly what makes the round screen look empty.
+          abs(((r.min_lat_e6 + r.max_lat_e6) / 2) - ?5) +
+          abs(((r.min_lon_e6 + r.max_lon_e6) / 2) - ?6),
           CASE r.class
             WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 0 THEN 2
             WHEN 3 THEN 3 WHEN 4 THEN 4 ELSE 5
           END,
-          abs(((r.min_lat_e6 + r.max_lat_e6) / 2) - ?5) +
-          abs(((r.min_lon_e6 + r.max_lon_e6) / 2) - ?6),
           r.id
         LIMIT 512
         """

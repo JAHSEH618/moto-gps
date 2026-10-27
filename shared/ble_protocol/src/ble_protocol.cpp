@@ -594,6 +594,131 @@ Error validate(const PerformanceRun& value) {
   return Error::None;
 }
 
+Error validate(const WifiConfig& value) {
+  if (value.policy != WifiPolicy::Disabled &&
+      value.policy != WifiPolicy::OnDemand) {
+    return Error::InvalidEnum;
+  }
+  if (value.ssid.size() > kMaxWifiSsidBytes ||
+      value.psk.size() > kMaxWifiPskBytes) {
+    return Error::StringTooLong;
+  }
+  // Disabled means "forget": a credential riding along would be stored by
+  // nobody and is a sender bug.
+  if (value.policy == WifiPolicy::Disabled) {
+    return value.ssid.empty() && value.psk.empty() ? Error::None
+                                                   : Error::OutOfRange;
+  }
+  // The driver reads both as C strings, so an embedded NUL would silently
+  // shorten them.
+  if (value.ssid.empty() ||
+      value.ssid.find('\0') != std::string::npos) {
+    return Error::OutOfRange;
+  }
+  if (value.psk.size() < kMinWifiPskBytes) {
+    return Error::OutOfRange;
+  }
+  const bool raw_key = value.psk.size() == kMaxWifiPskBytes;
+  for (const char character : value.psk) {
+    const auto byte = static_cast<std::uint8_t>(character);
+    const bool hex = (byte >= '0' && byte <= '9') ||
+                     (byte >= 'a' && byte <= 'f') ||
+                     (byte >= 'A' && byte <= 'F');
+    // 802.11i: a passphrase is 8-63 printable ASCII characters; 64
+    // characters are the raw PSK in hex.
+    if (raw_key ? !hex : (byte < 0x20U || byte > 0x7EU)) {
+      return Error::OutOfRange;
+    }
+  }
+  return Error::None;
+}
+
+Error validate(const WifiStatus& value) {
+  if (value.state != WifiLinkState::Off &&
+      value.state != WifiLinkState::Connecting &&
+      value.state != WifiLinkState::Connected &&
+      value.state != WifiLinkState::Failed) {
+    return Error::InvalidEnum;
+  }
+  if (static_cast<std::uint8_t>(value.failure) >
+      static_cast<std::uint8_t>(WifiFailure::Disconnected)) {
+    return Error::InvalidEnum;
+  }
+  if ((value.flags & ~kKnownWifiStatusFlags) != 0U) {
+    return Error::OutOfRange;
+  }
+  // A failure only explains Failed, and Failed always has one.
+  if ((value.state == WifiLinkState::Failed) !=
+      (value.failure != WifiFailure::None)) {
+    return Error::OutOfRange;
+  }
+  const bool has_address =
+      value.ipv4 != std::array<std::uint8_t, 4>{};
+  if (value.state == WifiLinkState::Connected) {
+    if (!has_address) return Error::OutOfRange;
+  } else if (has_address || value.rssi_dbm != 0) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
+Error validate(const OtaCommand& value) {
+  if (value.url.size() < kMinOtaUrlBytes ||
+      value.url.size() > kMaxOtaUrlBytes) {
+    return Error::StringTooLong;
+  }
+  // The device hands this to esp_http_client as a C string, so a NUL or
+  // whitespace inside it would either truncate the request or split it.
+  for (const char character : value.url) {
+    const auto byte = static_cast<std::uint8_t>(character);
+    if (byte <= 0x20U || byte > 0x7EU) return Error::OutOfRange;
+  }
+  // Absolute, and plain http only for a host on the link (the phone serving
+  // the image it already holds); https covers a release URL. Anything else
+  // (ftp, file, data) is not a fetch this device can make.
+  const bool http = value.url.rfind("http://", 0) == 0;
+  const bool https = value.url.rfind("https://", 0) == 0;
+  if (!http && !https) return Error::OutOfRange;
+  if (value.url.size() <= std::strlen(https ? "https://" : "http://")) {
+    return Error::OutOfRange;
+  }
+  // An all-zero digest is the default-constructed struct, not a hash: a
+  // sender that cannot compute one must not get the image installed blind.
+  const bool any_digest = std::any_of(
+      value.sha256.begin(), value.sha256.end(),
+      [](std::uint8_t byte) { return byte != 0U; });
+  if (!any_digest) return Error::OutOfRange;
+  if (value.size_bytes != 0 &&
+      (value.size_bytes < kMinOtaImageBytes ||
+       value.size_bytes > kMaxOtaImageBytes)) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
+Error validate(const OtaStatus& value) {
+  if (value.state != OtaState::Idle && value.state != OtaState::Downloading &&
+      value.state != OtaState::Verifying && value.state != OtaState::Ready &&
+      value.state != OtaState::Failed) {
+    return Error::InvalidEnum;
+  }
+  if (static_cast<std::uint8_t>(value.failure) >
+      static_cast<std::uint8_t>(OtaFailure::TooLarge)) {
+    return Error::InvalidEnum;
+  }
+  // A failure only explains Failed, and Failed always has one.
+  if ((value.state == OtaState::Failed) !=
+      (value.failure != OtaFailure::None)) {
+    return Error::OutOfRange;
+  }
+  if (value.progress_percent > 100U) return Error::OutOfRange;
+  // Only the states that move bytes carry a count, and Idle carries none.
+  if (value.state == OtaState::Idle && value.bytes_received != 0) {
+    return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -755,6 +880,25 @@ BytesResult encode_payload(const T& value) {
     writer.u32(value.run_id);
     writer.u32(value.elapsed_ms);
     writer.u32(value.best_ms);
+  } else if constexpr (std::is_same_v<T, WifiConfig>) {
+    writer.u8(static_cast<std::uint8_t>(value.policy));
+    writer.string_u8(value.ssid);
+    writer.string_u8(value.psk);
+  } else if constexpr (std::is_same_v<T, WifiStatus>) {
+    writer.u8(static_cast<std::uint8_t>(value.state));
+    writer.u8(static_cast<std::uint8_t>(value.failure));
+    writer.u8(value.flags);
+    for (const std::uint8_t octet : value.ipv4) writer.u8(octet);
+    writer.u8(static_cast<std::uint8_t>(value.rssi_dbm));
+  } else if constexpr (std::is_same_v<T, OtaCommand>) {
+    writer.string_u8(value.url);
+    for (const std::uint8_t byte : value.sha256) writer.u8(byte);
+    writer.u32(value.size_bytes);
+  } else if constexpr (std::is_same_v<T, OtaStatus>) {
+    writer.u8(static_cast<std::uint8_t>(value.state));
+    writer.u8(static_cast<std::uint8_t>(value.failure));
+    writer.u8(value.progress_percent);
+    writer.u32(value.bytes_received);
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -1639,6 +1783,14 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::GnssInput;
         } else if constexpr (std::is_same_v<T, PerformanceRun>) {
           return MessageType::PerformanceRun;
+        } else if constexpr (std::is_same_v<T, WifiConfig>) {
+          return MessageType::WifiConfig;
+        } else if constexpr (std::is_same_v<T, WifiStatus>) {
+          return MessageType::WifiStatus;
+        } else if constexpr (std::is_same_v<T, OtaCommand>) {
+          return MessageType::OtaCommand;
+        } else if constexpr (std::is_same_v<T, OtaStatus>) {
+          return MessageType::OtaStatus;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1763,6 +1915,79 @@ MessageResult decode_performance_run(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool WifiConfig::operator==(const WifiConfig& rhs) const noexcept {
+  return std::tie(policy, ssid, psk) ==
+         std::tie(rhs.policy, rhs.ssid, rhs.psk);
+}
+
+MessageResult decode_wifi_config(ByteView payload) {
+  Reader reader(payload);
+  WifiConfig value;
+  if (begin_payload(reader)) {
+    value.policy = static_cast<WifiPolicy>(reader.u8());
+    value.ssid = reader.string_u8(kMaxWifiSsidBytes);
+    value.psk = reader.string_u8(kMaxWifiPskBytes);
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
+bool WifiStatus::operator==(const WifiStatus& rhs) const noexcept {
+  return std::tie(state, failure, flags, ipv4, rssi_dbm) ==
+         std::tie(rhs.state, rhs.failure, rhs.flags, rhs.ipv4,
+                  rhs.rssi_dbm);
+}
+
+MessageResult decode_wifi_status(ByteView payload) {
+  Reader reader(payload);
+  WifiStatus value;
+  if (begin_payload(reader)) {
+    value.state = static_cast<WifiLinkState>(reader.u8());
+    value.failure = static_cast<WifiFailure>(reader.u8());
+    value.flags = reader.u8();
+    for (std::uint8_t& octet : value.ipv4) octet = reader.u8();
+    value.rssi_dbm = static_cast<std::int8_t>(reader.u8());
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
+bool OtaCommand::operator==(const OtaCommand& rhs) const noexcept {
+  return std::tie(url, sha256, size_bytes) ==
+         std::tie(rhs.url, rhs.sha256, rhs.size_bytes);
+}
+
+MessageResult decode_ota_command(ByteView payload) {
+  Reader reader(payload);
+  OtaCommand value;
+  if (begin_payload(reader)) {
+    value.url = reader.string_u8(kMaxOtaUrlBytes);
+    for (std::uint8_t& byte : value.sha256) byte = reader.u8();
+    value.size_bytes = reader.u32();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
+bool OtaStatus::operator==(const OtaStatus& rhs) const noexcept {
+  return std::tie(state, failure, progress_percent, bytes_received) ==
+         std::tie(rhs.state, rhs.failure, rhs.progress_percent,
+                  rhs.bytes_received);
+}
+
+MessageResult decode_ota_status(ByteView payload) {
+  Reader reader(payload);
+  OtaStatus value;
+  if (begin_payload(reader)) {
+    value.state = static_cast<OtaState>(reader.u8());
+    value.failure = static_cast<OtaFailure>(reader.u8());
+    value.progress_percent = reader.u8();
+    value.bytes_received = reader.u32();
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -1787,6 +2012,14 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_gnss_input(payload);
     case MessageType::PerformanceRun:
       return decode_performance_run(payload);
+    case MessageType::WifiConfig:
+      return decode_wifi_config(payload);
+    case MessageType::WifiStatus:
+      return decode_wifi_status(payload);
+    case MessageType::OtaCommand:
+      return decode_ota_command(payload);
+    case MessageType::OtaStatus:
+      return decode_ota_status(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

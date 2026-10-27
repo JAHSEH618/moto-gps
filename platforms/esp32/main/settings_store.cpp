@@ -17,6 +17,7 @@ constexpr char kTlogPosKey[] = "tlog.pos";
 constexpr char kTlogOkKey[] = "tlog.ok";
 constexpr char kImuFifoKey[] = "imu.fifo";
 constexpr char kGyroBiasKey[] = "att.gbias";
+constexpr char kTlogClearKey[] = "tlog.clear";
 // Version byte first, so a later layout is rejected instead of misread.
 constexpr std::uint8_t kGyroBiasVersion = 1;
 struct GyroBiasBlob {
@@ -213,6 +214,43 @@ bool save_mount_basis(const StoredMount& mount) {
     return false;
   }
   return true;
+}
+
+
+void request_tlog_clear() {
+  if (!ensure_nvs()) return;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
+  esp_err_t result = nvs_set_u8(handle, kTlogClearKey, 1);
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  if (result != ESP_OK) {
+    ESP_LOGE(kTag, "tlog clear request failed: %s", esp_err_to_name(result));
+  }
+}
+
+bool tlog_clear_requested() {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+  std::uint8_t value = 0;
+  const esp_err_t result = nvs_get_u8(handle, kTlogClearKey, &value);
+  nvs_close(handle);
+  return result == ESP_OK && value != 0;
+}
+
+void clear_tlog_clear_request() {
+  if (!ensure_nvs()) return;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
+  esp_err_t result = nvs_erase_key(handle, kTlogClearKey);
+  if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  if (result != ESP_OK) {
+    ESP_LOGW(kTag, "tlog clear flag could not be removed: %s",
+             esp_err_to_name(result));
+  }
 }
 
 }  // namespace moto::device

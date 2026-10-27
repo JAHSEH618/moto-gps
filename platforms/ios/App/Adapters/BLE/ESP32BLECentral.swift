@@ -186,6 +186,15 @@ final class ESP32BLECentral: NSObject {
     var onDeviceCommand: ((MotoBLEDeviceCommand) -> BLECommandDisposition)?
     var onAttitudeSample: ((MotoBLEAttitudeSample) -> Void)?
     var onPerformanceRun: ((MotoBLEPerformanceRun) -> Void)?
+    var onWifiStatus: ((MotoBLEWifiStatus) -> Void)?
+    /// The device's Ack to the newest WifiConfig: 0 stored, 2 refused because
+    /// the link is not bonded, 3 storage failed.
+    var onWifiConfigAck: ((UInt8) -> Void)?
+    /// The device's update progress (OtaStatus 0x1D).
+    var onOtaStatus: ((MotoBLEOtaStatus) -> Void)?
+    /// The device's Ack to the newest OtaCommand: 0 accepted, 2 refused
+    /// (unbonded link, an update already running, an image that cannot fit).
+    var onOtaCommandAck: ((UInt8) -> Void)?
     /// The phone's current compass heading, read for every navigation
     /// snapshot sent while the bike is too slow for a GNSS course.
     var compassHeadingDeg: (() -> Double?)?
@@ -197,6 +206,40 @@ final class ESP32BLECentral: NSObject {
         #if DEBUG
         print("[MotoBLE] \(message())")
         #endif
+    }
+
+    /// Which of the two sources the handlebar is following, twice a second at
+    /// most. A parked bike should say `compass`; `stale course` is the phone
+    /// having no fresh magnetometer reading.
+    private func traceHeading(
+        _ source: String,
+        heading: Double,
+        state: MotoNavCoreSnapshot
+    ) {
+        #if DEBUG
+        let now = Self.monotonicMs()
+        guard now >= lastHeadingTraceAtMs &+ 2_000 else { return }
+        lastHeadingTraceAtMs = now
+        print(String(
+            format: "[MotoCompass] %@ heading=%.1f course=%.1f speed=%.2f",
+            source, heading, state.headingDeg, state.speedMPS
+        ))
+        #endif
+    }
+
+    /// A message this process cannot encode is a local fault, not a link
+    /// fault: the same bytes would fail on every retry, so reconnecting would
+    /// only loop the radio. Drop that one message and keep the session.
+    private func encodeDroppingFailure(
+        _ what: String,
+        _ build: () throws -> [Data]
+    ) -> [Data]? {
+        do {
+            return try build()
+        } catch {
+            trace("\(what) refused by the codec; dropped: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private static let restorationID = "org.example.motogps.central"
@@ -239,6 +282,8 @@ final class ESP32BLECentral: NSObject {
     private var codec: MotoBLEProtocolCodec?
     private var handshake: BLEHandshakeGate?
     private var pendingNavigationState: MotoNavCoreSnapshot?
+    /// The newest snapshot this session sent, for a compass-only resend.
+    private var lastSentNavigationState: MotoNavCoreSnapshot?
     private var pendingMediaState: PhoneMediaState?
     private var pendingMapScene: OfflineMapSceneWindow?
     /// Newest saved home. Retained across a disconnect and re-sent after every
@@ -257,6 +302,14 @@ final class ESP32BLECentral: NSObject {
     private var shouldMaintainConnection = false
     private var protocolReady = false
     private var peerCapabilities: UInt32 = 0
+    /// The hotspot the rider saved, held until the device acknowledges it.
+    /// Memory only: once the device has stored it the phone has no reason to
+    /// keep a password it cannot read back from iOS anyway.
+    private var pendingWifiConfig: MotoBLEWifiConfigInput?
+    private var pendingWifiConfigSequence: UInt16?
+    /// The image the rider asked for, held until the device acknowledges it.
+    private var pendingOtaCommand: MotoBLEOtaCommandInput?
+    private var pendingOtaCommandSequence: UInt16?
     private var transportTeardown = BLETransportTeardown()
     private var transportTeardownInProgress: Bool { transportTeardown.isWaiting }
     private var transportTeardownTask: Task<Void, Never>?
@@ -276,6 +329,7 @@ final class ESP32BLECentral: NSObject {
     private var lastRouteGeometrySignature: RouteGeometrySignature?
     private var lastValidDeviceFrameAtMs: UInt64 = 0
     private var deviceHeartbeatTimeoutMs: UInt64 = 5_000
+    private var lastHeadingTraceAtMs: UInt64 = 0
     private var outboundFrames: [Data] = []
     private var writeWithResponseInFlight = false
     private var commandIDBySequence: [UInt16: UInt16] = [:]
@@ -331,6 +385,20 @@ final class ESP32BLECentral: NSObject {
     }
 
     func sendNavigationSnapshot(_ state: MotoNavCoreSnapshot) {
+        pendingNavigationState = state
+        scheduleNavigationTransmit()
+    }
+
+    /// Parked, the handlebar's heading is the compass read when a snapshot is
+    /// encoded, and snapshots otherwise go out only on a fix or the 1 s tick:
+    /// a turned phone reached the dial a second late. Resend the last state
+    /// so the new reading rides the 5 Hz pacing instead.
+    func compassHeadingDidChange() {
+        guard peerCapabilities & Self.compassHeadingCapability != 0,
+              pendingNavigationState == nil,
+              let state = lastSentNavigationState,
+              state.speedMPS < Self.courseMinimumSpeedMPS || !state.headingDeg.isFinite
+        else { return }
         pendingNavigationState = state
         scheduleNavigationTransmit()
     }
@@ -391,6 +459,92 @@ final class ESP32BLECentral: NSObject {
     /// Same contract as the home address, with one difference that matters:
     /// the device is the authority on settings, so the echo — not this call's
     /// return — is what says the glass changed.
+    /// True once a handshaken device has said it takes WifiConfig.
+    var deviceSupportsWifiHotspot: Bool {
+        protocolReady && WifiHotspot.supports(capabilities: peerCapabilities)
+    }
+
+    /// True once a handshaken device has said it can take an OTA command.
+    var deviceSupportsOta: Bool {
+        protocolReady && FirmwareUpdate.supports(capabilities: peerCapabilities)
+    }
+
+    /// Hands the device a URL and the image's SHA-256. The image itself never
+    /// crosses BLE: the device fetches it over the hotspot.
+    func sendOtaCommand(url: String, sha256Hex: String, sizeBytes: UInt32) {
+        let input = MotoBLEOtaCommandInput()
+        input.url = url
+        input.sha256Hex = sha256Hex
+        input.sizeBytes = sizeBytes
+        pendingOtaCommand = input
+        pendingOtaCommandSequence = nil
+        flushPendingOtaCommand()
+    }
+
+    private func flushPendingOtaCommand() {
+        guard protocolReady,
+              let codec,
+              let command = pendingOtaCommand,
+              FirmwareUpdate.supports(capabilities: peerCapabilities)
+        else { return }
+        guard let frames = encodeDroppingFailure("ota command", {
+            try codec.encodeOtaCommand(command)
+        })
+        else {
+            pendingOtaCommand = nil
+            onOtaCommandAck?(3)
+            return
+        }
+        do {
+            try send(frames)
+            pendingOtaCommandSequence = codec.lastEncodedSequence
+            trace("ota command sent sequence=\(codec.lastEncodedSequence) size=\(command.sizeBytes)")
+        } catch {
+            trace("ota command send failed: \(error.localizedDescription)")
+            recoverFromTransportError(error.localizedDescription)
+        }
+    }
+
+    /// Hands the hotspot to the device now, or after the next handshake.
+    /// `ssid == nil` tells the device to forget its network.
+    func sendWifiConfig(ssid: String?, password: String) {
+        let input = MotoBLEWifiConfigInput()
+        if let ssid {
+            input.ssid = ssid
+            input.password = password
+        } else {
+            input.enabled = false
+        }
+        pendingWifiConfig = input
+        pendingWifiConfigSequence = nil
+        flushPendingWifiConfig()
+    }
+
+    private func flushPendingWifiConfig() {
+        guard protocolReady,
+              let codec,
+              let config = pendingWifiConfig,
+              WifiHotspot.supports(capabilities: peerCapabilities)
+        else { return }
+        guard let frames = encodeDroppingFailure("wifi config", {
+            try codec.encodeWifiConfig(config)
+        })
+        else {
+            pendingWifiConfig = nil
+            onWifiConfigAck?(3)
+            return
+        }
+        do {
+            try send(frames)
+            pendingWifiConfigSequence = codec.lastEncodedSequence
+            // The SSID only; the password is never traced.
+            trace("wifi config sent sequence=\(codec.lastEncodedSequence) enabled=\(config.enabled)")
+        } catch {
+            trace("wifi config send failed: \(error.localizedDescription)")
+            recoverFromTransportError(error.localizedDescription)
+        }
+    }
+
     func sendDeviceSettings(_ settings: DeviceSettingsBroadcast) {
         pendingDeviceSettings = settings
         flushPendingDeviceSettings()
@@ -646,6 +800,7 @@ final class ESP32BLECentral: NSObject {
                 lastValidDeviceFrameAtMs = Self.monotonicMs()
                 startHeartbeat()
                 if let pendingNavigationState {
+                    trace("navigation flush after handshake")
                     sendNavigationSnapshot(pendingNavigationState)
                 }
                 flushPendingMediaState()
@@ -654,6 +809,8 @@ final class ESP32BLECentral: NSObject {
                 flushPendingHomeLocation()
                 lastSentSettingsRevision = nil
                 flushPendingDeviceSettings()
+                flushPendingWifiConfig()
+                flushPendingOtaCommand()
             }
         } catch {
             recoverFromTransportError(error.localizedDescription)
@@ -738,6 +895,7 @@ final class ESP32BLECentral: NSObject {
         writePumpTask?.cancel()
         writePumpTask = nil
         lastNavigationTransmitAtMs = 0
+        lastSentNavigationState = nil
         lastWriteWithoutResponseAtMs = 0
         lastRouteGeometrySignature = nil
         mapSceneDelivery = BLEMapSceneDelivery()
@@ -749,6 +907,10 @@ final class ESP32BLECentral: NSObject {
         handshake = nil
         protocolReady = false
         peerCapabilities = 0
+        // An unacknowledged WifiConfig or OtaCommand is sent again after the
+        // next handshake.
+        pendingWifiConfigSequence = nil
+        pendingOtaCommandSequence = nil
         lastValidDeviceFrameAtMs = 0
         deviceHeartbeatTimeoutMs = 5_000
         outboundFrames.removeAll()
@@ -917,6 +1079,7 @@ final class ESP32BLECentral: NSObject {
                 lastRouteGeometrySignature = nil
             }
             lastNavigationTransmitAtMs = Self.monotonicMs()
+            lastSentNavigationState = state
             flushPendingMapScene()
         } catch {
             // Preserve the newest state for the next protocol-ready session.
@@ -939,9 +1102,14 @@ final class ESP32BLECentral: NSObject {
         else { return }
 
         do {
-            try send(codec.encodeMediaState(makeMediaStateInput(state)))
+            guard let frames = encodeDroppingFailure("media", {
+                try codec.encodeMediaState(makeMediaStateInput(state))
+            })
+            else { return }
+            try send(frames)
         } catch {
             // Keep the immutable latest state for the next healthy session.
+            trace("media send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -955,17 +1123,21 @@ final class ESP32BLECentral: NSObject {
                                           queuedFrames: outboundFrames.count)
         else { return }
 
+        guard let frames = encodeDroppingFailure("map scene", {
+            try codec.encodeMapScene(scene.makeBLEInput())
+        })
+        else { return }
+        let sequence = codec.lastEncodedSequence
+        mapSceneDelivery.queued(revision: scene.revision, sequence: sequence)
+        mapSceneFinalFrame = frames.last
         do {
-            let frames = try codec.encodeMapScene(scene.makeBLEInput())
-            let sequence = codec.lastEncodedSequence
-            mapSceneDelivery.queued(revision: scene.revision, sequence: sequence)
-            mapSceneFinalFrame = frames.last
             try send(frames)
             trace("map queued revision=\(scene.revision) roads=\(scene.roads.count) buildings=\(scene.buildings.count) frames=\(frames.count)")
             // Keep the latest complete scene so a later BLE reconnection can
             // restore the map even when the motorcycle has not moved 100 m.
         } catch {
             // Retain the newest window for a future protocol-ready session.
+            trace("map scene send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -978,12 +1150,20 @@ final class ESP32BLECentral: NSObject {
               home.revision != lastSentHomeRevision
         else { return }
 
+        guard let frames = encodeDroppingFailure("home", {
+            try codec.encodeHomeLocation(makeHomeLocationInput(home))
+        })
+        else {
+            lastSentHomeRevision = home.revision
+            return
+        }
         do {
-            try send(codec.encodeHomeLocation(makeHomeLocationInput(home)))
+            try send(frames)
             lastSentHomeRevision = home.revision
             trace("home revision=\(home.revision) set=\(home.hasHome)")
         } catch {
             // Keep the newest value for a future protocol-ready session.
+            trace("home send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -996,12 +1176,20 @@ final class ESP32BLECentral: NSObject {
               settings.revision != lastSentSettingsRevision
         else { return }
 
+        guard let frames = encodeDroppingFailure("settings", {
+            try codec.encodeSettingsState(makeSettingsStateInput(settings))
+        })
+        else {
+            lastSentSettingsRevision = settings.revision
+            return
+        }
         do {
-            try send(codec.encodeSettingsState(makeSettingsStateInput(settings)))
+            try send(frames)
             lastSentSettingsRevision = settings.revision
             trace("settings revision=\(settings.revision) theme=\(settings.theme) buildings=\(settings.showBuildings)")
         } catch {
             // Keep the newest value for a future protocol-ready session.
+            trace("settings send failed: \(error.localizedDescription)")
             recoverFromTransportError(error.localizedDescription)
         }
     }
@@ -1273,11 +1461,20 @@ final class ESP32BLECentral: NSObject {
         // A course is a heading only while moving; parked, the phone's last
         // course is stale, so a device that understands it gets the compass.
         var heading = state.headingDeg
-        if state.speedMPS < Self.courseMinimumSpeedMPS || !heading.isFinite,
-           peerCapabilities & Self.compassHeadingCapability != 0,
-           let compass = compassHeadingDeg?() {
-            heading = compass
-            input.headingIsCompass = true
+        if state.speedMPS < Self.courseMinimumSpeedMPS || !heading.isFinite {
+            if peerCapabilities & Self.compassHeadingCapability != 0,
+               let compass = compassHeadingDeg?()
+            {
+                heading = compass
+                input.headingIsCompass = true
+                traceHeading("compass", heading: compass, state: state)
+            } else if peerCapabilities & Self.compassHeadingCapability != 0 {
+                // Parked with no compass reading: the handlebar keeps showing a
+                // course from whenever the bike last moved. Say so, because the
+                // symptom (a fixed offset against the system Compass app) looks
+                // like a compass bug and is not one.
+                traceHeading("stale course, no compass", heading: heading, state: state)
+            }
         }
         if heading.isFinite {
             let normalized = heading.truncatingRemainder(dividingBy: 360) + (heading < 0 ? 360 : 0)
@@ -1571,6 +1768,26 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                 return
             }
             if let ack = inbound.acknowledgement {
+                if let sequence = pendingWifiConfigSequence,
+                   ack.acknowledgedSequence == sequence {
+                    // Any answer ends this attempt: a refusal (unbonded link)
+                    // would only be refused again, so the rider decides.
+                    pendingWifiConfigSequence = nil
+                    pendingWifiConfig = nil
+                    trace("wifi config acknowledged status=\(ack.status)")
+                    onWifiConfigAck?(ack.status)
+                    return
+                }
+                if let sequence = pendingOtaCommandSequence,
+                   ack.acknowledgedSequence == sequence {
+                    // Any answer ends this attempt: the device refused it for a
+                    // reason the phone cannot fix by sending it again.
+                    pendingOtaCommandSequence = nil
+                    pendingOtaCommand = nil
+                    trace("ota command acknowledged status=\(ack.status)")
+                    onOtaCommandAck?(ack.status)
+                    return
+                }
                 if mapSceneDelivery.acknowledge(sequence: ack.acknowledgedSequence,
                                                 status: ack.status) {
                     trace("map acknowledged sequence=\(ack.acknowledgedSequence) status=\(ack.status)")
@@ -1587,6 +1804,10 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                     onAttitudeSample?(attitude)
                 } else if let run = inbound.performanceRun {
                     onPerformanceRun?(run)
+                } else if let wifi = inbound.wifiStatus {
+                    onWifiStatus?(wifi)
+                } else if let ota = inbound.otaStatus {
+                    onOtaStatus?(ota)
                 }
                 return
             }
@@ -1612,6 +1833,11 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                 )
             }
         } catch {
+            trace(
+                "inbound decode failed; bytes=\(frame.count) "
+                    + "head=\(frame.prefix(8).map { String(format: "%02x", $0) }.joined()) "
+                    + "error=\(error.localizedDescription)"
+            )
             recoverFromTransportError(error.localizedDescription)
         }
     }

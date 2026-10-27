@@ -4,8 +4,10 @@
 
 # Jinan offline mini-map package v1
 
-`jinan-v1.sqlite` is the whole-Jinan offline scene database used by the MOTO GPS iPhone app. It
-is not a pre-drawn demo line and it does not cache AMap or OSM online tiles; it is queryable
+`jinan-v1.sqlite` is the whole-Jinan offline scene database used by the unit tests, offline-pack
+verification and the development bench. The shipping app **no longer bundles** this 9.7 MiB
+file; real maps come from the gateway's online tiles and the rider's downloaded offline packs.
+It is not a pre-drawn demo line and it does not cache AMap or OSM online tiles; it is queryable
 vector data generated from real OpenStreetMap geometry:
 
 - clipped exactly by the OSM Jinan municipal boundary relation `3486449`;
