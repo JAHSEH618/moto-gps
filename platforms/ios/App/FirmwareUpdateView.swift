@@ -19,6 +19,7 @@ struct FirmwareUpdateView: View {
     @State private var pastedDigest = ""
     @State private var release: FirmwareRelease?
     @State private var releaseChecked = false
+    @State private var showReleaseConfirm = false
     @State private var pendingVersion: String?
     // What this phone last flashed into the device. The protocol carries no
     // firmware version, so "is there an update" can only be judged against
@@ -84,44 +85,10 @@ struct FirmwareUpdateView: View {
             }
 
             VStack(alignment: .leading, spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "02", text: "选择镜像")
+                MotoSectionTitle(index: "02", text: "检查更新")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
-                        Button("从「文件」里选 .bin") { showingPicker = true }
-                            .buttonStyle(MotoSecondaryButtonStyle())
-                            .accessibilityIdentifier("firmware-pick-button")
-                        if let picked {
-                            MotoRule()
-                            MotoRow(title: picked.name) {
-                                MotoLabel(text: byteCount(UInt32(clamping: picked.data.count)),
-                                          tone: .ink, uppercased: false)
-                                    .accessibilityIdentifier("firmware-file-size")
-                            }
-                            MotoRule()
-                            MotoRow(title: "SHA-256") {
-                                MotoLabel(text: String(picked.sha256.prefix(16)) + "…",
-                                          tone: .muted, uppercased: false)
-                                    .accessibilityIdentifier("firmware-file-digest")
-                            }
-                        }
-                    }
-                }
-                MotoBandButton("开始更新", identifier: "firmware-start-button") {
-                    startServerImage()
-                }
-                .disabled(!canStart)
-                .opacity(canStart ? 1 : 0.5)
-                MotoProse(
-                    text: "手机在个人热点（172.20.10.1:8123）上临时提供这个文件；圆屏下载完并校验 SHA-256 才切换启动分区。更新期间请保持亮屏与热点。",
-                    tone: .muted
-                )
-            }
-
-            VStack(alignment: .leading, spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "03", text: "发布地址")
-                MotoPanel(padding: 0) {
-                    VStack(spacing: 0) {
-                        MotoRow(title: "检查") {
+                        MotoRow(title: "结果") {
                             MotoLabel(text: checkStateText, tone: checkTone,
                                       uppercased: false)
                                 .accessibilityIdentifier("firmware-release-state")
@@ -149,19 +116,20 @@ struct FirmwareUpdateView: View {
                         }
                     }
                 }
+                MotoBandButton(isLoadingRelease ? "检查中…" : "检查更新",
+                               identifier: "firmware-release-check-button") {
+                    Task { await loadRelease() }
+                }
+                .disabled(isLoadingRelease)
+                .opacity(isLoadingRelease ? 0.5 : 1)
                 if let releaseMessage {
                     MotoProse(text: releaseMessage, tone: .muted)
                         .accessibilityIdentifier("firmware-release-message")
                 }
-                if release == nil && !isLoadingRelease {
-                    MotoBandButton("重新检查", identifier: "firmware-release-button") {
-                        Task { await loadRelease() }
-                    }
-                }
                 if let release, isUpdateAvailable {
-                    MotoBandButton("更新圆屏到 \(release.version)",
+                    MotoBandButton("刷新固件…",
                                    identifier: "firmware-release-start-button") {
-                        startReleaseURL()
+                        showReleaseConfirm = true
                     }
                     .disabled(!canStartFromRelease)
                     .opacity(canStartFromRelease ? 1 : 0.5)
@@ -170,7 +138,7 @@ struct FirmwareUpdateView: View {
             }
 
             VStack(alignment: .leading, spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "04", text: "手动指定")
+                MotoSectionTitle(index: "03", text: "手动地址")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoToggleRow(title: "填写地址与摘要", isOn: $manualEntry,
@@ -205,6 +173,40 @@ struct FirmwareUpdateView: View {
                     .opacity(canStartFromURL ? 1 : 0.5)
                 }
             }
+
+            VStack(alignment: .leading, spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "04", text: "从文件安装")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        Button("从「文件」里选 .bin") { showingPicker = true }
+                            .buttonStyle(MotoSecondaryButtonStyle())
+                            .accessibilityIdentifier("firmware-pick-button")
+                        if let picked {
+                            MotoRule()
+                            MotoRow(title: picked.name) {
+                                MotoLabel(text: byteCount(UInt32(clamping: picked.data.count)),
+                                          tone: .ink, uppercased: false)
+                                    .accessibilityIdentifier("firmware-file-size")
+                            }
+                            MotoRule()
+                            MotoRow(title: "SHA-256") {
+                                MotoLabel(text: String(picked.sha256.prefix(16)) + "…",
+                                          tone: .muted, uppercased: false)
+                                    .accessibilityIdentifier("firmware-file-digest")
+                            }
+                        }
+                    }
+                }
+                MotoBandButton("开始更新", identifier: "firmware-start-button") {
+                    startServerImage()
+                }
+                .disabled(!canStart)
+                .opacity(canStart ? 1 : 0.5)
+                MotoProse(
+                    text: "手机在个人热点（172.20.10.1:8123）上临时提供这个文件；圆屏下载完并校验 SHA-256 才切换启动分区。更新期间请保持亮屏与热点。",
+                    tone: .muted
+                )
+            }
         }
         .motoTheme(appearance.theme)
         .presentationDetents([.large])
@@ -224,9 +226,15 @@ struct FirmwareUpdateView: View {
             self.pendingVersion = nil
             releaseMessage = "圆屏已写入 \(pendingVersion)，正在重启。"
         }
-        .task {
-            guard model.deviceSupportsOta, !releaseChecked else { return }
-            await loadRelease()
+        .confirmationDialog("刷新圆屏固件？",
+                            isPresented: $showReleaseConfirm,
+                            titleVisibility: .visible) {
+            Button("刷新到 \(release?.version ?? "这个版本")") {
+                startReleaseURL()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("圆屏会通过手机热点下载这份固件，校验 SHA-256 后才切换启动分区。刷新期间请保持亮屏与热点。")
         }
         .onDisappear { model.stopFirmwareServer() }
     }
@@ -257,29 +265,29 @@ struct FirmwareUpdateView: View {
 
     private var checkStateText: String {
         if isLoadingRelease { return "检查中…" }
-        if release == nil { return releaseChecked ? "检查失败" : "尚未检查" }
-        return isUpdateAvailable ? "有新版本" : "已是最新"
+        if release == nil { return releaseChecked ? "检查失败" : "未检查" }
+        return isUpdateAvailable ? "有新固件" : "已是最新"
     }
 
     private var checkTone: MotoLabel.Tone {
         if isLoadingRelease { return .muted }
-        if release == nil { return .abort }
+        if release == nil { return releaseChecked ? .abort : .muted }
         return isUpdateAvailable ? .ink : .ok
     }
 
     private var releaseCaption: String {
         guard let release else {
             return releaseChecked
-                ? "没读到 doupaw.site 上的清单。确认网络后点「重新检查」。"
-                : "打开这一页就会读一次发布清单，只在按确认后才会让圆屏下载。"
+                ? "没读到 doupaw.site 上的清单。确认网络后点「检查更新」重试。"
+                : "点「检查更新」读 doupaw.site 上的清单；只有你确认后，圆屏才会开始下载。"
         }
         if !isUpdateAvailable {
             return "这台手机上次给圆屏刷的就是 \(release.version)，没有更新的发布。"
         }
         if installedVersion.isEmpty {
-            return "还没有记录圆屏的版本，会按最新发布更新。"
+            return "还没有记录圆屏的版本，所以把 \(release.version) 当作新固件。"
         }
-        return "这台手机上次给圆屏刷的是 \(installedVersion)。圆屏经手机热点下载，并按清单里的 SHA-256 校验后才切换启动分区。"
+        return "这台手机上次给圆屏刷的是 \(installedVersion)，最新发布是 \(release.version)。"
     }
 
     private var statusTitle: String {
@@ -372,9 +380,16 @@ struct FirmwareUpdateView: View {
                 pastedDigest = value.sha256Hex
                 let size = ByteCountFormatter.string(
                     fromByteCount: Int64(value.sizeBytes), countStyle: .file)
-                releaseMessage = value.version == installedVersion
-                    ? nil
-                    : "最新发布 \(value.version) · \(size)。"
+                if value.version == installedVersion {
+                    releaseMessage = "已是最新：\(value.version) · \(size)。"
+                } else {
+                    releaseMessage = "发现新固件 \(value.version) · \(size)。"
+                    // The rider asked to check; finding one is the moment to
+                    // ask, not a reason to start writing flash on our own.
+                    if model.deviceSupportsOta {
+                        showReleaseConfirm = true
+                    }
+                }
             } catch {
                 releaseMessage = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
@@ -390,7 +405,7 @@ struct FirmwareUpdateView: View {
                                               in: .whitespacesAndNewlines),
                                           sha256Hex: pastedDigest
                                               .trimmingCharacters(in: .whitespacesAndNewlines),
-                                          sizeBytes: 0)
+                                          sizeBytes: release?.sizeBytes ?? 0)
         } catch {
             pendingVersion = nil
             formError = (error as? LocalizedError)?.errorDescription
