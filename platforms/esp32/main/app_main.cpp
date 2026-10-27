@@ -31,6 +31,9 @@
 #include <cstring>
 #include "tlog_logger.hpp"
 #include "battery_ring.hpp"
+#include "wifi_link.h"
+
+#include <new>
 
 #include "driver/i2c_master.h"
 #include "esp_flash.h"
@@ -44,6 +47,14 @@ static moto::device::TlogLogger tlog;
 static bool g_calibration_unverified = true;
 static MotionHeadingSensor* g_sensor = nullptr;
 static PhoneNavBridge* g_bridge = nullptr;
+static WifiLink* g_wifi = nullptr;
+// PhoneNavBridge is the largest static object in the firmware (~25 KB: three
+// NavSnapshots with their map windows, the route-view assembly). Nothing in it
+// is touched from an ISR or with the cache off, so it lives in PSRAM and its
+// internal RAM goes to the WiFi driver instead (WAVESHARE_OPTIMIZATION_PLAN
+// §3.6, W0). Constructed in app_main once the presenter exists.
+alignas(PhoneNavBridge) EXT_RAM_BSS_ATTR static std::uint8_t
+    g_phone_bridge_storage[sizeof(PhoneNavBridge)];
 static TaskHandle_t g_task_cmd = nullptr;
 static TaskHandle_t g_task_ui_flags = nullptr;
 static TaskHandle_t g_task_demo = nullptr;
@@ -542,6 +553,15 @@ void serial_command_task(void* context) {
                  static_cast<unsigned>(stats.hero_draws),
                  static_cast<unsigned>(moto_nav_ui_debug_hidden()));
       }
+    } else if (std::strcmp(line, "wifi up") == 0) {
+      // Bench only until a task (OTA, tlog, map batch) owns the link.
+      if (g_wifi != nullptr) g_wifi->request_up();
+    } else if (std::strcmp(line, "wifi down") == 0) {
+      if (g_wifi != nullptr) g_wifi->request_down();
+    } else if (std::strcmp(line, "wifi status") == 0) {
+      if (g_wifi != nullptr) g_wifi->log_status();
+    } else if (std::strcmp(line, "wifi forget") == 0) {
+      if (g_wifi != nullptr) g_wifi->request_forget();
     } else if (std::strcmp(line, "ui perf reset") == 0) {
       board_port_reset_display_timing();
       ESP_LOGI(kTag, "display timing window reset");
@@ -640,13 +660,50 @@ moto_ui_theme_t boot_theme_for(moto::device::DeviceThemeMode mode) {
   }
 }
 
+// Everything the phone's BLE session feeds. WifiConfig goes to WifiLink and
+// never reaches the bridge; the bridge has no use for a password.
+struct PhoneLinks {
+  PhoneNavBridge* bridge = nullptr;
+  WifiLink* wifi = nullptr;
+};
+
 moto::ble::AckStatus receive_phone_message(
     const moto::ble::ReassembledMessage& message, void* context) {
-  return static_cast<PhoneNavBridge*>(context)->on_message(message);
+  auto* links = static_cast<PhoneLinks*>(context);
+  if (message.type == moto::ble::MessageType::WifiConfig) {
+    auto decoded = moto::ble::decode_message(
+        message.type, moto::ble::ByteView(message.payload));
+    auto* config = decoded.ok()
+                       ? std::get_if<moto::ble::WifiConfig>(&decoded.value)
+                       : nullptr;
+    if (config == nullptr) {
+      // Only the error code: the payload holds the password.
+      ESP_LOGW(kTag, "drop WifiConfig: %s", moto::ble::to_string(decoded.error));
+      return moto::ble::AckStatus::Failed;
+    }
+    const moto::ble::AckStatus status = links->wifi->on_config(*config);
+    std::fill(config->psk.begin(), config->psk.end(), '\0');
+    return status;
+  }
+  const moto::ble::AckStatus status = links->bridge->on_message(message);
+  if (message.type == moto::ble::MessageType::ConnectionStatus &&
+      status == moto::ble::AckStatus::Ok) {
+    const auto decoded = moto::ble::decode_message(
+        message.type, moto::ble::ByteView(message.payload));
+    if (const auto* phone =
+            decoded.ok()
+                ? std::get_if<moto::ble::ConnectionStatus>(&decoded.value)
+                : nullptr) {
+      links->wifi->on_phone_status(*phone);
+    }
+  }
+  return status;
 }
 
 void update_phone_link(bool active, void* context) {
-  static_cast<PhoneNavBridge*>(context)->on_link_state(active);
+  auto* links = static_cast<PhoneLinks*>(context);
+  links->bridge->on_link_state(active);
+  links->wifi->on_link_state(active);
 }
 
 void update_motion_heading(
@@ -975,7 +1032,8 @@ extern "C" void app_main(void) {
   HEAPPROBE("before_ui");  // HEAPPROBE
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
-  static PhoneNavBridge phone_bridge(presenter);
+  PhoneNavBridge& phone_bridge =
+      *new (g_phone_bridge_storage) PhoneNavBridge(presenter);
   static BleNavTransport transport;
   g_bridge = &phone_bridge;
   // NavPresenter's constructor already applies an empty snapshot, so no
@@ -1003,8 +1061,20 @@ extern "C" void app_main(void) {
   }
 
   phone_bridge.set_sender(BleNavTransport::send_from_bridge, &transport);
+  // The radio stays off; this only loads the stored hotspot and starts the
+  // worker that will own it.
+  static WifiLink wifi;
+  wifi.set_sender(BleNavTransport::send_from_bridge, &transport);
+  wifi.set_secure_link_check(BleNavTransport::link_encrypted_and_bonded_from,
+                             &transport);
+  if (wifi.start() == ESP_OK) {
+    g_wifi = &wifi;
+  } else {
+    ESP_LOGW(kTag, "WiFi worker could not start; WiFi stays unavailable");
+  }
+  static PhoneLinks phone_links{&phone_bridge, &wifi};
   transport.set_callbacks(receive_phone_message, update_phone_link,
-                          &phone_bridge);
+                          &phone_links);
   // The music page follows whichever app owns the iPhone's Now Playing,
   // through Apple Media Service on the same bonded link. The phone app's
   // Apple Music relay remains the fallback while AMS is not available.

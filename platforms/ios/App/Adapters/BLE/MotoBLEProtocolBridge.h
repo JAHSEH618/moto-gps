@@ -99,6 +99,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) int32_t speedAccuracyCmps;
 @end
 
+/// The iPhone Personal Hotspot the round screen joins on demand (message
+/// 0x1A). iOS cannot read the hotspot's own name or password, so the rider
+/// types them once. `enabled == NO` tells the device to forget the network;
+/// SSID and password are then ignored.
+@interface MotoBLEWifiConfigInput : NSObject
+@property(nonatomic) BOOL enabled;
+@property(nonatomic, copy) NSString *ssid;
+@property(nonatomic, copy) NSString *password;
+@end
+
 @interface MotoBLESettingsStateInput : NSObject
 /// Raw values match `moto::ble::SettingsState`; the shared encoder refuses a
 /// value outside the reviewed table rather than clamping it into a scale the
@@ -167,6 +177,18 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) uint32_t bestMilliseconds;
 @end
 
+/// The round screen's WiFi link (message 0x1B). state: 0 off, 1 connecting,
+/// 2 connected, 3 failed. failure: 0 none, 1 no network stored, 2 network not
+/// found, 3 wrong password, 4 timeout, 5 out of memory, 6 lost the network.
+/// `ipv4Address` is empty unless connected.
+@interface MotoBLEWifiStatus : NSObject
+@property(nonatomic, readonly) uint8_t state;
+@property(nonatomic, readonly) uint8_t failure;
+@property(nonatomic, readonly) BOOL hasCredentials;
+@property(nonatomic, readonly, copy) NSString *ipv4Address;
+@property(nonatomic, readonly) int8_t rssiDbm;
+@end
+
 /// One successfully decoded transport message, or one valid partial/duplicate
 /// frame. Sequence and ACK metadata stay attached to the shared decoder output.
 @interface MotoBLEInboundMessage : NSObject
@@ -179,6 +201,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, nullable) MotoBLEAcknowledgement *acknowledgement;
 @property(nonatomic, readonly, nullable) MotoBLEAttitudeSample *attitudeSample;
 @property(nonatomic, readonly, nullable) MotoBLEPerformanceRun *performanceRun;
+@property(nonatomic, readonly, nullable) MotoBLEWifiStatus *wifiStatus;
 @property(nonatomic, readonly, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -242,6 +265,20 @@ NS_ASSUME_NONNULL_BEGIN
 /// its binary layout in Swift.
 - (nullable NSData *)encodeGnssInputPayloadForTesting:(MotoBLEGnssInput *)fix
                                                 error:(NSError **)error;
+
+/// Sent with AckRequested; `lastEncodedSequence` is the sequence the device's
+/// Ack will name. The device refuses it (InvalidState) on a link that is not
+/// encrypted and bonded.
+- (nullable NSArray<NSData *> *)encodeWifiConfig:(MotoBLEWifiConfigInput *)config
+                                           error:(NSError **)error
+    NS_SWIFT_NAME(encodeWifiConfig(_:));
+
+/// Test hooks for the golden check: the shared WifiConfig encoder and the
+/// shared WifiStatus decoder, without restating either layout in Swift.
+- (nullable NSData *)encodeWifiConfigPayloadForTesting:(MotoBLEWifiConfigInput *)config
+                                                 error:(NSError **)error;
+- (nullable MotoBLEWifiStatus *)decodeWifiStatusPayloadForTesting:(NSData *)payload
+                                                            error:(NSError **)error;
 
 /// Test hook for checking the shared SettingsState payload without duplicating
 /// its binary layout in Swift.

@@ -196,6 +196,8 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x17` | SettingsState | both ways | when settings or the theme change, and after every handshake |
 | `0x18` | GnssInput | phone→device | one per Core Location fix (about 1 Hz), no ACK |
 | `0x19` | PerformanceRun | device→phone | every state change of the 0-100 clock and after each handshake; only to a phone that advertises bit13, no ACK |
+| `0x1A` | WifiConfig | phone→device | when the rider saves or forgets the hotspot; only to a device that advertises bit14, ACK_REQUESTED |
+| `0x1B` | WifiStatus | device→phone | WiFi state change, RSSI while connected, and after each handshake; only to a phone that advertises bit14, no ACK |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -220,7 +222,8 @@ bit8 attitude telemetry, bit9 home location, bit10 device settings, bit11 compas
 device understands NavigationSnapshot's HeadingCompass flag; the phone sets that flag only for
 a peer that advertises this bit, because an older firmware rejects unknown flags), bit12 GNSS
 input (the device takes `0x18`), bit13 performance run (advertised by the phone: it shows the
-round screen's 0-100 results, so the device sends it `0x19`).
+round screen's 0-100 results, so the device sends it `0x19`), bit14 WiFi hotspot (both ends: the
+device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -596,6 +599,49 @@ u32 best_ms              best since power-on; 0 when there is none
 
 Running and Finished carry a non-zero `run_id`. The re-send after a handshake repeats the
 last Finished state; the phone deduplicates on `(run_id, elapsed_ms)` and records it once.
+
+### 6.15 WifiConfig (`0x1A`, phone→device, at most 100 bytes)
+
+The iPhone Personal Hotspot the device joins on demand (WAVESHARE_OPTIMIZATION_PLAN §4.3).
+iOS does not let an app read its own hotspot name or password, so the rider types them once.
+Sent with ACK_REQUESTED, only to a device that advertises bit14.
+
+```text
+u8  revision
+u8  policy               0 Disabled (forget the network), 1 OnDemand (keep it, join only when needed)
+u8  ssid_length          1..32 for OnDemand, 0 for Disabled
+u8[] ssid                UTF-8 bytes, no NUL
+u8  psk_length           8..64 for OnDemand, 0 for Disabled
+u8[] psk                 8..63 printable ASCII (0x20..0x7E), or exactly 64 hex digits (raw PSK)
+```
+
+The device accepts it **only on an encrypted, bonded link** (the characteristic already
+requires encryption; bonding is checked again before anything is stored) and answers
+`InvalidState` otherwise. On success it stores the network in NVS and answers `Ok`; an NVS
+failure is `Failed`. The PSK is never logged and never sent back; nothing echoes it.
+An identical config is acknowledged without rewriting flash. A link that is up keeps the
+network it joined until the next `up`; Disabled stops it at once.
+
+### 6.16 WifiStatus (`0x1B`, device→phone, fixed 9 bytes)
+
+Sent on every state change, about every 5 s while connected when the RSSI moves by 3 dB or
+more (at least every 30 s), and 500 ms after each handshake from a phone that advertises
+bit14 (the phone drops business messages until it has the device's final Ready). No ACK.
+
+```text
+u8  revision
+u8  state                0 Off (radio off, memory returned), 1 Connecting, 2 Connected, 3 Failed
+u8  failure              0 None, 1 NoCredentials, 2 NetworkNotFound, 3 AuthFailed, 4 Timeout,
+                         5 NoMemory, 6 Disconnected
+u8  flags                bit0 HasCredentials (a network is stored; nothing about it is sent)
+u8[4] ipv4               dotted order, ipv4[0] is the first octet
+i8  rssi_dbm
+```
+
+`ipv4` must be non-zero exactly when Connected, and it and `rssi_dbm` are zero otherwise.
+`failure` is non-zero exactly when Failed. After Failed the radio is already off again.
+The phone reaches the device at that address directly (the hotspot is `172.20.10.0/28`);
+no Bonjour is needed.
 
 ## 7. Display Snapshot to the shared NavSnapshot
 

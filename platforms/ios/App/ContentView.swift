@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
     @State private var showsRaceTelemetry = false
+    @State private var showsWifiHotspot = false
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
@@ -819,7 +820,26 @@ struct ContentView: View {
             }
 
             VStack(spacing: MotoMetrics.s3) {
-                MotoSectionTitle(index: "03", text: "定位")
+                MotoSectionTitle(index: "03", text: "WiFi")
+                MotoPanel(padding: 0) {
+                    VStack(spacing: 0) {
+                        MotoRow(title: "个人热点", subtitle: wifiRowSubtitle) {
+                            MotoLabel(
+                                text: wifiRowStatus,
+                                tone: model.wifiStatus?.state == .connected ? .ok : .muted,
+                                uppercased: false
+                            )
+                        }
+                        MotoRule()
+                        Button("设置热点") { showsWifiHotspot = true }
+                            .buttonStyle(MotoSecondaryButtonStyle())
+                            .accessibilityIdentifier("device-wifi-action")
+                    }
+                }
+            }
+
+            VStack(spacing: MotoMetrics.s3) {
+                MotoSectionTitle(index: "04", text: "定位")
                 MotoPanel(padding: 0) {
                     VStack(spacing: 0) {
                         MotoRow(title: "搜索位置") {
@@ -837,6 +857,20 @@ struct ContentView: View {
         .motoTheme(theme)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showsWifiHotspot) { WifiHotspotView(model: model) }
+    }
+
+    private var wifiRowStatus: String {
+        guard model.deviceReady else { return "--" }
+        guard model.deviceSupportsWifi else { return "固件不支持" }
+        return model.wifiStatus?.title ?? "等待圆屏"
+    }
+
+    private var wifiRowSubtitle: String? {
+        if let status = model.wifiStatus, status.state == .connected {
+            return status.ipv4Address
+        }
+        return model.wifiHotspotName.isEmpty ? nil : model.wifiHotspotName
     }
 
     /// The theme, one level under the menu. Four flat choices instead of a

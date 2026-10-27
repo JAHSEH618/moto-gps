@@ -6,6 +6,15 @@ import MotoNavigationCore
 final class AppModel: ObservableObject {
     @Published private(set) var navigation = MotoNavCoreBridge().snapshot
     @Published private(set) var device = BLEDeviceSnapshot()
+    /// What the round screen last said about its WiFi link; nil while it is
+    /// not connected or has not reported yet.
+    @Published private(set) var wifiStatus: WifiHotspotStatus?
+    @Published private(set) var wifiSave: WifiHotspotSave = .idle
+    @Published private(set) var deviceSupportsWifi = false
+    /// The hotspot name the rider last saved. Kept so the form opens filled
+    /// in; the password is never stored on the phone.
+    @Published private(set) var wifiHotspotName =
+        UserDefaults.standard.string(forKey: AppModel.wifiHotspotNameKey) ?? ""
     /// Latest IMU sample from the device. Cleared on disconnect and expired by
     /// age, so a stalled link cannot leave a plausible lean on screen.
     @Published private(set) var attitude = AttitudeTelemetry()
@@ -66,6 +75,7 @@ final class AppModel: ObservableObject {
     private var routePreviewGeneration: UInt64 = 0
 
     private static let recentPlacesKey = "MotoGPS.RecentPlaces.v1"
+    private static let wifiHotspotNameKey = "MotoGPS.WifiHotspotName.v1"
 
     init(gatewayBaseURL: URL = AppConfiguration.gatewayBaseURL) {
         liveRouteProvider = AmapGatewayRouteProvider(baseURL: gatewayBaseURL)
@@ -81,7 +91,9 @@ final class AppModel: ObservableObject {
         bluetooth.onSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
             self.device = snapshot
+            self.deviceSupportsWifi = self.bluetooth.deviceSupportsWifiHotspot
             if case .connected = snapshot.connection { return }
+            self.wifiStatus = nil
             self.attitude.clear()
             self.publishRaceLog(force: true)
         }
@@ -96,6 +108,23 @@ final class AppModel: ObservableObject {
         bluetooth.onPerformanceRun = { [weak self] run in
             guard let self, let value = DevicePerformanceRun(run) else { return }
             if self.raceLog.record(value, at: Date()) { self.publishRaceLog(force: true) }
+        }
+        bluetooth.onWifiStatus = { [weak self] status in
+            self?.wifiStatus = WifiHotspotStatus(
+                rawState: status.state,
+                rawFailure: status.failure,
+                deviceHasNetwork: status.hasCredentials,
+                ipv4Address: status.ipv4Address,
+                rssiDbm: status.rssiDbm
+            )
+        }
+        bluetooth.onWifiConfigAck = { [weak self] status in
+            guard let self else { return }
+            switch status {
+            case 0: self.wifiSave = .stored
+            case 2: self.wifiSave = .refused("圆屏拒绝了：蓝牙连接未加密绑定。请在系统蓝牙设置里忽略圆屏后重新配对。")
+            default: self.wifiSave = .refused("圆屏未能保存热点，请重试。")
+            }
         }
         bluetooth.compassHeadingDeg = { [weak liveLocation] in
             liveLocation?.compassHeadingDeg
@@ -622,6 +651,23 @@ final class AppModel: ObservableObject {
         bluetooth.toggleConnection()
     }
 
+    /// Hands the hotspot to the round screen over the bonded BLE link. The
+    /// device stores it and joins only when a transfer needs WiFi.
+    func saveWifiHotspot(ssid: String, password: String) throws {
+        if let error = WifiHotspot.validate(ssid: ssid, password: password) { throw error }
+        UserDefaults.standard.set(ssid, forKey: Self.wifiHotspotNameKey)
+        wifiHotspotName = ssid
+        wifiSave = .waitingForDevice
+        bluetooth.sendWifiConfig(ssid: ssid, password: password)
+    }
+
+    func forgetWifiHotspot() {
+        UserDefaults.standard.removeObject(forKey: Self.wifiHotspotNameKey)
+        wifiHotspotName = ""
+        wifiSave = .waitingForDevice
+        bluetooth.sendWifiConfig(ssid: nil, password: "")
+    }
+
     private func bind(_ runtime: SharedNavigationRuntime) {
         runtime.onFix = { [weak self] fix in
             self?.bluetooth.sendGnssFix(fix)
@@ -833,4 +879,13 @@ final class AppModel: ObservableObject {
 private enum GatewaySettingsError: LocalizedError {
     case navigationActive
     var errorDescription: String? { "请先结束导航，再更换网关地址。" }
+}
+
+/// Where the rider's last hotspot save stands.
+enum WifiHotspotSave: Equatable {
+    case idle
+    /// Sent, or held until the round screen connects.
+    case waitingForDevice
+    case stored
+    case refused(String)
 }

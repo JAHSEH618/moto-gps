@@ -240,6 +240,25 @@ moto::ble::GnssInput GnssInputFromInput(MotoBLEGnssInput *input) {
   return fix;
 }
 
+std::string Utf8String(NSString *value) {
+  const char *bytes = value.UTF8String;
+  return bytes != nullptr ? std::string(bytes) : std::string();
+}
+
+moto::ble::WifiConfig WifiConfigFromInput(MotoBLEWifiConfigInput *input) {
+  moto::ble::WifiConfig config;
+  if (!input.enabled) {
+    config.policy = moto::ble::WifiPolicy::Disabled;
+    return config;
+  }
+  // No trimming or clamping: the shared validator refuses an SSID or a
+  // password the hotspot would not accept, and the error reaches the rider.
+  config.policy = moto::ble::WifiPolicy::OnDemand;
+  config.ssid = Utf8String(input.ssid);
+  config.psk = Utf8String(input.password);
+  return config;
+}
+
 moto::ble::SettingsState SettingsStateFromInput(MotoBLESettingsStateInput *input) {
   moto::ble::SettingsState state;
   // Theme and units are mapped explicitly rather than cast: the device's
@@ -315,7 +334,10 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                         moto::ble::CapabilityAttitudeTelemetry |
                         // Asks for the device's 0-100 runs (0x19), shown on
                         // the race page.
-                        moto::ble::CapabilityPerformanceRun;
+                        moto::ble::CapabilityPerformanceRun |
+                        // Shows the device's WifiStatus (0x1B) on the
+                        // Device -> WiFi screen.
+                        moto::ble::CapabilityWifiHotspot;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(storage->maximum_frame_size);
@@ -409,6 +431,17 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @implementation MotoBLESettingsStateInput
 @end
 
+@implementation MotoBLEWifiConfigInput
+- (instancetype)init {
+  if ((self = [super init])) {
+    _enabled = YES;
+    _ssid = @"";
+    _password = @"";
+  }
+  return self;
+}
+@end
+
 @interface MotoBLEDeviceCommand ()
 @property(nonatomic, readwrite) uint16_t sequence;
 @property(nonatomic, readwrite) BOOL ackRequested;
@@ -466,6 +499,37 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @implementation MotoBLEPerformanceRun
 @end
 
+@interface MotoBLEWifiStatus ()
+@property(nonatomic, readwrite) uint8_t state;
+@property(nonatomic, readwrite) uint8_t failure;
+@property(nonatomic, readwrite) BOOL hasCredentials;
+@property(nonatomic, readwrite, copy) NSString *ipv4Address;
+@property(nonatomic, readwrite) int8_t rssiDbm;
+@end
+
+@implementation MotoBLEWifiStatus
+@end
+
+namespace {
+
+MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
+  MotoBLEWifiStatus *value = [[MotoBLEWifiStatus alloc] init];
+  value.state = static_cast<uint8_t>(status.state);
+  value.failure = static_cast<uint8_t>(status.failure);
+  value.hasCredentials =
+      (status.flags & moto::ble::WifiStatusHasCredentials) != 0U;
+  value.ipv4Address =
+      status.state == moto::ble::WifiLinkState::Connected
+          ? [NSString stringWithFormat:@"%u.%u.%u.%u", status.ipv4[0],
+                                       status.ipv4[1], status.ipv4[2],
+                                       status.ipv4[3]]
+          : @"";
+  value.rssiDbm = status.rssi_dbm;
+  return value;
+}
+
+}  // namespace
+
 @interface MotoBLEAcknowledgement ()
 @property(nonatomic, readwrite) uint16_t acknowledgedSequence;
 @property(nonatomic, readwrite) uint8_t status;
@@ -484,6 +548,7 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @property(nonatomic, readwrite, nullable) MotoBLEAcknowledgement *acknowledgement;
 @property(nonatomic, readwrite, nullable) MotoBLEAttitudeSample *attitudeSample;
 @property(nonatomic, readwrite, nullable) MotoBLEPerformanceRun *performanceRun;
+@property(nonatomic, readwrite, nullable) MotoBLEWifiStatus *wifiStatus;
 @property(nonatomic, readwrite, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -653,6 +718,45 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                        0, error);
 }
 
+- (NSArray<NSData *> *)encodeWifiConfig:(MotoBLEWifiConfigInput *)input
+                                  error:(NSError **)error {
+  auto *storage = static_cast<CodecStorage *>(_storage);
+  moto::ble::WifiConfig config = WifiConfigFromInput(input);
+  // Acked: the rider is told whether the device stored it, and a refusal
+  // (unbonded link, NVS failure) must not look like success.
+  NSArray<NSData *> *frames = EncodeMessage(
+      storage, moto::ble::Message{config}, moto::ble::AckRequested, error);
+  std::fill(config.psk.begin(), config.psk.end(), '\0');
+  return frames;
+}
+
+- (NSData *)encodeWifiConfigPayloadForTesting:(MotoBLEWifiConfigInput *)input
+                                        error:(NSError **)error {
+  const auto payload =
+      moto::ble::encode_message(moto::ble::Message{WifiConfigFromInput(input)});
+  if (!payload.ok()) {
+    if (error != nullptr) *error = ProtocolError(payload.error, payload.offset);
+    return nil;
+  }
+  return [NSData dataWithBytes:payload.value.data() length:payload.value.size()];
+}
+
+- (MotoBLEWifiStatus *)decodeWifiStatusPayloadForTesting:(NSData *)payload
+                                                   error:(NSError **)error {
+  const auto decoded = moto::ble::decode_message(
+      moto::ble::MessageType::WifiStatus,
+      moto::ble::ByteView(static_cast<const std::uint8_t *>(payload.bytes),
+                          payload.length));
+  const auto *status =
+      decoded.ok() ? std::get_if<moto::ble::WifiStatus>(&decoded.value)
+                   : nullptr;
+  if (status == nullptr) {
+    if (error != nullptr) *error = ProtocolError(decoded.error, decoded.offset);
+    return nil;
+  }
+  return WifiStatusFromShared(*status);
+}
+
 - (NSData *)encodeGnssInputPayloadForTesting:(MotoBLEGnssInput *)input
                                        error:(NSError **)error {
   const auto payload =
@@ -797,6 +901,11 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
     value.elapsedMilliseconds = run->elapsed_ms;
     value.bestMilliseconds = run->best_ms;
     inbound.performanceRun = value;
+    return inbound;
+  }
+
+  if (const auto *wifi = std::get_if<moto::ble::WifiStatus>(&decoded.value)) {
+    inbound.wifiStatus = WifiStatusFromShared(*wifi);
     return inbound;
   }
 

@@ -28,6 +28,8 @@
 	<string>圆屏无法直接控制正在播放的 App 时，MOTO GPS 改为读取并控制 Apple Music 播放，以便在车把圆屏上切歌和暂停。</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>MOTO GPS 使用蓝牙连接车把上的 ESP32-S3 圆屏设备。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MOTO GPS 通过 iPhone 个人热点连接车把上的圆屏，用于下载骑行日志、更新固件和传输地图。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>导航开始后，MOTO GPS 需要在锁屏或切换应用时继续更新骑行位置。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
