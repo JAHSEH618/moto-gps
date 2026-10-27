@@ -31,6 +31,7 @@
 #include <cstring>
 #include "tlog_logger.hpp"
 #include "battery_ring.hpp"
+#include "burn_in.h"
 
 #include "driver/i2c_master.h"
 #include "esp_flash.h"
@@ -463,6 +464,10 @@ void serial_command_task(void* context) {
         g_ui_bench_lean_until_ms = 0;
         ESP_LOGI(kTag, "lean bench cancelled");
       }
+    } else if (std::strncmp(line, "burnin", 6) == 0) {
+      // DESIGN_V2 §2.6 on the bench: force full/dim/off, pin the orbit, or
+      // `burnin fast` for 2 s orbit / 5 s dim / 15 s off.
+      burn_in_command(line + 6);
     } else if (std::strcmp(line, "ui dbg on") == 0) {
       moto_nav_ui_debug_set_enabled(1);
       ESP_LOGI(kTag, "lean profiling on");
@@ -656,6 +661,16 @@ void update_motion_heading(
   if (g_ui_bench_lean_until_ms == 0) {
     static_cast<PhoneNavBridge*>(context)->on_imu_sample(
         heading_rate_dps, attitude, sample_ms);
+  }
+  // Vehicle motion keeps the panel lit (DESIGN_V2 §2.6): the same stillness
+  // gate the speed fusion calls parked. Four times a second is plenty for a
+  // minute-scale timer and keeps a mutex off most sensor samples.
+  static std::uint64_t last_motion_note_ms = 0;
+  if (g_sensor != nullptr && sample_ms - last_motion_note_ms >= 250U &&
+      g_sensor->lean().static_for_s() <
+          moto::motion::SpeedFusion::kParkedForS) {
+    last_motion_note_ms = sample_ms;
+    burn_in_note_motion();
   }
   const std::int64_t tlog_started_us = esp_timer_get_time();
   tlog.append(sample_ms, raw, attitude);
@@ -1003,6 +1018,9 @@ extern "C" void app_main(void) {
   }
 
   phone_bridge.set_sender(BleNavTransport::send_from_bridge, &transport);
+  phone_bridge.set_navigation_listener(
+      [](bool route_active, void*) { burn_in_note_navigation(route_active); },
+      nullptr);
   transport.set_callbacks(receive_phone_message, update_phone_link,
                           &phone_bridge);
   // The music page follows whichever app owns the iPhone's Now Playing,
@@ -1088,6 +1106,7 @@ extern "C" void app_main(void) {
                   &g_task_power) != pdPASS) {
     ESP_LOGW(kTag, "PWR long-hold task could not start");
   }
+  burn_in_start();
   HEAPPROBE("after_tasks");  // HEAPPROBE
   ESP_LOGW("heapprobe", "main stack free %u B", (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));  // HEAPPROBE
   heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE

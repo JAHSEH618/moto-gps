@@ -59,6 +59,33 @@ void board_port_log_display_timing(void);
 /** Cumulative render time and frame count since boot (lean-page profiling). */
 void board_port_display_totals(uint64_t *render_us, uint32_t *frames);
 
+/*
+ * Burn-in and idle control (DESIGN_V2 §2.6; driven by burn_in.cpp).
+ *
+ * The orbit offset moves every flushed area by (dx, dy) panel pixels, so the
+ * paper disc, the bezel and the top layer move as one and LVGL's own dirty
+ * areas are untouched. Both must be even (the CO5300 two-pixel grid) and
+ * within +/-2. Call with board_port_lock held; a change redraws the frame.
+ */
+void board_port_set_orbit_offset(int8_t dx, int8_t dy);
+/** CO5300 0x51, 0-100. Call with board_port_lock held, while the panel is lit. */
+esp_err_t board_port_set_brightness(uint8_t percent);
+/**
+ * Dark: brightness 0, DISPOFF, LVGL worker paused. Call without the lock.
+ * While dark, board_port_touch_pressed() is the only touch input.
+ */
+esp_err_t board_port_screen_off(void);
+/**
+ * Lit again: resume LVGL, DISPON at zero brightness, render one whole frame,
+ * then raise the brightness. The finger that woke the panel is not passed to
+ * the UI as a tap. Call without the lock.
+ */
+esp_err_t board_port_screen_on(uint8_t brightness_percent);
+/** Reads the CST9217 directly. Only while dark: LVGL owns it otherwise. */
+bool board_port_touch_pressed(void);
+/** Milliseconds since LVGL last saw a touch. Call with board_port_lock held. */
+uint32_t board_port_touch_idle_ms(void);
+
 /** GPIO3/SYS_OUT is high while the case PWR key is physically held. */
 bool board_port_power_button_pressed(void);
 

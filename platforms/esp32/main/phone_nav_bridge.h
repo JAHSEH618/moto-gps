@@ -57,6 +57,11 @@ class PhoneNavBridge {
   using SpeedListener = void (*)(const moto::motion::SpeedFix& fix,
                                  void* context);
   void set_speed_listener(SpeedListener listener, void* context);
+  // Every NavigationSnapshot, with whether a route is running (navigating or
+  // rerouting). The burn-in timer never dims a route and wakes on a new one.
+  // Called on the BLE task, outside the bridge lock.
+  using NavigationListener = void (*)(bool route_active, void* context);
+  void set_navigation_listener(NavigationListener listener, void* context);
   // Apple Media Service: the iPhone's own Now Playing service, read by the
   // device over the same BLE link. While it is available the music page shows
   // its state and the keys go to `MusicKeyHandler` first; it returns false
@@ -158,6 +163,8 @@ class PhoneNavBridge {
   SettingsStoreCallback settings_store_ = nullptr;
   SpeedListener speed_listener_ = nullptr;
   void* speed_listener_context_ = nullptr;
+  NavigationListener navigation_listener_ = nullptr;
+  void* navigation_listener_context_ = nullptr;
   // Per link: the phone's monotonic clock mapped onto ours, and whether this
   // phone sends GnssInput (then its snapshot speeds are not passed on).
   moto::motion::PhoneClock phone_clock_;

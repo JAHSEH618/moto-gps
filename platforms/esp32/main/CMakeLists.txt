@@ -28,6 +28,7 @@ idf_component_register(
         "attitude_estimator.cpp"
         "ble_nav_transport_nimble.cpp"
         "board_port_waveshare_1_75c.cpp"
+        "burn_in.cpp"
         "device_settings.cpp"
         "dyn_record.cpp"
         "lean_estimator.cpp"
