@@ -90,6 +90,18 @@ struct MapPalette {
     // The Lean arc: an unlit segment, and a lit one past 45 degrees.
     lv_color_t gauge_off;
     lv_color_t gauge_hot;
+    // The radar plate, navigation map only: the land the streets are cut
+    // through and the two tones real footprints are filled in. `background`
+    // and `building` stay as they were because the skyline, the link cover
+    // and the boot grid paint with them too.
+    lv_color_t map_land;
+    lv_color_t map_block;
+    lv_color_t map_block_landmark;
+    // The day skyline's two print greys. They used to be read out of
+    // road_class[3] and [4]; the radar's streets have their own tones now,
+    // and the skyline must not move with them.
+    lv_color_t skyline_far;
+    lv_color_t skyline_near;
 };
 
 // GTA III, Liberty City by day: the cover's white field as the paper and the
@@ -117,17 +129,24 @@ constexpr MapPalette kGtaDayPalette = {
     LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // paper on a black plate
     LV_COLOR_MAKE(0x11, 0x11, 0x11),  // counter slab
     LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),
+    // A step under the paper: streets are wide now, so none of them may be
+    // as bright as the numerals printed over the map.
     {
         LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // motorway: neon pink
-        LV_COLOR_MAKE(0xF7, 0xF5, 0xEF),  // primary
-        LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // secondary
-        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // residential
-        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // service
-        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // other: almost the block
+        LV_COLOR_MAKE(0xEF, 0xEC, 0xE4),  // primary
+        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // secondary
+        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // residential
+        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // service
+        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: almost the block
     },
     LV_COLOR_MAKE(0x11, 0x11, 0x11),  // hud numerals: ink
     LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // gauge off: a pale print grey
     LV_COLOR_MAKE(0xC8, 0x32, 0x1E),  // gauge hot: HUD red, darkened for paper
+    LV_COLOR_MAKE(0x4E, 0x4E, 0x4A),  // radar land: the grey radar
+    LV_COLOR_MAKE(0x40, 0x40, 0x3C),  // blocks a shade under the land
+    LV_COLOR_MAKE(0x5C, 0x5C, 0x57),
+    LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // skyline: far towers
+    LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // skyline: near towers
 };
 
 // GTA III, Liberty City at night: true black, box-art white type, and the
@@ -155,17 +174,27 @@ constexpr MapPalette kGtaNightPalette = {
     LV_COLOR_MAKE(0x0A, 0x0A, 0x0A),  // black on a white plate
     LV_COLOR_MAKE(0x00, 0x00, 0x00),  // counter slab
     LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),
+    // Radar grey, not box-art white: the streets are the plate, the route and
+    // the numerals are the only things that light up on it.
     {
         LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // motorway: neon pink
-        LV_COLOR_MAKE(0xF2, 0xEE, 0xE4),  // primary
-        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // secondary
-        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // residential
-        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // service
-        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // other: into the dark
+        LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // primary
+        LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // secondary
+        LV_COLOR_MAKE(0x8E, 0x8A, 0x82),  // residential
+        LV_COLOR_MAKE(0x5E, 0x5B, 0x55),  // service
+        LV_COLOR_MAKE(0x4B, 0x46, 0x3E),  // other: into the dark
     },
     LV_COLOR_MAKE(0xF3, 0x4D, 0xAA),  // hud numerals: neon pink
     LV_COLOR_MAKE(0x2A, 0x2A, 0x2A),  // gauge off: unlit glass
     LV_COLOR_MAKE(0xFF, 0x4B, 0x3A),  // gauge hot: HUD red
+    // DESIGN.md's night radar: the city is charcoal block, not a void, so the
+    // black road casing has something to cut against; footprints are raised.
+    LV_COLOR_MAKE(0x22, 0x22, 0x22),  // radar land: block charcoal
+    LV_COLOR_MAKE(0x2E, 0x2E, 0x2E),  // raised footprints
+    LV_COLOR_MAKE(0x3A, 0x3A, 0x3A),  // landmarks: the radar's land grey
+    // Unused by night: the night skyline is lit towers in building tones.
+    LV_COLOR_MAKE(0x2E, 0x2E, 0x2E),
+    LV_COLOR_MAKE(0x24, 0x24, 0x24),
 };
 
 // Frame colours shared by both themes. Neon pink is the HUD's own colour, the
@@ -190,14 +219,17 @@ const MapPalette &palette_for_theme(moto_ui_theme_t theme, bool ambient_night) {
 }
 
 // Stroke for one MapRoadClass. Width carries the hierarchy as much as colour:
-// a glance at 466 px reads thickness before hue.
+// a glance at 466 px reads thickness before hue. At the radar's 0.57 px/m a
+// 20 m arterial is 11 px and a 7 m street 4 px, so these widths are the
+// streets' own scale, GTA radar-chunky rather than hairlines.
 struct RoadStroke {
     lv_color_t color;
     int width_design;
 };
 
 RoadStroke road_stroke(const MapPalette &palette, std::uint8_t road_class) {
-    static constexpr int kWidths[6] = {5, 4, 4, 3, 2, 2};
+    // The route ribbon is 9: no street, not even a motorway, is as wide.
+    static constexpr int kWidths[6] = {8, 7, 6, 5, 3, 3};
     const std::uint8_t index = road_class < 6U ? road_class : 5U;
     return {palette.road_class[index], kWidths[index]};
 }
@@ -1230,9 +1262,9 @@ void draw_skyline(lv_event_t *event) {
     const bool own = given != nullptr;
     const lv_color_t window = (night && !own) ? palette.hud : palette.ground;
     const lv_color_t far = (night || own) ? palette.building_landmark
-                                          : palette.road_class[3];
+                                          : palette.skyline_far;
     const lv_color_t near = (night || own) ? palette.building
-                                           : palette.road_class[4];
+                                           : palette.skyline_near;
     draw_towers(layer, kFarTowers, sizeof(kFarTowers) / sizeof(kFarTowers[0]),
                 cx, cy, far, window, night && !own, reach);
     draw_towers(layer, kNearTowers,
@@ -1501,8 +1533,8 @@ void draw_building_fills(lv_event_t *event) {
         const lv_point_precise_t *points =
             &ui.nav_building_points[packed_index];
         fill.bg_color = span.building_class == 1U
-                            ? ui.palette.building_landmark
-                            : ui.palette.building;
+                            ? ui.palette.map_block_landmark
+                            : ui.palette.map_block;
 
         float minimum_x = static_cast<float>(points[0].x);
         float maximum_x = static_cast<float>(points[0].x);
@@ -1688,8 +1720,9 @@ void draw_building_fills(lv_event_t *event) {
     }
 }
 
-// Total extra width of a road's casing (one pixel each side at 466 px).
-constexpr int32_t kRoadCasingPx = 3;
+// Total extra width of a road's casing: two pixels each side at 466 px, the
+// hard black edge that makes a radar street read as cut, not stroked.
+constexpr int32_t kRoadCasingPx = 4;
 
 void draw_map_polyline(lv_event_t *event) {
     lv_obj_t *object = lv_event_get_target_obj(event);
@@ -2197,8 +2230,8 @@ void update_building_geometry(const moto_ui_state_t *state) {
                     const bool landmark = building_class == 1U;
                     lv_obj_set_style_line_color(
                         ui.nav_buildings[i],
-                        landmark ? ui.palette.building_landmark
-                                 : ui.palette.building, 0);
+                        landmark ? ui.palette.map_block_landmark
+                                 : ui.palette.map_block, 0);
                     lv_obj_set_style_line_width(
                         ui.nav_buildings[i], px(landmark ? 2 : 1), 0);
                     ui.nav_building_applied_class[i] = building_class;
@@ -3459,7 +3492,7 @@ void create_navigation_page() {
     // drawn over its edge. Nothing square ever shows inside the glass.
     lv_obj_set_style_radius(ui.nav_map, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_clip_corner(ui.nav_map, true, 0);
-    lv_obj_set_style_bg_color(ui.nav_map, ui.palette.background, 0);
+    lv_obj_set_style_bg_color(ui.nav_map, ui.palette.map_land, 0);
     lv_obj_set_style_bg_opa(ui.nav_map, LV_OPA_COVER, 0);
 
     // The map owns a solid land colour so the GTA day theme can switch the
@@ -3472,7 +3505,7 @@ void create_navigation_page() {
                     MOTO_UI_CANVAS_HEIGHT);
     lv_obj_set_pos(ui.nav_map_background, 0, 0);
     lv_obj_set_style_bg_color(ui.nav_map_background,
-                              ui.palette.background, 0);
+                              ui.palette.map_land, 0);
     lv_obj_set_style_bg_opa(ui.nav_map_background, LV_OPA_COVER, 0);
 
     // Footprint fills sit beneath the building outlines. A triangle fan from
@@ -3498,7 +3531,7 @@ void create_navigation_page() {
         lv_obj_set_size(ui.nav_buildings[i], MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
         lv_obj_set_style_line_width(ui.nav_buildings[i], px(1), 0);
         lv_obj_set_style_line_color(ui.nav_buildings[i],
-                                     ui.palette.building, 0);
+                                     ui.palette.map_block, 0);
         lv_obj_set_style_line_opa(ui.nav_buildings[i], LV_OPA_COVER, 0);
         lv_obj_set_style_line_rounded(ui.nav_buildings[i], false, 0);
         lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
@@ -3526,14 +3559,17 @@ void create_navigation_page() {
         lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
     }
 
+    // The route is the loudest thing on the plate: a health-orange ribbon a
+    // step wider than an arterial, on a casing that swallows the street under
+    // it, so it reads as the GPS line laid over the city rather than a road.
     ui.nav_route_shadow = create_map_polyline(ui.nav_map, ui.nav_route_shadow_line);
     lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_set_style_line_width(ui.nav_route_shadow, px(13), 0);
+    lv_obj_set_style_line_width(ui.nav_route_shadow, px(15), 0);
     lv_obj_set_style_line_color(ui.nav_route_shadow, ui.palette.route_shadow, 0);
     lv_obj_set_style_line_rounded(ui.nav_route_shadow, true, 0);
     ui.nav_route = create_map_polyline(ui.nav_map, ui.nav_route_line);
     lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH, MOTO_UI_CANVAS_HEIGHT);
-    lv_obj_set_style_line_width(ui.nav_route, px(6), 0);
+    lv_obj_set_style_line_width(ui.nav_route, px(9), 0);
     lv_obj_set_style_line_color(ui.nav_route, ui.palette.route, 0);
     lv_obj_set_style_line_rounded(ui.nav_route, true, 0);
     ui.nav_route_motion_timer = lv_timer_create(route_motion_tick,
@@ -5120,7 +5156,10 @@ void apply_theme_colors() {
     }
     if(ui.nav_map_background != nullptr) {
         lv_obj_set_style_bg_color(ui.nav_map_background,
-                                  ui.palette.background, 0);
+                                  ui.palette.map_land, 0);
+    }
+    if(ui.nav_map != nullptr) {
+        lv_obj_set_style_bg_color(ui.nav_map, ui.palette.map_land, 0);
     }
     if(ui.lean_scene != nullptr) {
         lv_obj_set_style_bg_color(ui.lean_scene, ui.palette.ground, 0);
@@ -5156,7 +5195,7 @@ void apply_theme_colors() {
         const bool landmark = ui.nav_building_spans[i].building_class == 1U;
         lv_obj_set_style_line_color(
             ui.nav_buildings[i],
-            landmark ? ui.palette.building_landmark : ui.palette.building, 0);
+            landmark ? ui.palette.map_block_landmark : ui.palette.map_block, 0);
     }
     for(std::uint8_t i = 0; i < ui.nav_road_polyline_count; ++i) {
         lv_obj_set_style_line_color(
