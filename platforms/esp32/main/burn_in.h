@@ -13,5 +13,9 @@ void burn_in_note_motion();
 // One NavigationSnapshot from the phone. Any task.
 void burn_in_note_navigation(bool route_active);
 
+// PWR short press (DESIGN_V2 §2.5): blank a lit panel, or wake a dark one.
+// Returns true if the panel should now be on.
+bool burn_in_toggle_panel();
+
 // `burnin ...` bench commands; `args` is the text after "burnin".
 void burn_in_command(const char* args);

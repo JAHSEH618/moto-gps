@@ -665,6 +665,10 @@ void request_lean_calibration(void* context) {
   static_cast<MotionHeadingSensor*>(context)->request_static_calibration();
 }
 constexpr std::uint64_t kPowerHoldMs = 3'000;
+// A tap on PWR toggles the panel (DESIGN_V2 §2.5). The lower bound keeps a
+// bounce from blanking the screen and the upper bound leaves the 3 s hold to
+// the shutdown path.
+constexpr std::uint64_t kPowerShortPressMinMs = 80;
 
 // DeviceThemeMode and moto_ui_theme_t are different enums with different
 // orders (Auto is 1 on the wire and 3 in the UI), so never cast.
@@ -936,6 +940,14 @@ void power_button_task(void*) {
       if (!released_once) {
         released_once = true;
         ESP_LOGI(kTag, "PWR ready: button released, hold detection armed");
+      } else if (pressed_since_ms != 0) {
+        const std::uint64_t held_ms = now_ms - pressed_since_ms;
+        if (held_ms >= kPowerShortPressMinMs && held_ms < kPowerHoldMs) {
+          const bool panel_on = burn_in_toggle_panel();
+          ESP_LOGI(kTag, "PWR short press (%llu ms): panel %s",
+                   static_cast<unsigned long long>(held_ms),
+                   panel_on ? "on" : "off");
+        }
       }
       pressed_since_ms = 0;
       vTaskDelay(pdMS_TO_TICKS(20));

@@ -411,6 +411,7 @@ void PhoneNavBridge::on_link_state(bool active) {
     } else {
       phone_session_id_ = 0;
       phone_capabilities_ = 0;
+      has_pending_display_page_ = false;
       attitude_pending_ = false;
       phone_snapshot.network = moto::nav::NetworkState::Offline;
       phone_snapshot.gnss_stale = true;
@@ -871,7 +872,22 @@ void PhoneNavBridge::consume_navigation(
     route_active = phone_snapshot.state == moto::nav::NavState::Navigating ||
                    phone_snapshot.state == moto::nav::NavState::Rerouting;
     phone_snapshot.network = map_network(input.network);
-    phone_snapshot.display_page = map_page(input.display_page);
+    // A swipe changes the page on the glass immediately and tells the phone
+    // afterwards. Snapshots already on the wire carry the page from before
+    // that tap; applying one would show the old page for a frame and then the
+    // new one, which reads as a stutter. Hold the rider's choice until the
+    // phone echoes it, or for a short bounded window on an older phone that
+    // never does.
+    const moto::nav::DisplayPage incoming_page = map_page(input.display_page);
+    if (has_pending_display_page_) {
+      if (incoming_page == pending_display_page_) {
+        has_pending_display_page_ = false;
+      } else if (monotonic_ms() - pending_display_page_ms_ >= 2'000U) {
+        has_pending_display_page_ = false;
+      }
+    }
+    phone_snapshot.display_page =
+        has_pending_display_page_ ? pending_display_page_ : incoming_page;
     phone_snapshot.has_destination = has_flag(
         input.flags, moto::ble::NavigationHasDestination);
     phone_snapshot.has_usable_fix = has_usable_fix;
@@ -1398,6 +1414,14 @@ void PhoneNavBridge::render_pending() {
     moto_nav_ui_set_phone_connection(render_phone_connection_);
     moto_nav_ui_set_demo_active(render_demo_active_ ? 1U : 0U);
     presenter_.apply_to_lvgl();
+#ifdef ESP_PLATFORM
+    // A swipe has already waited for gesture recognition; do not add the
+    // worker's refresh period on top. The dirty area is the new page, and
+    // the refresh the worker would have run next finds nothing left to do.
+    if ((requested & RenderPage) != 0U) {
+      esp_lv_adapter_refresh_now(nullptr);
+    }
+#endif
   } else if (motion) {
     moto_nav_ui_set_motion_state(&presenter_.ui_state());
 #ifdef ESP_PLATFORM
@@ -1449,9 +1473,14 @@ void PhoneNavBridge::page_changed(moto_ui_page_t page, void* context) {
   auto* self = static_cast<PhoneNavBridge*>(context);
   {
     const std::lock_guard<std::mutex> lock(self->state_mutex_);
-    self->snapshot_.display_page = map_nav_page(page);
+    const moto::nav::DisplayPage selected = map_nav_page(page);
+    self->snapshot_.display_page = selected;
+    self->pending_display_page_ = selected;
+    self->pending_display_page_ms_ = monotonic_ms();
+    self->has_pending_display_page_ = true;
   }
-  self->present_navigation();
+  self->request_render(static_cast<std::uint32_t>(RenderNavigation) |
+                       static_cast<std::uint32_t>(RenderPage));
   self->send_page_command(page);
 }
 

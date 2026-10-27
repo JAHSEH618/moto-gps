@@ -267,6 +267,12 @@ constexpr int kPerfSegmentCount = 12;
 // A stop has to look deliberate: braking to 0 for a red light is not a new
 // run until the wheels have been still for a moment.
 constexpr std::uint32_t kPerfRearmStillMs = 1'500;
+// A run that is not going to reach the target has to end, not tick forever:
+// rolling off the throttle, stopping at a light, or a missed launch are all
+// ordinary ways for a 0-100 attempt to die. DESIGN_V2 §5 specifies the same
+// abort window (30 s, a >5 km/h fall from the peak).
+constexpr std::uint32_t kPerfTimeoutMs = 30'000;
+constexpr std::uint16_t kPerfAbortDropKph = 5;
 // Home is only reachable while the bike is effectively stopped; see
 // home_shortcut_event().
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
@@ -528,6 +534,12 @@ struct Ui {
     std::uint32_t perf_still_since_ms = 0;
     std::uint16_t perf_best_centis = 0;
     std::uint32_t perf_last_centis = 0;
+    // Highest speed seen since the clock started; the abort rule compares
+    // against this, not the target, so a run that never gets close still ends.
+    std::uint16_t perf_peak_kph = 0;
+    // An aborted attempt must not restart from a rolling 5 km/h: the rider
+    // stopped that run on purpose. Rearm needs a real 1.5 s standstill.
+    bool perf_require_still = false;
     lv_obj_t *perf_long_g = nullptr;
     lv_obj_t *perf_lat_g = nullptr;
     lv_obj_t *perf_gg_dot = nullptr;
@@ -2954,6 +2966,18 @@ void perf_report(std::uint32_t elapsed_ms) {
     ui.perf_callback(&run, ui.perf_context);
 }
 
+// Ends a live run without a result. The phone sees the same Armed transition
+// it gets after a completed run, so its race log does not keep a timer open.
+void perf_abort(const char *reason) {
+    ui.perf_state = Ui::PerfState::Armed;
+    ui.perf_still_since_ms = 0;
+    ui.perf_peak_kph = 0;
+    ui.perf_require_still = true;
+    if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, reason);
+    if(ui.perf_timer != nullptr) lv_label_set_text(ui.perf_timer, "-.-");
+    perf_report(0);
+}
+
 void perf_tick(lv_timer_t *) {
     if(ui.perf_timer == nullptr || !ui.live) return;
     if(ui.perf_state != Ui::PerfState::Running) return;
@@ -2968,17 +2992,38 @@ void update_performance(const moto_ui_state_t *state) {
     const std::uint32_t now = lv_tick_get();
     switch(ui.perf_state) {
         case Ui::PerfState::Armed:
+            if(ui.perf_require_still) {
+                // The aborted run's speed is not a launch. Wait for the bike
+                // to be still before arming the next attempt.
+                if(speed == 0) {
+                    if(ui.perf_still_since_ms == 0) {
+                        ui.perf_still_since_ms = now;
+                    } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
+                              kPerfRearmStillMs) {
+                        ui.perf_require_still = false;
+                        ui.perf_still_since_ms = 0;
+                    }
+                } else {
+                    ui.perf_still_since_ms = 0;
+                }
+                break;
+            }
             // Rolling away from a standstill starts the clock; the strip is
             // the only thing that moves until then.
             if(speed >= 1) {
                 ui.perf_state = Ui::PerfState::Running;
                 ui.perf_run_start_ms = now;
+                ui.perf_peak_kph = speed;
+                ui.perf_still_since_ms = 0;
+                ui.perf_require_still = false;
                 ++ui.perf_run_id;
+                if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "");
                 perf_set_elapsed(0);
                 perf_report(0);
             }
             break;
         case Ui::PerfState::Running:
+            if(speed > ui.perf_peak_kph) ui.perf_peak_kph = speed;
             if(speed >= kPerfTargetKph) {
                 const std::uint32_t elapsed_ms =
                     lv_tick_elaps(ui.perf_run_start_ms);
@@ -3009,8 +3054,26 @@ void update_performance(const moto_ui_state_t *state) {
                     }
                 }
                 ui.perf_state = Ui::PerfState::Launched;
+                ui.perf_peak_kph = 0;
+                ui.perf_still_since_ms = 0;
                 perf_report(elapsed_ms);
+            } else if(lv_tick_elaps(ui.perf_run_start_ms) >= kPerfTimeoutMs) {
+                perf_abort("TIME");
+            } else if(static_cast<int>(ui.perf_peak_kph) -
+                          static_cast<int>(speed) >
+                      static_cast<int>(kPerfAbortDropKph)) {
+                // Lifting off or braking means this attempt is over. Waiting
+                // for the bike to reach 0 would keep a dead clock on screen.
+                perf_abort("ABORT");
+            } else if(speed == 0) {
+                if(ui.perf_still_since_ms == 0) {
+                    ui.perf_still_since_ms = now;
+                } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
+                          kPerfRearmStillMs) {
+                    perf_abort("ABORT");
+                }
             } else {
+                ui.perf_still_since_ms = 0;
                 perf_set_elapsed(lv_tick_elaps(ui.perf_run_start_ms) / 10U);
             }
             break;
@@ -3024,6 +3087,8 @@ void update_performance(const moto_ui_state_t *state) {
                           kPerfRearmStillMs) {
                     ui.perf_state = Ui::PerfState::Armed;
                     ui.perf_still_since_ms = 0;
+                    ui.perf_peak_kph = 0;
+                    ui.perf_require_still = false;
                     perf_report(0);
                     if(ui.perf_delta != nullptr) {
                         lv_label_set_text(ui.perf_delta, "");
@@ -3948,6 +4013,11 @@ void create_compass_page() {
     ui.compass_speed = lv_obj_get_child(speed, 0);
 }
 
+void perf_stop_event(lv_event_t *) {
+    if(!ui.live) return;
+    if(ui.perf_state == Ui::PerfState::Running) perf_abort("STOP");
+}
+
 void create_performance_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_PERFORMANCE];
     make_page_surface(page, MOTO_UI_PAGE_PERFORMANCE);
@@ -3999,6 +4069,11 @@ void create_performance_page() {
     // The stopwatch runs on its own timer: state snapshots arrive at the BLE
     // cadence, but the clock has to move between them.
     ui.perf_timer_task = lv_timer_create(perf_tick, 50, nullptr);
+
+    // A deliberate tap is the rider's own stop. It only affects a live run;
+    // a finished result stays on screen until the bike stops or a new run
+    // starts, exactly as before.
+    lv_obj_add_event_cb(page, perf_stop_event, LV_EVENT_CLICKED, nullptr);
 }
 
 void clear_lean_peaks() {

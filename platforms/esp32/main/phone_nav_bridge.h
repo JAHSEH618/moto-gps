@@ -188,6 +188,14 @@ class PhoneNavBridge {
   // Capabilities from the phone's ConnectionStatus. Bit 8 (attitude
   // telemetry) is the phone saying it wants AttitudeSample.
   std::uint32_t phone_capabilities_ = 0;
+  // A page the rider selected locally, held until the phone's snapshot
+  // echoes it. Snapshots already in flight were encoded with the old page and
+  // would otherwise flip the screen back for a frame: that double switch is
+  // what makes a swipe feel rough.
+  moto::nav::DisplayPage pending_display_page_ =
+      moto::nav::DisplayPage::Navigation;
+  std::uint64_t pending_display_page_ms_ = 0;
+  bool has_pending_display_page_ = false;
   // Newest valid sample waiting for the render task, and the 10 Hz clock.
   moto::ble::AttitudeSample pending_attitude_{};
   bool attitude_pending_ = false;
@@ -225,6 +233,10 @@ class PhoneNavBridge {
     // Send the newest PerformanceRun: raised from inside an LVGL call, sent
     // by the render task once it is outside it.
     RenderPerformance = 1U << 6U,
+    // A page was selected locally. Apply that frame now instead of waiting
+    // for the worker's next 25 ms tick; a swipe should land on the new page
+    // in the same touch, not one or two frames later.
+    RenderPage = 1U << 7U,
   };
   std::atomic<std::uint32_t> pending_render_flags_{0};
 #ifdef ESP_PLATFORM

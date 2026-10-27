@@ -167,7 +167,20 @@ bool burn_in_start() {
 void burn_in_note_motion() {
   const std::uint64_t now = now_ms();
   const std::lock_guard<std::mutex> lock(g_mutex);
-  g_policy.note_activity(now);
+  g_policy.note_motion(now);
+}
+
+bool burn_in_toggle_panel() {
+  const std::uint64_t now = now_ms();
+  const std::lock_guard<std::mutex> lock(g_mutex);
+  // Toggle what the panel is actually doing, not the manual flag: the panel
+  // may be dark because the 15 min idle rule fired, and the first PWR press
+  // after that must wake it rather than re-blank it.
+  const moto::device::BurnInOutput current = g_policy.evaluate(now);
+  const bool wake = current.level == moto::device::ScreenLevel::Off;
+  g_policy.set_manual_off(!wake, now);
+  if (wake) g_policy.note_activity(now);
+  return wake;
 }
 
 void burn_in_note_navigation(bool route_active) {
@@ -191,6 +204,11 @@ void burn_in_command(const char* args) {
       g_policy.force(moto::device::ScreenLevel::Dim, now);
     } else if (std::strcmp(args, "off") == 0) {
       g_policy.force(moto::device::ScreenLevel::Off, now);
+    } else if (std::strcmp(args, "toggle") == 0) {
+      const moto::device::BurnInOutput current = g_policy.evaluate(now);
+      const bool wake = current.level == moto::device::ScreenLevel::Off;
+      g_policy.set_manual_off(!wake, now);
+      if (wake) g_policy.note_activity(now);
     } else if (std::strcmp(args, "fast") == 0) {
       g_policy.set_config(bench_fast_config(), now);
     } else if (std::strcmp(args, "normal") == 0) {

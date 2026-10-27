@@ -71,10 +71,18 @@ class BurnInPolicy {
     last_activity_ms_ = static_cast<std::int64_t>(now_ms);
   }
 
-  // Touch, vehicle motion or a navigation event at now_ms.
+  // Touch or the PWR key at now_ms. A rider who reaches for the instrument
+  // also cancels a manual blank.
   void note_activity(std::uint64_t now_ms) {
-    const auto now = static_cast<std::int64_t>(now_ms);
-    if (now > last_activity_ms_) last_activity_ms_ = now;
+    manual_off_ = false;
+    mark_activity(now_ms);
+  }
+
+  // Vehicle motion at now_ms. Motion keeps the panel lit, but it must not
+  // undo a deliberate PWR blank while the bike sits on a vibrating stand.
+  void note_motion(std::uint64_t now_ms) {
+    if (manual_off_) return;
+    mark_activity(now_ms);
   }
 
   // One NavigationSnapshot. A route starting or ending is a navigation event.
@@ -83,12 +91,23 @@ class BurnInPolicy {
     last_navigation_ms_ = now_ms;
     has_navigation_ = true;
     route_active_ = route_active;
-    if (route_active != was_active) note_activity(now_ms);
+    if (route_active != was_active) note_motion(now_ms);
   }
+
+  // PWR short press: blank the panel now and keep it blank until PWR or a
+  // touch. The auto-off and auto-dim clocks are restored on wake, so the next
+  // idle period starts from a full 5/15 minutes.
+  void set_manual_off(bool off, std::uint64_t now_ms) {
+    manual_off_ = off;
+    mark_activity(now_ms);
+  }
+
+  bool manual_off() const { return manual_off_; }
 
   // Bench: move the stillness clock so the panel is at `level` now and goes
   // on from there exactly as it would on its own (a touch still wakes it).
   void force(ScreenLevel level, std::uint64_t now_ms) {
+    manual_off_ = false;
     std::uint64_t still_ms = 0;
     if (level == ScreenLevel::Dim) still_ms = config_.dim_after_ms;
     if (level == ScreenLevel::Off) still_ms = config_.off_after_ms;
@@ -119,10 +138,26 @@ class BurnInPolicy {
     out.route_held = route_active_at(now_ms);
     if (out.route_held) {
       // Navigating is activity: when the route ends the clock starts there,
-      // not at the last touch before it.
-      note_activity(now_ms);
+      // not at the last touch before it. A PWR blank still wins: the rider
+      // asked for a dark panel, not a route that keeps it lit.
+      note_motion(now_ms);
     }
     const std::uint64_t still = still_ms(now_ms);
+    if (manual_off_) {
+      out.level = ScreenLevel::Off;
+      out.brightness_percent = 0;
+      out.orbit_index =
+          pinned_orbit_ != kOrbitAuto
+              ? pinned_orbit_
+              : static_cast<std::uint8_t>(
+                    (config_.orbit_period_ms == 0
+                         ? 0
+                         : now_ms / config_.orbit_period_ms) %
+                    kOrbitPositions);
+      out.dx = kOrbitDx[out.orbit_index];
+      out.dy = kOrbitDy[out.orbit_index];
+      return out;
+    }
     if (still >= config_.off_after_ms) {
       out.level = ScreenLevel::Off;
       out.brightness_percent = 0;
@@ -147,11 +182,17 @@ class BurnInPolicy {
   }
 
  private:
+  void mark_activity(std::uint64_t now_ms) {
+    const auto now = static_cast<std::int64_t>(now_ms);
+    if (now > last_activity_ms_) last_activity_ms_ = now;
+  }
+
   BurnInConfig config_;
   std::int64_t last_activity_ms_ = 0;
   std::uint64_t last_navigation_ms_ = 0;
   bool has_navigation_ = false;
   bool route_active_ = false;
+  bool manual_off_ = false;
   std::uint8_t pinned_orbit_ = kOrbitAuto;
 };
 
