@@ -690,7 +690,7 @@ struct ContentView: View {
 
     /// Original or GTA. Picking GTA restores the GTA mode used last.
     private var buildingsFootnote: String {
-        "建筑轮廓默认关闭：圆形屏上密集的楼块会挤掉骑行时真正要看清的道路。"
+        "建筑轮廓默认打开，给雷达成片的街区感；楼块太密、看不清道路时可以关掉。"
     }
 
     private var showBuildingsBinding: Binding<Bool> {

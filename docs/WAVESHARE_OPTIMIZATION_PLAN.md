@@ -225,7 +225,7 @@ iOS 侧：`Info.plist` 加 `NSLocalNetworkUsageDescription`（首次访问局域
 待办：
 
 1. 上板 `ui page nav` + `ui perf`，在 36 条路/24 栋楼的真实窗口下确认导航页 ≥27 fps（笔画变宽会增加绘制量）。
-2. 手机端“显示建筑”默认关（`AppModel.swift:39`）。GTA 的城市块感很依赖建筑层，要不要默认打开由你决定。
+2. ~~手机端“显示建筑”默认关~~：已定为默认打开（`DeviceSettingsStore.swift`），骑手关掉后保持关闭。
 3. 水面/绿地面要素（TODO 已列）是 GTA 雷达最强的识别点之一，需要协议加面要素和手机端提取。
 4. 目的地在雷达外时贴边显示 blip（同安全屋的做法），需要协议带目的地方位。
 
