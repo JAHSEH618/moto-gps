@@ -186,6 +186,10 @@ final class ESP32BLECentral: NSObject {
     var onDeviceCommand: ((MotoBLEDeviceCommand) -> BLECommandDisposition)?
     var onAttitudeSample: ((MotoBLEAttitudeSample) -> Void)?
     var onPerformanceRun: ((MotoBLEPerformanceRun) -> Void)?
+    var onWifiStatus: ((MotoBLEWifiStatus) -> Void)?
+    /// The device's Ack to the newest WifiConfig: 0 stored, 2 refused because
+    /// the link is not bonded, 3 storage failed.
+    var onWifiConfigAck: ((UInt8) -> Void)?
     /// The phone's current compass heading, read for every navigation
     /// snapshot sent while the bike is too slow for a GNSS course.
     var compassHeadingDeg: (() -> Double?)?
@@ -293,6 +297,11 @@ final class ESP32BLECentral: NSObject {
     private var shouldMaintainConnection = false
     private var protocolReady = false
     private var peerCapabilities: UInt32 = 0
+    /// The hotspot the rider saved, held until the device acknowledges it.
+    /// Memory only: once the device has stored it the phone has no reason to
+    /// keep a password it cannot read back from iOS anyway.
+    private var pendingWifiConfig: MotoBLEWifiConfigInput?
+    private var pendingWifiConfigSequence: UInt16?
     private var transportTeardown = BLETransportTeardown()
     private var transportTeardownInProgress: Bool { transportTeardown.isWaiting }
     private var transportTeardownTask: Task<Void, Never>?
@@ -442,6 +451,51 @@ final class ESP32BLECentral: NSObject {
     /// Same contract as the home address, with one difference that matters:
     /// the device is the authority on settings, so the echo — not this call's
     /// return — is what says the glass changed.
+    /// True once a handshaken device has said it takes WifiConfig.
+    var deviceSupportsWifiHotspot: Bool {
+        protocolReady && WifiHotspot.supports(capabilities: peerCapabilities)
+    }
+
+    /// Hands the hotspot to the device now, or after the next handshake.
+    /// `ssid == nil` tells the device to forget its network.
+    func sendWifiConfig(ssid: String?, password: String) {
+        let input = MotoBLEWifiConfigInput()
+        if let ssid {
+            input.ssid = ssid
+            input.password = password
+        } else {
+            input.enabled = false
+        }
+        pendingWifiConfig = input
+        pendingWifiConfigSequence = nil
+        flushPendingWifiConfig()
+    }
+
+    private func flushPendingWifiConfig() {
+        guard protocolReady,
+              let codec,
+              let config = pendingWifiConfig,
+              WifiHotspot.supports(capabilities: peerCapabilities)
+        else { return }
+        guard let frames = encodeDroppingFailure("wifi config", {
+            try codec.encodeWifiConfig(config)
+        })
+        else {
+            pendingWifiConfig = nil
+            onWifiConfigAck?(3)
+            return
+        }
+        do {
+            try send(frames)
+            pendingWifiConfigSequence = codec.lastEncodedSequence
+            // The SSID only; the password is never traced.
+            trace("wifi config sent sequence=\(codec.lastEncodedSequence) enabled=\(config.enabled)")
+        } catch {
+            trace("wifi config send failed: \(error.localizedDescription)")
+            recoverFromTransportError(error.localizedDescription)
+        }
+    }
+
     func sendDeviceSettings(_ settings: DeviceSettingsBroadcast) {
         pendingDeviceSettings = settings
         flushPendingDeviceSettings()
@@ -706,6 +760,7 @@ final class ESP32BLECentral: NSObject {
                 flushPendingHomeLocation()
                 lastSentSettingsRevision = nil
                 flushPendingDeviceSettings()
+                flushPendingWifiConfig()
             }
         } catch {
             recoverFromTransportError(error.localizedDescription)
@@ -802,6 +857,8 @@ final class ESP32BLECentral: NSObject {
         handshake = nil
         protocolReady = false
         peerCapabilities = 0
+        // An unacknowledged WifiConfig is sent again after the next handshake.
+        pendingWifiConfigSequence = nil
         lastValidDeviceFrameAtMs = 0
         deviceHeartbeatTimeoutMs = 5_000
         outboundFrames.removeAll()
@@ -1659,6 +1716,16 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                 return
             }
             if let ack = inbound.acknowledgement {
+                if let sequence = pendingWifiConfigSequence,
+                   ack.acknowledgedSequence == sequence {
+                    // Any answer ends this attempt: a refusal (unbonded link)
+                    // would only be refused again, so the rider decides.
+                    pendingWifiConfigSequence = nil
+                    pendingWifiConfig = nil
+                    trace("wifi config acknowledged status=\(ack.status)")
+                    onWifiConfigAck?(ack.status)
+                    return
+                }
                 if mapSceneDelivery.acknowledge(sequence: ack.acknowledgedSequence,
                                                 status: ack.status) {
                     trace("map acknowledged sequence=\(ack.acknowledgedSequence) status=\(ack.status)")
@@ -1675,6 +1742,8 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                     onAttitudeSample?(attitude)
                 } else if let run = inbound.performanceRun {
                     onPerformanceRun?(run)
+                } else if let wifi = inbound.wifiStatus {
+                    onWifiStatus?(wifi)
                 }
                 return
             }

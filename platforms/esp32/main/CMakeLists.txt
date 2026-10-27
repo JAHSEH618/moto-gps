@@ -41,6 +41,7 @@ idf_component_register(
         "settings_store.cpp"
         "speed_fusion.cpp"
         "tlog_logger.cpp"
+        "wifi_link.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"
         "${MOTO_SHARED_NAV_PRESENTER_SOURCE}"
         ${MOTO_SHARED_UI_FONTS}
@@ -65,6 +66,9 @@ idf_component_register(
         nvs_flash
         spi_flash
         bt
+        esp_wifi
+        esp_netif
+        esp_event
         esp32_s3_touch_amoled_1_75c
 )
 

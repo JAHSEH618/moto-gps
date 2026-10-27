@@ -639,7 +639,8 @@ void BleNavTransport::send_connection_status(
                         moto::ble::CapabilityHomeLocation |
                         moto::ble::CapabilityDeviceSettings |
                         moto::ble::CapabilityCompassHeading |
-                        moto::ble::CapabilityGnssInput;
+                        moto::ble::CapabilityGnssInput |
+                        moto::ble::CapabilityWifiHotspot;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(negotiated_frame_size());
@@ -729,6 +730,24 @@ std::size_t BleNavTransport::negotiated_frame_size() const noexcept {
   return std::clamp<std::size_t>(std::min(local, peer),
                                  moto::ble::kFrameOverhead + 1U,
                                  kMaximumFrameSize);
+}
+
+bool BleNavTransport::link_encrypted_and_bonded() const {
+  const std::uint16_t handle = connection_handle_.load();
+  if (!connected_.load() || handle == kNoConnection) {
+    return false;
+  }
+  struct ble_gap_conn_desc description{};
+  if (ble_gap_conn_find(handle, &description) != 0) {
+    return false;
+  }
+  return description.sec_state.encrypted != 0 &&
+         description.sec_state.bonded != 0;
+}
+
+bool BleNavTransport::link_encrypted_and_bonded_from(void* context) {
+  return static_cast<const BleNavTransport*>(context)
+      ->link_encrypted_and_bonded();
 }
 
 bool BleNavTransport::send_message(const moto::ble::Message& message,

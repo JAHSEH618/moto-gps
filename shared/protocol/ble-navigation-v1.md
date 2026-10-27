@@ -168,6 +168,8 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x17` | SettingsState | 双向 | 设置或主题变化时，以及每次握手后 |
 | `0x18` | GnssInput | 手机→设备 | 每个 Core Location fix 一条（约 1 Hz），无 ACK |
 | `0x19` | PerformanceRun | 设备→手机 | 0-100 计时每次状态变化，以及每次握手后；手机声明 bit13 时才发，无 ACK |
+| `0x1A` | WifiConfig | 手机→设备 | 骑手保存或忘记热点时；设备声明 bit14 时才发，ACK_REQUESTED |
+| `0x1B` | WifiStatus | 设备→手机 | WiFi 状态变化、连接期间的 RSSI、每次握手后；手机声明 bit14 时才发，无 ACK |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -191,7 +193,8 @@ bit4 touch commands、bit5 music commands、bit6 command ACK、bit7 map scene、
 bit8 attitude telemetry、bit9 home location、bit10 device settings、
 bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标志；手机只对
 声明了它的对端置该位，旧固件会拒绝未知标志）、bit12 GNSS input（设备接收 `0x18`）、
-bit13 performance run（手机声明：它要显示圆屏的 0-100 成绩，设备才发 `0x19`）。
+bit13 performance run（手机声明：它要显示圆屏的 0-100 成绩，设备才发 `0x19`）、
+bit14 WiFi hotspot（双方声明：设备接收 `0x1A` 并回报 `0x1B`，手机显示 `0x1B`）。
 
 `0x16`、`0x17` 与 `0x18` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
 根本不认识这些类型，而不是收到后忽略。
@@ -540,6 +543,45 @@ u32 best_ms              本次开机以来的最佳；没有时为 0
 
 Running 与 Finished 的 `run_id` 不能为 0。握手后的补发会重复上一条 Finished，手机按
 `(run_id, elapsed_ms)` 去重，只记一次成绩。
+
+### 6.15 WifiConfig (`0x1A`, 手机→设备, 最长 100 字节)
+
+圆屏按需连接的 iPhone 个人热点（WAVESHARE_OPTIMIZATION_PLAN §4.3）。iOS 不让 App 读取
+自己的热点名和密码，所以由骑手手填一次。带 ACK_REQUESTED，只发给声明 bit14 的设备。
+
+```text
+u8  revision
+u8  policy               0 Disabled（忘记网络）、1 OnDemand（保存，只在需要时连接）
+u8  ssid_length          OnDemand 为 1..32，Disabled 为 0
+u8[] ssid                UTF-8 字节，不含 NUL
+u8  psk_length           OnDemand 为 8..64，Disabled 为 0
+u8[] psk                 8..63 个可打印 ASCII（0x20..0x7E），或恰好 64 位十六进制（原始 PSK）
+```
+
+设备**只在已加密且已绑定的链路上**接受它（特征值本身已要求加密，存储前再检查一次绑定），
+否则回 `InvalidState`。成功时写入 NVS 并回 `Ok`；NVS 失败回 `Failed`。PSK 不写日志、
+不回传，任何消息都不回显它。内容未变时只回 Ack、不重写 flash。已经连上的链路继续使用
+原网络，下次 `up` 才换新网络；Disabled 立即断开。
+
+### 6.16 WifiStatus (`0x1B`, 设备→手机, 固定 9 字节)
+
+每次状态变化时发送；连接期间每 5 s 查一次 RSSI，变化 ≥3 dB（至少每 30 s）时发送；
+声明 bit14 的手机握手后 500 ms 补发一次（手机在收到设备最终 Ready 前会丢弃业务消息）。
+无 ACK。
+
+```text
+u8  revision
+u8  state                0 Off（射频关闭、内存已归还）、1 Connecting、2 Connected、3 Failed
+u8  failure              0 None、1 NoCredentials、2 NetworkNotFound、3 AuthFailed、4 Timeout、
+                         5 NoMemory、6 Disconnected
+u8  flags                bit0 HasCredentials（设备存有网络；网络内容不回传）
+u8[4] ipv4               点分顺序，ipv4[0] 是第一段
+i8  rssi_dbm
+```
+
+`ipv4` 仅在 Connected 时非零，其他状态下它和 `rssi_dbm` 都为 0。`failure` 仅在 Failed
+时非零；进入 Failed 时射频已经关闭。手机直接连这个地址（热点网段 `172.20.10.0/28`），
+不需要 Bonjour。
 
 ## 7. Display Snapshot 到共享 NavSnapshot
 

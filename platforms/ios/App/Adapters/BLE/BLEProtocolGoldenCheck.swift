@@ -7,6 +7,7 @@ enum BLEProtocolGoldenCheck {
         case homeVectorMissing
         case settingsVectorMissing
         case gnssVectorMissing
+        case wifiVectorMissing
         case mismatch(expected: String, actual: String)
 
         var errorDescription: String? {
@@ -16,6 +17,7 @@ enum BLEProtocolGoldenCheck {
             case .homeVectorMissing: "BLE v1 黄金帧缺少 home.payload"
             case .settingsVectorMissing: "BLE v1 黄金帧缺少 settings.payload"
             case .gnssVectorMissing: "BLE v1 黄金帧缺少 gnss.payload"
+            case .wifiVectorMissing: "BLE v1 黄金帧缺少 wifi_config/wifi_status.payload"
             case let .mismatch(expected, actual):
                 "BLE v1 编码不一致：expected \(expected), actual \(actual)"
             }
@@ -135,6 +137,47 @@ enum BLEProtocolGoldenCheck {
         let actualGnss = gnssPayload.map { String(format: "%02x", $0) }.joined()
         guard actualGnss == expectedGnss else {
             throw CheckError.mismatch(expected: expectedGnss, actual: actualGnss)
+        }
+
+        func vector(_ key: String) -> String? {
+            fixture
+                .split(separator: "\n")
+                .first(where: { $0.hasPrefix("\(key)=") })?
+                .split(separator: "=", maxSplits: 1)
+                .last
+                .map(String.init)
+        }
+        guard let expectedWifiConfig = vector("wifi_config.payload"),
+              let expectedWifiStatus = vector("wifi_status.payload")
+        else { throw CheckError.wifiVectorMissing }
+
+        // The fixture's password is a test value, not a credential.
+        let wifi = MotoBLEWifiConfigInput()
+        wifi.ssid = "MOTO iPhone"
+        wifi.password = "ride-safe-2026"
+        let wifiPayload = try codec.encodeWifiConfigPayload(forTesting: wifi)
+        let actualWifiConfig = wifiPayload.map { String(format: "%02x", $0) }.joined()
+        guard actualWifiConfig == expectedWifiConfig else {
+            throw CheckError.mismatch(expected: expectedWifiConfig, actual: actualWifiConfig)
+        }
+
+        // The phone never encodes WifiStatus, so the decode is what is pinned.
+        var statusBytes = Data()
+        var index = expectedWifiStatus.startIndex
+        while index < expectedWifiStatus.endIndex {
+            let next = expectedWifiStatus.index(index, offsetBy: 2)
+            guard let byte = UInt8(expectedWifiStatus[index..<next], radix: 16) else {
+                throw CheckError.wifiVectorMissing
+            }
+            statusBytes.append(byte)
+            index = next
+        }
+        let status = try codec.decodeWifiStatusPayload(forTesting: statusBytes)
+        let actualWifiStatus = "state=\(status.state) failure=\(status.failure) "
+            + "stored=\(status.hasCredentials) ip=\(status.ipv4Address) rssi=\(status.rssiDbm)"
+        let expectedDecoded = "state=2 failure=0 stored=true ip=172.20.10.2 rssi=-58"
+        guard actualWifiStatus == expectedDecoded else {
+            throw CheckError.mismatch(expected: expectedDecoded, actual: actualWifiStatus)
         }
     }
 }

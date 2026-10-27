@@ -772,7 +772,12 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
             }
           }
           if (home_refused) request_render(RenderHomeError);
-        } else if constexpr (std::is_same_v<T, moto::ble::DeviceCommand>) {
+        } else if constexpr (std::is_same_v<T, moto::ble::DeviceCommand> ||
+                             std::is_same_v<T, moto::ble::WifiStatus>) {
+          return moto::ble::AckStatus::Unsupported;
+        } else if constexpr (std::is_same_v<T, moto::ble::WifiConfig>) {
+          // app_main routes WifiConfig to WifiLink, which checks the bond.
+          // Reaching here means no WiFi owner is installed.
           return moto::ble::AckStatus::Unsupported;
         }
         return moto::ble::AckStatus::Ok;

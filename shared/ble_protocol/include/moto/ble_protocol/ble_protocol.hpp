@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -121,6 +122,8 @@ enum class MessageType : std::uint8_t {
   SettingsState = 0x17,
   GnssInput = 0x18,
   PerformanceRun = 0x19,
+  WifiConfig = 0x1A,
+  WifiStatus = 0x1B,
   DeviceCommand = 0x20,
 };
 
@@ -297,6 +300,11 @@ enum Capability : std::uint32_t {
   // Phone->device: the phone shows the device's 0-100 runs. Only a phone that
   // advertises this is sent PerformanceRun, so an older app never sees 0x19.
   CapabilityPerformanceRun = 1U << 13U,
+  // Both directions. The device advertises it when it takes WifiConfig and
+  // reports WifiStatus; the phone advertises it when it shows WifiStatus. The
+  // phone sends WifiConfig only to a device with this bit, and the device
+  // sends WifiStatus only to a phone with it.
+  CapabilityWifiHotspot = 1U << 14U,
 };
 
 struct ConnectionStatus {
@@ -746,6 +754,87 @@ struct PerformanceRun {
   bool operator==(const PerformanceRun& rhs) const noexcept;
 };
 
+// The device joins the iPhone's Personal Hotspot as a station, on demand
+// (WAVESHARE_OPTIMIZATION_PLAN §4.3). BLE stays the control plane: WiFi is a
+// data plane that is off unless a task needs it, and nothing depends on it.
+enum class WifiPolicy : std::uint8_t {
+  // Forget the stored network and never bring WiFi up. SSID and PSK empty.
+  Disabled = 0,
+  // Keep the network; join it only while a task needs it.
+  OnDemand = 1,
+};
+
+// 802.11 SSID limit and the WPA2 passphrase range. A 64-byte PSK is the raw
+// key in hex; anything shorter than 8 bytes is not a WPA2 passphrase.
+inline constexpr std::size_t kMaxWifiSsidBytes = 32;
+inline constexpr std::size_t kMinWifiPskBytes = 8;
+inline constexpr std::size_t kMaxWifiPskBytes = 64;
+
+// Phone->device, sent with AckRequested when the rider saves the hotspot on
+// the phone (iOS cannot read its own hotspot name or password, so the rider
+// types them once). The device accepts it only on an encrypted, bonded link;
+// anything else is answered InvalidState and nothing is stored. The PSK is a
+// secret: the device keeps it in NVS and never logs it, and nothing echoes it.
+// Only sent to a peer that advertises CapabilityWifiHotspot.
+struct WifiConfig {
+  WifiPolicy policy = WifiPolicy::OnDemand;
+  std::string ssid;
+  std::string psk;
+
+  bool operator==(const WifiConfig& rhs) const noexcept;
+};
+
+enum class WifiLinkState : std::uint8_t {
+  // Radio off and its memory returned. The normal state.
+  Off = 0,
+  // Started, joining the network or waiting for DHCP.
+  Connecting = 1,
+  // Associated with an address; ipv4 and rssi are valid.
+  Connected = 2,
+  // The last attempt ended without an address; reason says why. The radio is
+  // already off again.
+  Failed = 3,
+};
+
+enum class WifiFailure : std::uint8_t {
+  None = 0,
+  // No network stored, or the policy is Disabled.
+  NoCredentials = 1,
+  // The SSID was not seen: hotspot off, or 5 GHz only ("Maximize
+  // Compatibility" off on iPhone 12 and later).
+  NetworkNotFound = 2,
+  AuthFailed = 3,
+  // Associated but no DHCP address in time, or the whole attempt timed out.
+  Timeout = 4,
+  // esp_wifi_init/start refused, usually for want of internal RAM.
+  NoMemory = 5,
+  // Joined, then lost the network.
+  Disconnected = 6,
+};
+
+enum WifiStatusFlag : std::uint8_t {
+  // The device has a network stored (the SSID only; the PSK never leaves it).
+  WifiStatusHasCredentials = 1U << 0U,
+};
+
+constexpr std::uint8_t kKnownWifiStatusFlags = WifiStatusHasCredentials;
+inline constexpr std::size_t kWifiStatusPayloadSize = 9;
+
+// Device->phone, on every state change, every few seconds while connected
+// (RSSI), and after each handshake, to a phone that advertises
+// CapabilityWifiHotspot. No Ack: the next status replaces a lost one.
+// `ipv4` is in dotted order, ipv4[0] being the first octet; it and `rssi_dbm`
+// are zero unless Connected, and `failure` is None unless Failed.
+struct WifiStatus {
+  WifiLinkState state = WifiLinkState::Off;
+  WifiFailure failure = WifiFailure::None;
+  std::uint8_t flags = 0;
+  std::array<std::uint8_t, 4> ipv4{};
+  std::int8_t rssi_dbm = 0;
+
+  bool operator==(const WifiStatus& rhs) const noexcept;
+};
+
 using Message = std::variant<ConnectionStatus,                             Heartbeat,
                              Ack,
                              NavigationSnapshot,
@@ -758,6 +847,8 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              SettingsState,
                              GnssInput,
                              PerformanceRun,
+                             WifiConfig,
+                             WifiStatus,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;
