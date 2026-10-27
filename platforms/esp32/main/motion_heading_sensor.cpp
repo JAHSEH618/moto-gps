@@ -102,9 +102,10 @@ esp_err_t MotionHeadingSensor::start(SampleCallback callback, void* context) {
   // Above the LVGL adapter task (6): a 0.4 ms I2C read every 4.46 ms must
   // preempt a long page render, otherwise a 100 ms frame starves the latch and
   // the acquisition acceptance (lost reads) fails while the rider looks at the
-  // horizon. The tlog page write inherits this priority too.
-  if (xTaskCreate(task_entry, "moto_qmi_heading", 8'192, this, 7, nullptr) !=
-      pdPASS) {
+  // horizon. The tlog page write inherits this priority too. Core 1 with the
+  // LVGL task (DESIGN_V2 §13), away from the NimBLE host and controller.
+  if (xTaskCreatePinnedToCore(task_entry, "moto_qmi_heading", 8'192, this, 7,
+                              nullptr, 1) != pdPASS) {
     callback_ = nullptr;
     callback_context_ = nullptr;
     return ESP_ERR_NO_MEM;

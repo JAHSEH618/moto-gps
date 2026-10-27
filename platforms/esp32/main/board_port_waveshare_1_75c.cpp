@@ -907,8 +907,11 @@ extern "C" esp_err_t board_port_init(void) {
   // CO5300 command values. Panel creation itself uses the public esp_lcd APIs
   // so DISPON can be deferred. Explicit PSRAM draw buffers feed direct DMA
   // without allocating a bounce buffer for each transaction.
-  const esp_lv_adapter_config_t adapter_config =
-      ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  // DESIGN_V2 §13: LVGL and the IMU share core 1, NimBLE host and controller
+  // stay on core 0. The two draw threads (lv_conf.h) are unpinned so a frame's
+  // draw tasks can use both cores.
+  esp_lv_adapter_config_t adapter_config = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  adapter_config.task_core_id = 1;
   ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), kTag,
                       "LVGL adapter initialization failed");
 

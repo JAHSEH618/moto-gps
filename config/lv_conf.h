@@ -12,7 +12,27 @@
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 
+#if defined(ESP_PLATFORM)
+/* Two software draw units split each frame's draw tasks across both S3 cores,
+ * as the Waveshare 02/03/05 examples do on the same BSP and adapter. The
+ * render order and pixels are unchanged; Web/native stays single-threaded.
+ *
+ * Priority ladder (FreeRTOS, higher wins): IMU 7 > LVGL adapter 6 > BLE rx 5
+ * > draw threads 4 > PWR 3 > UI render/demo 2. The draw threads only run
+ * while the adapter task is blocked waiting for them, and the IMU and BLE
+ * receive tasks must still preempt a long frame.
+ *
+ * Task notifications stay off: the adapter task already waits on its own
+ * notification slot (wake-up, TE, flush DMA done) and clears it before each
+ * transfer, so LVGL's draw-done signal would share and lose that slot. */
+#define LV_USE_OS LV_OS_FREERTOS
+#define LV_USE_FREERTOS_TASK_NOTIFY 0
+#define LV_DRAW_SW_DRAW_UNIT_CNT 2
+#define LV_DRAW_THREAD_PRIO LV_THREAD_PRIO_HIGHEST
+#define LV_DRAW_THREAD_STACK_SIZE (8 * 1024)
+#else
 #define LV_USE_OS LV_OS_NONE
+#endif
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
 /* The gesture recognizer is the only user of LVGL's float path (it computes
  * the drag vector and direction). Without this, LV_USE_GESTURE_RECOGNITION
