@@ -31,7 +31,7 @@
 - [x] **(B)** 备份原厂 32 MB Flash、生成并报告 SHA-256，取得明确刷写确认后首次烧录微雪板并完成启动验证
 - [ ] **(B)** 长时间真机验证正常锁屏、切后台、修复后的断线重连、偏航重算和路况刷新
 - [ ] **(B)** 在实体 CO5300 + iPhone 上逐项验收离线、握手、成功、准备出发、规划中和有路线六段切换，并复核反复重连、减少动态效果和无路线不显示旧导航数据
-- [ ] **(B)** 评估 BLE HID 三个媒体键；“喜欢”和跨播放器曲目信息继续保持可选能力
+- [x] **(B)** 媒体控制改由 Apple Media Service（AMS）承担：`AmsClient` 在已配对的 GATT 链路上订阅 Now Playing，网易云 / QQ 音乐 / Spotify / 播客 / Apple Music 的曲目与按键都走同一条路，App 的 Apple Music 中转降为回退；"喜欢"仍由播放器决定是否可用
 - [x] **(B)** iOS 以公开 `systemMusicPlayer` 接通 Apple Music 上一首、播放/暂停、下一首与 MediaState 回传；无公共接口的“喜欢”保持隐藏并返回 Unsupported
 
 ## GTA 视觉系统与姿态 / IMU
@@ -47,9 +47,10 @@
 - [x] **(B)** 静态安装校准：压弯角页长按、3 秒倒计时、CAL OK / CAL FAIL 提示，结果写入 NVS `att.rmount`
 - [x] **(B)** IMU 默认改为锁存轮询链路，FIFO 只作 A/B 对照；32 MB 分区、自描述 tlog 记录和确定性回放
 - [x] **(B)** 固件按 ADR 0001 以 10 Hz 发送 `AttitudeSample`（手机声明能力位 8 时），手机端声明该能力；尚未在真实 iPhone 上看到数据
-- [ ] **(B)** IMU 锁存链路实板 10 分钟静置验收（`imu stats`），再跑同一张卡做 FIFO A/B
+- [x] **(B)** IMU 锁存链路实板 10 分钟静置验收（`imu stats`）：134,409 samples、`avail_zero`/`lock_timeouts`/`i2c_errors`/`missed_reads` 全 0、`dt_max_us` 4576；当时 tlog 分区已满，`flashgaps` 未被真正跑过
+- [ ] **(B)** 擦除 tlog 分区后重跑同一张卡，补上 flash 交互那半边，再做 FIFO A/B 对照
 - [ ] **(B)** 用已知倾角验证压弯角页面方向，测出安装零偏，并在使用说明书旁写校准步骤
-- [ ] **(B)** 给姿态估计接入车速（DESIGN_V2 §3.7 `SpeedFusion`），让运动学修正和水平横向 G 在车上生效
+- [x] **(B)** 给姿态估计接入车速（DESIGN_V2 §3.7 `SpeedFusion`）：`GnssInput`（0x18）带时间戳与速度，推定器用融合速度而非包到达时间，运动学修正与水平横向 G 因此在车上生效
 - [ ] **(B)** 刷入海报式固件，在实体屏上逐页验收，并确认一次左滑即到 0-100 页
 - [ ] **(A/B)** 决定 0-100 实时计时由设备还是手机负责，再把 `MotoRideCore` 接入 App，完成骑行记录、存储和图表
 - [ ] **(B)** 在 `DESIGN.md` 定下手机骑行页的姿态读数方案后再实现
@@ -58,7 +59,7 @@
 - [ ] **(A)** GTA 地图：道路描边、道路与路线的覆盖率抗锯齿、水 / 绿地 / 步行 / 停车面要素
 - [ ] **(A)** 修完越界元素后，把“圆盘内几何”检查作为测试提交
 - [x] **(A/B)** 三个主题由手机统一控制：原版（fork 前的黑白圆屏，独立界面树）、GTA 白天、GTA 夜间，另有 GTA 自动；手机外观同步切换，圆屏经 `SettingsState` 同步
-- [ ] **(A)** 决定曲名字库是否扩到 GB2312 二级
+- [x] **(A)** 曲名字库已扩到 GB2312 二级：`scripts/generate_fonts.sh` 生成两级共 6,876 个字，40 px 占 2.54 MiB、24 px 占 1.04 MiB flash；繁体、生僻字与 emoji 仍是空框，需要显式的"无法显示"处理
 - [ ] **(B)** 在真实网关和定位下截图验收路线预览页
 - [x] **(B)** 为 `scripts/verify.sh` 增加 `--esp32` 固件构建检查
 - [x] **(B)** 文档同步：DESIGN_V2 §3.2 改写为锁存链路，`BENCH_TEST_PLAN` 增加 tlog 分区擦除步骤和 `LOG DIRTY`

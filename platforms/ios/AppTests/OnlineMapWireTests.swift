@@ -20,8 +20,12 @@ final class OnlineMapWireTests: XCTestCase {
         let scene = InMemoryOfflineMapSceneIndex(document: document).query(around: origin, radiusM: 500, revision: 10)
         XCTAssertFalse(scene.roads.isEmpty)
         XCTAssertFalse(scene.buildings.isEmpty)
-        XCTAssertLessThanOrEqual(scene.roads.count, 24)
-        XCTAssertLessThanOrEqual(scene.buildings.count, 16)
+        // The budgets, not the numbers they held when this fixture was
+        // captured: 24/16 here went stale when the window doubled to 40/24
+        // (24cca34) and the test then failed on a real tile instead of
+        // measuring the codec.
+        XCTAssertLessThanOrEqual(scene.roads.count, OfflineMapSceneLimits.roads)
+        XCTAssertLessThanOrEqual(scene.buildings.count, OfflineMapSceneLimits.buildings)
         let frames = try MotoBLEProtocolCodec(maximumFrameSize: 182).encodeMapScene(scene.makeBLEInput())
         XCTAssertFalse(frames.isEmpty)
         XCTAssertTrue(frames.allSatisfy { $0.count <= 182 })

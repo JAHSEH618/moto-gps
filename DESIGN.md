@@ -345,13 +345,18 @@ State plates (`ARMED`, `LIVE`, maxima) are magenta; numeric counters (`BEST`,
 
 Track titles and artist names are phone data, not UI strings. The instrument
 faces are Latin-only, so the music page uses RAM copies of the descriptors
-with **Noto Sans SC Bold** fallbacks generated from GB2312 level 1
-(3,755 characters) at 40 px and 24 px. Chinese renders as CJK, Latin renders as
-Barlow. The fallback descriptors are copied out of flash because the generated
-tables are `const` and cannot be patched in place.
+with **Noto Sans SC Bold** fallbacks generated from both GB2312 levels
+(6,876 characters: 3,755 everyday ones plus the 3,008 rarer ones that turn up
+in song titles and place names) at 40 px and 24 px. Chinese renders as CJK,
+Latin renders as Barlow. The fallback descriptors are copied out of flash
+because the generated tables are `const` and cannot be patched in place.
 
-Cost: ~2.5 MB of flash for both CJK faces; the app partition has 8 MB and
-the firmware still fits with more than half free.
+Cost: 3.6 MiB of flash for the two CJK faces (2.54 MiB at 40 px, 1.04 MiB at
+24 px); the app partition is 7 MiB and the image uses 82 % of it, so the
+remaining 18 % is what the next feature has to fit into. Traditional
+characters, rare characters outside both levels and emoji still render as
+empty boxes: the page draws whatever the phone sends and has no "cannot
+display" treatment yet.
 
 ### Review artefacts
 

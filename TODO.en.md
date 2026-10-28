@@ -33,7 +33,7 @@ This file tracks only the checklist of what is still wanted; the short-term even
 - [x] **(B)** Back up the factory 32 MB Flash, generate and report the SHA-256, and after explicit confirmation to flash, complete the first flashing of the Waveshare board and verify that it boots
 - [ ] **(B)** Long-run real-hardware verification of normal screen lock, backgrounding, the fixed disconnection recovery, off-route rerouting and traffic refresh
 - [ ] **(B)** On the physical CO5300 + iPhone, accept item by item the six state transitions of offline, handshake, success, ready to ride, planning and route present, and re-check repeated reconnection, reduced motion and that no stale navigation data is shown when there is no route
-- [ ] **(B)** Evaluate the three BLE HID media keys; "like" and cross-player track information remain optional capabilities
+- [x] **(B)** Media control moved to Apple Media Service: `AmsClient` subscribes to Now Playing on the bonded GATT link, so NetEase Cloud Music, QQ Music, Spotify, Podcasts and Apple Music all report tracks and take keys through it; the app's Apple Music relay is the fallback, and "like" is still optional per player
 - [x] **(B)** iOS uses the public `systemMusicPlayer` to connect Apple Music previous track, play/pause, next track and the MediaState return; "like", which has no public interface, stays hidden and returns Unsupported
 
 ## GTA visual system and attitude / IMU
@@ -49,9 +49,10 @@ Per-item progress, acceptance numbers and design trade-offs are recorded in [doc
 - [x] **(B)** Static mount calibration: long press on the lean page, 3 s countdown, CAL OK / CAL FAIL plate, result stored in NVS `att.rmount`
 - [x] **(B)** Make latch polling the default IMU chain, keeping FIFO for A/B only; 32 MB partition plan, self-describing tlog recording and deterministic replay
 - [x] **(B)** Firmware sends `AttitudeSample` at 10 Hz per ADR 0001 (while the phone advertises bit 8), and the phone advertises it; not yet seen on a real iPhone
-- [ ] **(B)** 10-minute static acceptance of the IMU latch chain on the board (`imu stats`), then the same card for the FIFO A/B
+- [x] **(B)** 10-minute static acceptance of the IMU latch chain on the board (`imu stats`): 134,409 samples, `avail_zero`/`lock_timeouts`/`i2c_errors`/`missed_reads` all zero, `dt_max_us` 4576; the tlog partition was full, so the `flashgaps` accounting never ran
+- [ ] **(B)** Re-run the same card with an erased tlog partition to cover the flash-interaction half, then the FIFO A/B
 - [ ] **(B)** Validate the lean page's direction against a known tilt, measure the mounted zero offset, and document the calibration steps next to the user manual
-- [ ] **(B)** Feed vehicle speed into the attitude estimator (DESIGN_V2 §3.7 `SpeedFusion`) so the kinematic correction and horizontal lateral G work on the bike
+- [x] **(B)** Vehicle speed reaches the attitude estimator (DESIGN_V2 §3.7 `SpeedFusion`): `GnssInput` (0x18) carries the fix's stamp and speed, the estimator takes the fused speed instead of the packet's arrival time, and the kinematic correction and horizontal lateral G therefore work on the bike
 - [ ] **(B)** Flash the poster-instrument firmware, accept each page on the physical panel, and confirm that one left swipe reaches the 0-100 page
 - [ ] **(A/B)** Decide whether the device or the phone owns the live 0-100 clock, then link `MotoRideCore` into the app and build ride recording, storage and charts
 - [ ] **(B)** Settle the phone ride screen's attitude readout in `DESIGN.md`, then implement it
@@ -60,7 +61,7 @@ Per-item progress, acceptance numbers and design trade-offs are recorded in [doc
 - [ ] **(A)** GTA map: road casing, coverage anti-aliasing for roads and the route, water / green / pedestrian / parking areas
 - [ ] **(A)** Once the out-of-bounds elements are fixed, commit the inside-the-disc geometry check as a test
 - [x] **(A/B)** Three themes controlled from the phone: Original (the black-and-white round screen from before the fork, its own widget tree), GTA Day and GTA Night, plus GTA Auto; the phone changes its own look and the round screen follows through `SettingsState`
-- [ ] **(A)** Decide whether track-title glyphs extend to GB2312 level 2
+- [x] **(A)** Track-title glyphs now cover both GB2312 levels: `scripts/generate_fonts.sh` generates 6,876 characters, 2.54 MiB of flash at 40 px and 1.04 MiB at 24 px; traditional characters, rare characters and emoji still render as empty boxes and need an explicit "cannot display" treatment
 - [ ] **(B)** Screenshot-accept the route-preview screen against a real gateway and a live fix
 - [x] **(B)** Add an `--esp32` firmware build gate to `scripts/verify.sh`
 - [x] **(B)** Docs sync: rewrite DESIGN_V2 §3.2 around the latch chain, and add the tlog partition erase step and `LOG DIRTY` to `BENCH_TEST_PLAN`
