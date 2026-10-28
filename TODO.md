@@ -64,6 +64,7 @@
 - [x] **(B)** 为 `scripts/verify.sh` 增加 `--esp32` 固件构建检查
 - [x] **(B)** 文档同步：DESIGN_V2 §3.2 改写为锁存链路，`BENCH_TEST_PLAN` 增加 tlog 分区擦除步骤和 `LOG DIRTY`
 - [ ] **(B)** 上线前移除台架调试代码（`sys tasks`、`imu stats`、`ui theme`、显示计时窗口、`ui dbg`）
+- [ ] **(B)** 决定 tlog 录制的去留：当前 14 MB 分区按 3.4 KB/s 约 65 分钟写满，产品功能不依赖它（骑行记录在手机 `RaceLog`）；倾向用 release overlay（`CONFIG_MOTO_TLOG_DISABLE=y`）构建**发布的镜像**，台架构建保留录制，等车把 CAL、指南针、陀螺增益三项真车标定做完再决定是否删分区
 
 ## 基础契约与工程
 

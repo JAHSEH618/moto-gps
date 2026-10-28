@@ -66,6 +66,7 @@ Per-item progress, acceptance numbers and design trade-offs are recorded in [doc
 - [x] **(B)** Add an `--esp32` firmware build gate to `scripts/verify.sh`
 - [x] **(B)** Docs sync: rewrite DESIGN_V2 §3.2 around the latch chain, and add the tlog partition erase step and `LOG DIRTY` to `BENCH_TEST_PLAN`
 - [ ] **(B)** Strip the bench scaffolding before shipping (`sys tasks`, `imu stats`, `ui theme`, the display-timing window, `ui dbg`)
+- [ ] **(B)** Decide the fate of tlog recording: the 14 MB partition fills in about 65 minutes at 3.4 KB/s and no product feature reads it (the ride log is the phone's `RaceLog`); the leaning is to build the **published** image from the release overlay (`CONFIG_MOTO_TLOG_DISABLE=y`) and keep recording in the bench build, then decide whether to delete the partition once the three on-bike calibrations (handlebar CAL, compass, gyro gain) are done
 
 ## Base contracts and engineering
 
