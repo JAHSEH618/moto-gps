@@ -188,6 +188,16 @@ class PhoneNavBridge {
   // phone sends GnssInput (then its snapshot speeds are not passed on).
   moto::motion::PhoneClock phone_clock_;
   bool gnss_input_seen_ = false;
+  // The newest GnssInput fix on this device's clock, when it arrived, and
+  // whether a fix has come in since the heading was last anchored to the
+  // phone's course.
+  std::uint32_t last_gnss_fix_ms_ = 0;
+  std::uint32_t last_gnss_rx_ms_ = 0;
+  bool fresh_course_ = false;
+  // When the route window's origin (the rider's position) was fixed, on this
+  // device's clock: the GnssInput fix that preceded it, or its arrival from a
+  // phone that sends none.
+  std::uint32_t route_origin_fix_ms_ = 0;
   // Command id of the last HomeShortcut. The phone answers InvalidState when no
   // home is set; the device cannot know that on its own, so the refusal has to
   // come back as a visible hint instead of a silent no-op.
@@ -242,6 +252,19 @@ class PhoneNavBridge {
   moto_ui_phone_connection_t render_phone_connection_ =
       MOTO_UI_PHONE_OFFLINE;
   bool render_demo_active_ = false;
+  // Map lag (route_prediction.hpp), render task only: the fix being advanced,
+  // the origin last drawn, and the pull from it to a new fix's estimate.
+  moto::nav::Gcj02Point render_fix_origin_{};
+  std::uint32_t render_fix_ms_ = 0;
+  moto::nav::Gcj02Point predicted_fix_origin_{};
+  std::uint32_t predicted_fix_ms_ = 0;
+  moto::nav::Gcj02Point displayed_origin_{};
+  bool has_displayed_origin_ = false;
+  float correction_east_m_ = 0.0F;
+  float correction_north_m_ = 0.0F;
+  std::uint32_t correction_start_ms_ = 0;
+  // Moves render_snapshot_'s route origin to where the rider is now.
+  void predict_route_origin(bool navigation);
   moto::device::DeviceSettings render_settings_{};
   bool render_ambient_night_ = false;
   enum RenderFlag : std::uint32_t {
