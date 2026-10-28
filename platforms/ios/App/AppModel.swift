@@ -25,8 +25,13 @@ final class AppModel: ObservableObject {
     /// What the round screen last said about a firmware update, and whether it
     /// takes one at all.
     @Published private(set) var firmwareUpdate: FirmwareUpdateStatus?
+    /// Why the phone gave up on an update the device never finished reporting.
+    @Published private(set) var firmwareProblem: FirmwareUpdateProblem?
     @Published private(set) var firmwareAccepted: Bool?
     @Published private(set) var deviceSupportsOta = false
+    /// What the connected round screen says it runs; nil while disconnected
+    /// or for a firmware that does not report it.
+    @Published private(set) var deviceFirmware: DeviceFirmware?
     /// The URL the device is fetching while an update runs: the phone's own
     /// hotspot server, or a release URL the rider pasted.
     @Published private(set) var firmwareURL: String?
@@ -49,6 +54,7 @@ final class AppModel: ObservableObject {
     private var raceLogPersists = true
     /// The hotspot file server, held while an update runs.
     private var firmwareFileServer: FirmwareFileServer?
+    private var firmwareWatchdog: Task<Void, Never>?
     @Published private(set) var firmwareServedBytes: UInt32 = 0
     @Published private(set) var lastFirmwareFileName = ""
     @Published private(set) var navigationFailure: String?
@@ -119,10 +125,12 @@ final class AppModel: ObservableObject {
             self.deviceSupportsOta = self.bluetooth.deviceSupportsOta
             if case .connected = snapshot.connection { return }
             self.wifiStatus = nil
-            // An update that dies with the link is not "still running": the
-            // device reports Failed over BLE, and the server is no longer read.
+            self.deviceFirmware = nil
+            // An update that dies with the link is not "still running": no
+            // OtaStatus can reach this phone any more, and the server is no
+            // longer read.
             if self.firmwareUpdate?.isRunning == true {
-                self.stopFirmwareServer()
+                self.abandonFirmwareUpdate(.linkLost)
             }
             self.attitude.clear()
             self.publishRaceLog(force: true)
@@ -151,18 +159,29 @@ final class AppModel: ObservableObject {
         bluetooth.onOtaStatus = { [weak self] status in
             guard let self else { return }
             let value = FirmwareUpdateStatus(status)
+            // The device's own word outranks whatever the phone concluded
+            // while it was not hearing from it.
+            self.firmwareProblem = nil
             self.firmwareUpdate = value
-            // Ready means the image is in place and the device is rebooting;
-            // Failed means nobody will read the file. Either way the hotspot
-            // server has done its job.
-            if value.state == .ready || value.state == .failed {
+            if value.isRunning {
+                self.armFirmwareWatchdog()
+            } else if value.state == .ready || value.state == .failed {
+                // Ready means the image is in place and the device is
+                // rebooting; Failed means nobody will read the file. Either
+                // way the hotspot server has done its job.
+                self.firmwareWatchdog?.cancel()
+                self.firmwareWatchdog = nil
                 self.stopFirmwareServer()
             }
+        }
+        bluetooth.onFirmwareInfo = { [weak self] info in
+            self?.deviceFirmware = DeviceFirmware(version: info.version,
+                                                  build: info.build)
         }
         bluetooth.onOtaCommandAck = { [weak self] status in
             guard let self else { return }
             self.firmwareAccepted = status == 0
-            if status != 0 { self.stopFirmwareServer() }
+            if status != 0 { self.abandonFirmwareUpdate(.refused(ackStatus: status)) }
         }
         bluetooth.onWifiConfigAck = { [weak self] status in
             guard let self else { return }
@@ -736,12 +755,14 @@ final class AppModel: ObservableObject {
         firmwareURL = url
         firmwareServing = true
         firmwareAccepted = nil
+        firmwareProblem = nil
         firmwareUpdate = FirmwareUpdateStatus(
             state: .downloading, failure: .none, progressPercent: 0,
             bytesReceived: 0)
         lastFirmwareFileName = fileName
         bluetooth.sendOtaCommand(url: url, sha256Hex: sha256Hex,
                                  sizeBytes: size)
+        armFirmwareWatchdog()
     }
 
     /// A release URL the rider pasted, e.g. a GitHub asset with its SHA-256.
@@ -754,17 +775,44 @@ final class AppModel: ObservableObject {
         stopFirmwareServer()
         firmwareURL = url
         firmwareAccepted = nil
+        firmwareProblem = nil
         firmwareUpdate = FirmwareUpdateStatus(
             state: .downloading, failure: .none, progressPercent: 0,
             bytesReceived: 0)
         bluetooth.sendOtaCommand(url: url, sha256Hex: sha256Hex,
                                  sizeBytes: sizeBytes)
+        armFirmwareWatchdog()
     }
 
     func stopFirmwareServer() {
         firmwareFileServer?.stop()
         firmwareFileServer = nil
         firmwareServing = false
+    }
+
+    /// Ends an update the device stopped reporting on, so the sheet does not
+    /// sit on 传输中 with its button disabled. Every OtaStatus re-arms it.
+    private func armFirmwareWatchdog() {
+        firmwareWatchdog?.cancel()
+        firmwareWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(FirmwareUpdateProblem.stallSeconds))
+            guard !Task.isCancelled, let self,
+                  self.firmwareUpdate?.isRunning == true else { return }
+            self.abandonFirmwareUpdate(.stalled)
+        }
+    }
+
+    /// The phone's own verdict on an update the device never finished
+    /// reporting: shown as Failed with the reason, and the button comes back.
+    private func abandonFirmwareUpdate(_ problem: FirmwareUpdateProblem) {
+        firmwareWatchdog?.cancel()
+        firmwareWatchdog = nil
+        firmwareProblem = problem
+        firmwareUpdate = FirmwareUpdateStatus(
+            state: .failed, failure: .none,
+            progressPercent: firmwareUpdate?.progressPercent ?? 0,
+            bytesReceived: firmwareUpdate?.bytesReceived ?? 0)
+        stopFirmwareServer()
     }
 
     private func bind(_ runtime: SharedNavigationRuntime) {

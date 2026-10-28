@@ -172,6 +172,7 @@ START 当且仅当 `fragment_offset == 0`。END 当且仅当
 | `0x1B` | WifiStatus | 设备→手机 | WiFi 状态变化、连接期间的 RSSI、每次握手后；手机声明 bit14 时才发，无 ACK |
 | `0x1C` | OtaCommand | 手机→设备 | 骑手点「开始更新」时；设备声明 bit15 时才发，ACK_REQUESTED，且只走加密+绑定链路 |
 | `0x1D` | OtaStatus | 设备→手机 | 每次状态变化，下载中最高 2 Hz；手机声明 bit15 时才发，无 ACK |
+| `0x1E` | FirmwareInfo | 设备→手机 | 每次握手后；手机声明 bit16 时才发，无 ACK |
 | `0x20` | DeviceCommand | 设备→手机 | 用户动作，ACK_REQUESTED+URGENT |
 
 ## 6. Payload 编码
@@ -197,7 +198,8 @@ bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标�
 声明了它的对端置该位，旧固件会拒绝未知标志）、bit12 GNSS input（设备接收 `0x18`）、
 bit13 performance run（手机声明：它要显示圆屏的 0-100 成绩，设备才发 `0x19`）、
 bit14 WiFi hotspot（双方声明：设备接收 `0x1A` 并回报 `0x1B`，手机显示 `0x1B`）、
-bit15 OTA（双方声明：设备接收 `0x1C` 并回报 `0x1D`，手机提供固件并显示 `0x1D`）。
+bit15 OTA（双方声明：设备接收 `0x1C` 并回报 `0x1D`，手机提供固件并显示 `0x1D`）、
+bit16 firmware info（双方声明：设备回报 `0x1E`，手机读取）。
 
 `0x16`、`0x17` 与 `0x18` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
 根本不认识这些类型，而不是收到后忽略。
@@ -541,7 +543,7 @@ u8  state                0 Armed（停稳待起步）、1 Running、2 Finished
 u16 target_kph           50 / 60 / 100，与 SettingsState 的表一致
 u32 run_id               每次起步加一；第一次起步之前为 0
 u32 elapsed_ms           Running：发出时已用时间；Finished：成绩；Armed：必须为 0
-u32 best_ms              本次开机以来的最佳；没有时为 0
+u32 best_ms              target_kph 这一档的最佳，存在 NVS 里，断电不丢；没有或骑手清空后为 0
 ```
 
 Running 与 Finished 的 `run_id` 不能为 0。握手后的补发会重复上一条 Finished，手机按
@@ -622,6 +624,23 @@ u32 bytes_received       已写入槽的字节数；Idle 时必须为 0
 `failure` 仅在 Failed 时非零，Failed 时槽已丢弃（不会下次开机生效）。Ready 之后设备
 约 1 s 内重启，手机按断链 + 重连处理，不需要额外确认。Never trust: 手机不把 Ready 当作
 “新版本已跑起来”，只当作“镜像已就位”。
+
+### 6.19 FirmwareInfo (`0x1E`, 设备→手机, 5..81 字节)
+
+每次握手后发给声明了 bit16 的手机。无 ACK，下次握手会再发。手机靠它知道自己连着哪个构建：
+固件页拿 `build` 和发布清单里的 `git_commit` 比较，区分「已经装上的发布」和「新发布」。
+
+```text
+u8  revision
+u8  version_length       1..31
+u8[] version             固件自己的版本号（ESP-IDF PROJECT_VER），例如 0.2.1
+u8  build_length         1..47
+u8[] build               镜像构建时的提交（`git rev-parse --short HEAD`），工作区有未提交改动时
+                         带 -dirty，不在 git 仓库里构建时为 unknown
+```
+
+两个字符串都只允许不含空格的可打印 ASCII（0x21..0x7E）。黄金帧（version `0.2.1`、
+build `27dc871`）：`0105302e322e310732376463383731`。
 
 ## 7. Display Snapshot 到共享 NavSnapshot
 

@@ -413,16 +413,23 @@ void NavPresenter::update_motion(const NavSnapshot& snapshot) {
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
   ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
   map_attitude(snapshot, ui_state_);
-  // Parked, or riding straight inside the gyro deadband, the heading holds
-  // and the projected map is already the right one: skip the hundreds of
+  // Parked, or riding straight inside the gyro deadband with the origin
+  // held, the projected map is already the right one: skip the hundreds of
   // points a 40 Hz motion frame would otherwise re-project unchanged. A
   // non-finite heading never compares equal, so it always re-projects.
-  if (snapshot.heading_deg == projected_heading_deg_) return;
+  if (snapshot.heading_deg == projected_heading_deg_ &&
+      snapshot.route_view_origin.latitude_deg ==
+          projected_origin_.latitude_deg &&
+      snapshot.route_view_origin.longitude_deg ==
+          projected_origin_.longitude_deg) {
+    return;
+  }
   project_map(snapshot);
 }
 
 void NavPresenter::project_map(const NavSnapshot& snapshot) {
   projected_heading_deg_ = snapshot.heading_deg;
+  projected_origin_ = snapshot.route_view_origin;
   // Route, roads and buildings share one rider-centred transform. Besides
   // guaranteeing exact layer alignment, this avoids repeating trigonometry
   // hundreds of times on every high-rate IMU frame.

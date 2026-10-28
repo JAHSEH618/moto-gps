@@ -1,5 +1,7 @@
 #include "phone_nav_bridge.h"
 
+#include "route_prediction.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -48,6 +50,17 @@ void apply_settings_to_ui(const moto::device::DeviceSettings& settings,
   moto_nav_ui_set_ambient_night(ambient_night ? 1U : 0U);
   moto_nav_ui_set_theme(theme_for(settings.theme));
   moto_nav_ui_set_show_buildings(settings.show_buildings ? 1U : 0U);
+  moto_nav_ui_set_performance_target(settings.performance_target_kph);
+}
+
+// A target's slot in the UI's bests order (MOTO_UI_PERFORMANCE_TARGET_COUNT):
+// 50, 60, 100 km/h. The UI snaps anything else to 100, and so does this.
+std::size_t performance_target_slot(std::uint16_t target_kph) {
+  switch (target_kph) {
+    case 50: return 0;
+    case 60: return 1;
+    default: return 2;
+  }
 }
 
 struct DemoPose {
@@ -311,6 +324,22 @@ bool has_flag(std::uint16_t flags, moto::ble::NavigationFlag flag) {
 }
 
 constexpr std::uint64_t kAttitudeIntervalMs = 100;
+// Map lag: how far the rider's position is advanced past the last fix. A
+// fix normally arrives every second; past 1.5 s (a tunnel, a stalled link)
+// the map holds rather than running ahead on a guess.
+constexpr std::int32_t kMaxPredictionMs = 1'500;
+// Below walking pace the GNSS speed is mostly noise.
+constexpr float kMinPredictionSpeedMps = 1.0F;
+// Within this of the route window the prediction follows the route.
+constexpr float kOnRouteM = 25.0F;
+// A new fix's estimate is reached from where the map was drawn over this
+// long, not in one jump. A gap larger than kMaxCorrectionM is not prediction
+// error (a reroute, a long silence) and is taken at once.
+constexpr std::uint32_t kCorrectionMs = 300;
+constexpr float kMaxCorrectionM = 40.0F;
+// One pixel at the radar's 0.57 px/m: a smaller move is invisible but still
+// costs a full-map frame.
+constexpr float kPredictionStepM = 1.75F;
 
 std::int16_t clamp_i16(float value) {
   const float rounded = std::round(value);
@@ -539,6 +568,14 @@ void PhoneNavBridge::performance_changed(const moto_ui_performance_run_t* run,
                                                              : run->elapsed_ms;
     value.best_ms = run->best_ms;
     bridge->performance_pending_ = true;
+    // Every report carries the best for its target, so a new best and a
+    // cleared one both reach NVS the same way.
+    std::uint32_t& best =
+        bridge->performance_bests_[performance_target_slot(run->target_kph)];
+    if (best != run->best_ms) {
+      best = run->best_ms;
+      bridge->performance_bests_dirty_ = true;
+    }
   }
   // Raised from inside the LVGL call that fed the speed; the render task
   // sends it once that call has returned.
@@ -718,6 +755,13 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
               performance_pending_ = true;
               request_render(RenderPerformance);
             }
+            // So does one that reads the firmware it is talking to.
+            if ((value.capabilities &
+                 moto::ble::CapabilityFirmwareInfo) != 0U &&
+                !firmware_info_.build.empty()) {
+              firmware_info_pending_ = true;
+              request_render(RenderFirmwareInfo);
+            }
             switch (value.state) {
               case moto::ble::ConnectionState::Ready:
                 ui_phone_connection_ = MOTO_UI_PHONE_ONLINE;
@@ -796,6 +840,12 @@ void PhoneNavBridge::consume_gnss(const moto::ble::GnssInput& input) {
     // Every stamp is a clock sample, with or without a speed.
     phone_clock_.observe(input.phone_monotonic_ms, rx_ms);
     gnss_input_seen_ = true;
+    // Each GnssInput is a new Core Location fix: it dates the route window
+    // that follows it, and it is what the heading may be anchored to.
+    last_gnss_fix_ms_ = phone_clock_.to_device(input.phone_monotonic_ms -
+                                               input.fix_age_ms);
+    last_gnss_rx_ms_ = rx_ms;
+    fresh_course_ = true;
     if ((input.flags & moto::ble::GnssInputHasSpeed) == 0U) return;
     fix.mps = static_cast<float>(input.speed_cmps) / 100.0F;
     fix.accuracy_mps =
@@ -850,7 +900,13 @@ void PhoneNavBridge::consume_navigation(
     // phone that saw CapabilityCompassHeading in our status sets the flag.
     if (has_flag(input.flags, moto::ble::NavigationHeadingCompass)) {
       heading_fusion_.anchor_compass(phone_heading_deg, phone_speed_mps);
-    } else {
+    } else if (!gnss_input_seen_ || fresh_course_) {
+      // Only a new fix is new information. The phone also re-sends its last
+      // snapshot once a second; anchoring that stale course again pulled the
+      // gyro's lead back twice a second and the map rubber-banded in turns.
+      // A phone without GnssInput gives no way to tell, so it anchors on
+      // every snapshot as before.
+      fresh_course_ = false;
       heading_fusion_.anchor(phone_heading_deg, phone_speed_mps,
                              has_usable_fix && !has_flag(
                                  input.flags, moto::ble::NavigationGnssStale));
@@ -1036,6 +1092,15 @@ moto::ble::AckStatus PhoneNavBridge::consume_geometry(
       }
       geometry_.complete = true;
       geometry_.active = false;
+      // The phone sends a window when the rider's position moved, right
+      // after that fix's GnssInput: date the origin by the fix, not by when
+      // its last chunk arrived. An older or missing GnssInput is not this
+      // window's, and then arrival is the best there is.
+      const auto now_ms = static_cast<std::uint32_t>(monotonic_ms());
+      route_origin_fix_ms_ =
+          gnss_input_seen_ && now_ms - last_gnss_rx_ms_ < 2'000U
+              ? last_gnss_fix_ms_
+              : now_ms;
       apply_geometry_locked(phone_snapshot_locked());
     }
   }
@@ -1211,6 +1276,63 @@ void PhoneNavBridge::set_settings_store(
   settings_store_ = callback;
 }
 
+void PhoneNavBridge::set_performance_bests_store(
+    PhoneNavBridge::PerformanceBestsStoreCallback callback) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  performance_bests_store_ = callback;
+}
+
+void PhoneNavBridge::restore_performance_bests(
+    const PhoneNavBridge::PerformanceBests& bests) {
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    performance_bests_ = bests;
+    performance_bests_dirty_ = false;
+  }
+  moto_nav_ui_set_performance_bests(bests.data());
+}
+
+void PhoneNavBridge::set_firmware_info(const moto::ble::FirmwareInfo& info) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  firmware_info_ = info;
+}
+
+void PhoneNavBridge::send_pending_firmware_info() {
+  moto::ble::FirmwareInfo info;
+  SendCallback sender = nullptr;
+  void* sender_context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!firmware_info_pending_ || sender_ == nullptr || !link_active_ ||
+        (phone_capabilities_ & moto::ble::CapabilityFirmwareInfo) == 0U) {
+      return;
+    }
+    firmware_info_pending_ = false;
+    info = firmware_info_;
+    sender = sender_;
+    sender_context = sender_context_;
+  }
+  // No Ack: every handshake sends it again.
+  sender(moto::ble::Message{info}, 0, sender_context);
+}
+
+void PhoneNavBridge::store_pending_performance_bests() {
+  PerformanceBests bests{};
+  PerformanceBestsStoreCallback store = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!performance_bests_dirty_ || performance_bests_store_ == nullptr) {
+      return;
+    }
+    performance_bests_dirty_ = false;
+    bests = performance_bests_;
+    store = performance_bests_store_;
+  }
+  // NVS outside the bridge lock and the LVGL lock: a flash write must not
+  // hold up a BLE frame or a map frame.
+  if (!store(bests)) ESP_LOGW(kTag, "0-100 bests not saved to NVS");
+}
+
 void PhoneNavBridge::set_speed_listener(SpeedListener listener,
                                         void* context) {
   const std::lock_guard<std::mutex> lock(state_mutex_);
@@ -1321,6 +1443,69 @@ void PhoneNavBridge::present_navigation() {
   request_render(RenderNavigation);
 }
 
+void PhoneNavBridge::predict_route_origin(bool navigation) {
+  moto::nav::NavSnapshot& snapshot = render_snapshot_;
+  if (!snapshot.has_route_view || render_demo_active_) {
+    has_displayed_origin_ = false;
+    return;
+  }
+  const auto now_ms = static_cast<std::uint32_t>(monotonic_ms());
+  const bool new_fix =
+      !has_displayed_origin_ || render_fix_ms_ != predicted_fix_ms_ ||
+      render_fix_origin_.latitude_deg != predicted_fix_origin_.latitude_deg ||
+      render_fix_origin_.longitude_deg != predicted_fix_origin_.longitude_deg;
+
+  float distance_m = 0.0F;
+  if (snapshot.has_usable_fix && !snapshot.gnss_stale &&
+      snapshot.speed_mps >= kMinPredictionSpeedMps) {
+    const std::int32_t age_ms = std::clamp<std::int32_t>(
+        static_cast<std::int32_t>(now_ms - render_fix_ms_), 0,
+        kMaxPredictionMs);
+    distance_m = snapshot.speed_mps * static_cast<float>(age_ms) / 1'000.0F;
+  }
+  const moto::nav::Gcj02Point predicted = moto::device::advance_position(
+      render_fix_origin_, distance_m, snapshot.heading_deg,
+      snapshot.route_view_points.data(), snapshot.route_view_point_count,
+      snapshot.off_route ? 0.0F : kOnRouteM);
+
+  if (new_fix) {
+    predicted_fix_origin_ = render_fix_origin_;
+    predicted_fix_ms_ = render_fix_ms_;
+    correction_east_m_ = 0.0F;
+    correction_north_m_ = 0.0F;
+    if (has_displayed_origin_) {
+      const moto::device::LocalMetres gap =
+          moto::device::to_local(displayed_origin_, predicted);
+      if (std::hypot(gap.east, gap.north) <= kMaxCorrectionM) {
+        correction_east_m_ = gap.east;
+        correction_north_m_ = gap.north;
+      }
+    }
+    correction_start_ms_ = now_ms;
+  }
+  const std::uint32_t since_correction_ms = now_ms - correction_start_ms_;
+  const float fade =
+      since_correction_ms >= kCorrectionMs
+          ? 0.0F
+          : 1.0F - static_cast<float>(since_correction_ms) /
+                       static_cast<float>(kCorrectionMs);
+  const moto::nav::Gcj02Point shown =
+      fade > 0.0F
+          ? moto::device::from_local(
+                {correction_east_m_ * fade, correction_north_m_ * fade},
+                predicted)
+          : predicted;
+  if (!navigation && !new_fix && fade == 0.0F && has_displayed_origin_ &&
+      moto::device::metres_between(shown, displayed_origin_) <
+          kPredictionStepM) {
+    snapshot.route_view_origin = displayed_origin_;
+    return;
+  }
+  displayed_origin_ = shown;
+  has_displayed_origin_ = true;
+  snapshot.route_view_origin = shown;
+}
+
 void PhoneNavBridge::present_motion() {
   request_render(RenderMotion);
 }
@@ -1350,6 +1535,8 @@ void PhoneNavBridge::render_pending() {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     if (navigation) {
       render_snapshot_ = snapshot_;
+      render_fix_origin_ = snapshot_.route_view_origin;
+      render_fix_ms_ = route_origin_fix_ms_;
     } else if (motion) {
       // A motion frame needs only what on_imu_sample() writes. Every other
       // writer requests RenderNavigation, except a completed RouteGeometry,
@@ -1379,12 +1566,19 @@ void PhoneNavBridge::render_pending() {
     }
   }
 
-  if ((requested & RenderPerformance) != 0U) send_pending_performance();
+  if ((requested & RenderPerformance) != 0U) {
+    send_pending_performance();
+    store_pending_performance_bests();
+  }
+  if ((requested & RenderFirmwareInfo) != 0U) send_pending_firmware_info();
   constexpr std::uint32_t kSendOnly =
       static_cast<std::uint32_t>(RenderAttitude) |
-      static_cast<std::uint32_t>(RenderPerformance);
+      static_cast<std::uint32_t>(RenderPerformance) |
+      static_cast<std::uint32_t>(RenderFirmwareInfo);
   if ((requested & RenderAttitude) != 0U) send_pending_attitude();
   if ((requested & ~kSendOnly) == 0U) return;
+
+  if (navigation || motion) predict_route_origin(navigation);
 
   // Projection is the expensive part of a motion frame (hundreds of map
   // points and trigonometry), but it does not call LVGL. Keep it outside the

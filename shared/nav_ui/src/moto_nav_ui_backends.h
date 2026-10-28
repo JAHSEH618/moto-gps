@@ -44,6 +44,8 @@ void set_lean_calibration_callback(moto_lean_calibration_callback_t callback,
                                    void *context);
 void set_performance_callback(moto_ui_performance_callback_t callback,
                               void *context);
+void set_performance_target(uint16_t target_kph);
+void set_performance_bests(const uint32_t *best_ms);
 void set_clear_peaks_callback(moto_lean_clear_peaks_callback_t callback,
                               void *context);
 void set_lean_cal_state(moto_ui_lean_cal_state_t state, uint8_t value);

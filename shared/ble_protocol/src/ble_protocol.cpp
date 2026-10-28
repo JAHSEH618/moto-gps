@@ -719,6 +719,24 @@ Error validate(const OtaStatus& value) {
   return Error::None;
 }
 
+// Printable ASCII and no spaces: both strings are identifiers the phone
+// compares byte for byte, and shows as they are.
+Error validate_identifier(const std::string& value, std::size_t maximum) {
+  if (value.empty() || value.size() > maximum) return Error::StringTooLong;
+  for (const char character : value) {
+    const auto byte = static_cast<std::uint8_t>(character);
+    if (byte <= 0x20U || byte > 0x7EU) return Error::OutOfRange;
+  }
+  return Error::None;
+}
+
+Error validate(const FirmwareInfo& value) {
+  const Error version =
+      validate_identifier(value.version, kMaxFirmwareVersionBytes);
+  if (version != Error::None) return version;
+  return validate_identifier(value.build, kMaxFirmwareBuildBytes);
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -899,6 +917,9 @@ BytesResult encode_payload(const T& value) {
     writer.u8(static_cast<std::uint8_t>(value.failure));
     writer.u8(value.progress_percent);
     writer.u32(value.bytes_received);
+  } else if constexpr (std::is_same_v<T, FirmwareInfo>) {
+    writer.string_u8(value.version);
+    writer.string_u8(value.build);
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -1791,6 +1812,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::OtaCommand;
         } else if constexpr (std::is_same_v<T, OtaStatus>) {
           return MessageType::OtaStatus;
+        } else if constexpr (std::is_same_v<T, FirmwareInfo>) {
+          return MessageType::FirmwareInfo;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1988,6 +2011,21 @@ MessageResult decode_ota_status(ByteView payload) {
   return decoded_result(std::move(value), reader);
 }
 
+bool FirmwareInfo::operator==(const FirmwareInfo& rhs) const noexcept {
+  return std::tie(version, build) == std::tie(rhs.version, rhs.build);
+}
+
+MessageResult decode_firmware_info(ByteView payload) {
+  Reader reader(payload);
+  FirmwareInfo value;
+  if (begin_payload(reader)) {
+    value.version = reader.string_u8(kMaxFirmwareVersionBytes);
+    value.build = reader.string_u8(kMaxFirmwareBuildBytes);
+    reader.require_end();
+  }
+  return decoded_result(std::move(value), reader);
+}
+
 MessageResult decode_message(MessageType type, ByteView payload) {
   switch (type) {
     case MessageType::ConnectionStatus:
@@ -2020,6 +2058,8 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_ota_command(payload);
     case MessageType::OtaStatus:
       return decode_ota_status(payload);
+    case MessageType::FirmwareInfo:
+      return decode_firmware_info(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

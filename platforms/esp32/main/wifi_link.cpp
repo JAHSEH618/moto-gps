@@ -290,6 +290,9 @@ void WifiLink::handle(const QueuedEvent& event, std::uint32_t now) {
   switch (event.event) {
     case Event::Up:
       if (driver_up_) {
+        // A new request is a new use of the link: an update started nine
+        // minutes into a session must not lose the radio at minute ten.
+        if (connected_at_ms_ != 0) connected_at_ms_ = now;
         publish();
       } else {
         bring_up(now);
@@ -380,8 +383,11 @@ void WifiLink::handle(const QueuedEvent& event, std::uint32_t now) {
 
     case Event::GotIp: {
       if (!driver_up_) return;
-      status_.state = WifiLinkState::Connected;
-      status_.failure = WifiFailure::None;
+      // Through set_state, not a bare assignment: set_state is what raises
+      // connected() for the OTA worker. Writing status_.state directly left
+      // the worker polling a link that already had its address, so every
+      // update ended as NoWifi while the WiFi screen said Connected.
+      set_state(WifiLinkState::Connected, WifiFailure::None);
       for (std::size_t i = 0; i < status_.ipv4.size(); ++i) {
         status_.ipv4[i] =
             static_cast<std::uint8_t>((event.ipv4 >> (8U * i)) & 0xFFU);

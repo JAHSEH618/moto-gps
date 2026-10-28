@@ -19,9 +19,10 @@ class NavPresenter {
   NavPresenter& operator=(NavPresenter&&) = delete;
 
   void update(const NavSnapshot& snapshot);
-  // A motion frame. The caller guarantees that only the heading and the
-  // attitude differ from the snapshot of the last update(); the map is
-  // re-projected only when the heading actually moved.
+  // A motion frame. The caller guarantees that only the heading, the
+  // attitude and the route origin (the device's position between fixes)
+  // differ from the snapshot of the last update(); the map is re-projected
+  // only when the heading or the origin actually moved.
   void update_motion(const NavSnapshot& snapshot);
   [[nodiscard]] const moto_ui_state_t& ui_state() const;
 
@@ -36,6 +37,7 @@ class NavPresenter {
   std::string next_road_name_;
   moto_ui_state_t ui_state_{};
   float projected_heading_deg_ = 0.0F;
+  Gcj02Point projected_origin_{};
 };
 
 }  // namespace moto::nav

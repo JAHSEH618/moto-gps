@@ -192,6 +192,8 @@ final class ESP32BLECentral: NSObject {
     var onWifiConfigAck: ((UInt8) -> Void)?
     /// The device's update progress (OtaStatus 0x1D).
     var onOtaStatus: ((MotoBLEOtaStatus) -> Void)?
+    /// What the device runs (FirmwareInfo 0x1E), after each handshake.
+    var onFirmwareInfo: ((MotoBLEFirmwareInfo) -> Void)?
     /// The device's Ack to the newest OtaCommand: 0 accepted, 2 refused
     /// (unbonded link, an update already running, an image that cannot fit).
     var onOtaCommandAck: ((UInt8) -> Void)?
@@ -248,6 +250,9 @@ final class ESP32BLECentral: NSObject {
     /// terminal interpolates heading/position locally at 40 Hz, so animation
     /// remains smooth without forcing a full LVGL redraw ten times per second.
     private static let navigationTransmitIntervalMs: UInt64 = 200
+    /// A navigation batch within this long means navigation data is flowing,
+    /// and a map scene waits to go out right behind the next batch.
+    private static let navigationActiveWindowMs: UInt64 = 2_000
     /// CoreBluetooth's `canSendWriteWithoutResponse` only reflects the
     /// phone-side buffer, not how quickly the terminal application drains its
     /// RX queue. Pace application frames instead of bursting every fragment in
@@ -1080,7 +1085,7 @@ final class ESP32BLECentral: NSObject {
             }
             lastNavigationTransmitAtMs = Self.monotonicMs()
             lastSentNavigationState = state
-            flushPendingMapScene()
+            flushPendingMapScene(afterNavigation: true)
         } catch {
             // Preserve the newest state for the next protocol-ready session.
             if pendingNavigationState == nil {
@@ -1114,7 +1119,19 @@ final class ESP32BLECentral: NSObject {
         }
     }
 
-    private func flushPendingMapScene() {
+    /// While navigation data is flowing, a scene (11–18 frames, up to about
+    /// 270 ms of pacing) goes out only right behind a navigation batch. The
+    /// device reassembles one message at a time and needs rising sequence
+    /// numbers, so a fix cannot overtake a scene already on the wire; queued
+    /// at any other moment, a scene made the next fix wait behind it. The
+    /// next batch is at most a second away, so the scene arrives that much
+    /// later at worst. With no navigation flowing it goes at once.
+    private func flushPendingMapScene(afterNavigation: Bool = false) {
+        if !afterNavigation, lastNavigationTransmitAtMs != 0,
+           Self.monotonicMs() &- lastNavigationTransmitAtMs <
+               Self.navigationActiveWindowMs {
+            return
+        }
         guard protocolReady,
               peerCapabilities & Self.mapSceneCapability != 0,
               let codec,
@@ -1808,6 +1825,8 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                     onWifiStatus?(wifi)
                 } else if let ota = inbound.otaStatus {
                     onOtaStatus?(ota)
+                } else if let info = inbound.firmwareInfo {
+                    onFirmwareInfo?(info)
                 }
                 return
             }

@@ -340,7 +340,10 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                         moto::ble::CapabilityWifiHotspot |
                         // Offers a firmware image (0x1C) and shows the device's
                         // OtaStatus (0x1D) on the Device -> Firmware screen.
-                        moto::ble::CapabilityOta;
+                        moto::ble::CapabilityOta |
+                        // Reads FirmwareInfo (0x1E), so that screen can tell
+                        // an installed release from a new one.
+                        moto::ble::CapabilityFirmwareInfo;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(storage->maximum_frame_size);
@@ -526,6 +529,14 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @implementation MotoBLEOtaStatus
 @end
 
+@interface MotoBLEFirmwareInfo ()
+@property(nonatomic, readwrite, copy) NSString *version;
+@property(nonatomic, readwrite, copy) NSString *build;
+@end
+
+@implementation MotoBLEFirmwareInfo
+@end
+
 namespace {
 
 MotoBLEWifiStatus *WifiStatusFromShared(const moto::ble::WifiStatus &status) {
@@ -550,6 +561,15 @@ MotoBLEOtaStatus *OtaStatusFromShared(const moto::ble::OtaStatus &status) {
   value.failure = static_cast<uint8_t>(status.failure);
   value.progressPercent = status.progress_percent;
   value.bytesReceived = status.bytes_received;
+  return value;
+}
+
+MotoBLEFirmwareInfo *FirmwareInfoFromShared(
+    const moto::ble::FirmwareInfo &info) {
+  MotoBLEFirmwareInfo *value = [[MotoBLEFirmwareInfo alloc] init];
+  // The shared validator admits printable ASCII only, so UTF-8 cannot fail.
+  value.version = [NSString stringWithUTF8String:info.version.c_str()] ?: @"";
+  value.build = [NSString stringWithUTF8String:info.build.c_str()] ?: @"";
   return value;
 }
 
@@ -599,6 +619,7 @@ BOOL OtaCommandFromInput(MotoBLEOtaCommandInput *input,
 @property(nonatomic, readwrite, nullable) MotoBLEPerformanceRun *performanceRun;
 @property(nonatomic, readwrite, nullable) MotoBLEWifiStatus *wifiStatus;
 @property(nonatomic, readwrite, nullable) MotoBLEOtaStatus *otaStatus;
+@property(nonatomic, readwrite, nullable) MotoBLEFirmwareInfo *firmwareInfo;
 @property(nonatomic, readwrite, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -866,6 +887,22 @@ BOOL OtaCommandFromInput(MotoBLEOtaCommandInput *input,
   return OtaStatusFromShared(*status);
 }
 
+- (MotoBLEFirmwareInfo *)decodeFirmwareInfoPayloadForTesting:(NSData *)payload
+                                                       error:(NSError **)error {
+  const auto decoded = moto::ble::decode_message(
+      moto::ble::MessageType::FirmwareInfo,
+      moto::ble::ByteView(static_cast<const std::uint8_t *>(payload.bytes),
+                          payload.length));
+  const auto *info =
+      decoded.ok() ? std::get_if<moto::ble::FirmwareInfo>(&decoded.value)
+                   : nullptr;
+  if (info == nullptr) {
+    if (error != nullptr) *error = ProtocolError(decoded.error, decoded.offset);
+    return nil;
+  }
+  return FirmwareInfoFromShared(*info);
+}
+
 - (NSData *)encodeGnssInputPayloadForTesting:(MotoBLEGnssInput *)input
                                        error:(NSError **)error {
   const auto payload =
@@ -1020,6 +1057,12 @@ BOOL OtaCommandFromInput(MotoBLEOtaCommandInput *input,
 
   if (const auto *ota = std::get_if<moto::ble::OtaStatus>(&decoded.value)) {
     inbound.otaStatus = OtaStatusFromShared(*ota);
+    return inbound;
+  }
+
+  if (const auto *info =
+          std::get_if<moto::ble::FirmwareInfo>(&decoded.value)) {
+    inbound.firmwareInfo = FirmwareInfoFromShared(*info);
     return inbound;
   }
 

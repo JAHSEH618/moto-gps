@@ -9,6 +9,7 @@ enum BLEProtocolGoldenCheck {
         case gnssVectorMissing
         case wifiVectorMissing
         case otaVectorMissing
+        case firmwareInfoVectorMissing
         case mismatch(expected: String, actual: String)
 
         var errorDescription: String? {
@@ -20,6 +21,7 @@ enum BLEProtocolGoldenCheck {
             case .gnssVectorMissing: "BLE v1 黄金帧缺少 gnss.payload"
             case .wifiVectorMissing: "BLE v1 黄金帧缺少 wifi_config/wifi_status.payload"
             case .otaVectorMissing: "BLE v1 黄金帧缺少 ota_command/ota_status.payload"
+            case .firmwareInfoVectorMissing: "BLE v1 黄金帧缺少 firmware_info.payload"
             case let .mismatch(expected, actual):
                 "BLE v1 编码不一致：expected \(expected), actual \(actual)"
             }
@@ -214,6 +216,28 @@ enum BLEProtocolGoldenCheck {
         let expectedOtaDecoded = "state=1 failure=0 percent=43 bytes=2540032"
         guard actualOtaStatus == expectedOtaDecoded else {
             throw CheckError.mismatch(expected: expectedOtaDecoded, actual: actualOtaStatus)
+        }
+
+        // FirmwareInfo is device->phone only, so the phone pins the decoder.
+        guard let expectedFirmwareInfo = vector("firmware_info.payload") else {
+            throw CheckError.firmwareInfoVectorMissing
+        }
+        var firmwareInfoBytes = Data()
+        var infoIndex = expectedFirmwareInfo.startIndex
+        while infoIndex < expectedFirmwareInfo.endIndex {
+            let next = expectedFirmwareInfo.index(infoIndex, offsetBy: 2)
+            guard let byte = UInt8(expectedFirmwareInfo[infoIndex..<next], radix: 16) else {
+                throw CheckError.firmwareInfoVectorMissing
+            }
+            firmwareInfoBytes.append(byte)
+            infoIndex = next
+        }
+        let info = try codec.decodeFirmwareInfoPayload(forTesting: firmwareInfoBytes)
+        let actualFirmwareInfo = "version=\(info.version) build=\(info.build)"
+        let expectedFirmwareDecoded = "version=0.2.1 build=27dc871"
+        guard actualFirmwareInfo == expectedFirmwareDecoded else {
+            throw CheckError.mismatch(expected: expectedFirmwareDecoded,
+                                      actual: actualFirmwareInfo)
         }
     }
 }

@@ -145,8 +145,12 @@ typedef struct {
     uint16_t target_kph;
     uint32_t run_id;     /* bumps when a run starts; 0 before the first */
     uint32_t elapsed_ms; /* RUNNING: so far; FINISHED: the time; ARMED: 0 */
-    uint32_t best_ms;    /* best since the tree was built; 0 when none */
+    uint32_t best_ms;    /* best for target_kph; 0 when none or cleared */
 } moto_ui_performance_run_t;
+
+/* The 0-100 targets (DeviceSettings), and the order of a bests array:
+   50, 60, 100 km/h. */
+#define MOTO_UI_PERFORMANCE_TARGET_COUNT 3
 
 typedef void (*moto_ui_performance_callback_t)(
     const moto_ui_performance_run_t *run, void *context);
@@ -288,6 +292,14 @@ void moto_nav_ui_set_clear_peaks_callback(
     original interface has no 0-100 page). */
 void moto_nav_ui_set_performance_callback(
     moto_ui_performance_callback_t callback, void *context);
+/** The 0-100 target from DeviceSettings: 50, 60 or 100 km/h (anything else
+    is 100). A change cancels a live run. Like the bests below it survives
+    create() and theme switches. LVGL task. */
+void moto_nav_ui_set_performance_target(uint16_t target_kph);
+/** The best time per target in ms, 0 for none, in the order of
+    MOTO_UI_PERFORMANCE_TARGET_COUNT; the device restores them from NVS at
+    boot and saves what the performance callback reports. LVGL task. */
+void moto_nav_ui_set_performance_bests(const uint32_t *best_ms);
 /* Thread-safe posts: stored as atomics and applied on the LVGL task. */
 void moto_nav_ui_set_lean_cal_state(moto_ui_lean_cal_state_t state,
                                     uint8_t value);

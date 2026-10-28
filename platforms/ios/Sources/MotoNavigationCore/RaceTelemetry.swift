@@ -17,7 +17,8 @@ public struct DevicePerformanceRun: Equatable, Sendable {
     /// Bumps when a run starts; zero before the first one.
     public let runID: UInt32
     public let elapsedMilliseconds: UInt32
-    /// Best since the device built its tree; zero when there is none.
+    /// The device's best for `targetKph`, kept across power cycles; zero when
+    /// there is none or the rider cleared it on the round screen.
     public let bestMilliseconds: UInt32
 
     public init(

@@ -211,6 +211,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) uint32_t bytesReceived;
 @end
 
+/// What the round screen runs (message 0x1E): its firmware version and the
+/// commit the image was built from, "-dirty" for an edited tree.
+@interface MotoBLEFirmwareInfo : NSObject
+@property(nonatomic, readonly, copy) NSString *version;
+@property(nonatomic, readonly, copy) NSString *build;
+@end
+
 /// One successfully decoded transport message, or one valid partial/duplicate
 /// frame. Sequence and ACK metadata stay attached to the shared decoder output.
 @interface MotoBLEInboundMessage : NSObject
@@ -225,6 +232,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, nullable) MotoBLEPerformanceRun *performanceRun;
 @property(nonatomic, readonly, nullable) MotoBLEWifiStatus *wifiStatus;
 @property(nonatomic, readonly, nullable) MotoBLEOtaStatus *otaStatus;
+@property(nonatomic, readonly, nullable) MotoBLEFirmwareInfo *firmwareInfo;
 @property(nonatomic, readonly, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
 
@@ -309,6 +317,9 @@ NS_ASSUME_NONNULL_BEGIN
                                                  error:(NSError **)error;
 - (nullable MotoBLEOtaStatus *)decodeOtaStatusPayloadForTesting:(NSData *)payload
                                                           error:(NSError **)error;
+/// Test hook for the golden check: the shared FirmwareInfo decoder.
+- (nullable MotoBLEFirmwareInfo *)decodeFirmwareInfoPayloadForTesting:(NSData *)payload
+                                                                error:(NSError **)error;
 
 /// Test hooks for the golden check: the shared WifiConfig encoder and the
 /// shared WifiStatus decoder, without restating either layout in Swift.

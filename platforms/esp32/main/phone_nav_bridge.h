@@ -48,6 +48,21 @@ class PhoneNavBridge {
   using SettingsStoreCallback =
       bool (*)(const moto::device::DeviceSettings& settings);
   void set_settings_store(SettingsStoreCallback callback);
+  // The 0-100 best per target, ms, 0 for none, in the UI's target order.
+  using PerformanceBests =
+      std::array<std::uint32_t, MOTO_UI_PERFORMANCE_TARGET_COUNT>;
+  // Persists the bests whenever the clock reports a new or cleared one. Same
+  // split as the settings store: the firmware installs
+  // moto::device::save_performance_bests, the host tests a recorder. Called
+  // on the render task, outside the LVGL lock.
+  using PerformanceBestsStoreCallback = bool (*)(const PerformanceBests& bests);
+  void set_performance_bests_store(PerformanceBestsStoreCallback callback);
+  // The bests NVS held at boot. Call it where apply_settings() is called:
+  // it hands them straight to the UI.
+  void restore_performance_bests(const PerformanceBests& bests);
+  // What this image is (FirmwareInfo, 0x1E). Set once at boot; sent after
+  // every handshake to a phone that advertises CapabilityFirmwareInfo.
+  void set_firmware_info(const moto::ble::FirmwareInfo& info);
   // The phone's GNSS speed, one call per usable fix, placed on this device's
   // clock (DESIGN_V2 §3.7). A phone that sends GnssInput is heard only
   // through it, with the time the fix was taken; an older phone's snapshot
@@ -111,6 +126,10 @@ class PhoneNavBridge {
                                   void* context);
   // Sends the newest PerformanceRun if one is waiting. Render task only.
   void send_pending_performance();
+  // Stores the bests if a report changed them. Render task only.
+  void store_pending_performance_bests();
+  // Sends FirmwareInfo if a handshake asked for it. Render task only.
+  void send_pending_firmware_info();
 
   void consume_navigation(const moto::ble::NavigationSnapshot& input);
   moto::ble::AckStatus consume_geometry(
@@ -169,6 +188,16 @@ class PhoneNavBridge {
   // phone sends GnssInput (then its snapshot speeds are not passed on).
   moto::motion::PhoneClock phone_clock_;
   bool gnss_input_seen_ = false;
+  // The newest GnssInput fix on this device's clock, when it arrived, and
+  // whether a fix has come in since the heading was last anchored to the
+  // phone's course.
+  std::uint32_t last_gnss_fix_ms_ = 0;
+  std::uint32_t last_gnss_rx_ms_ = 0;
+  bool fresh_course_ = false;
+  // When the route window's origin (the rider's position) was fixed, on this
+  // device's clock: the GnssInput fix that preceded it, or its arrival from a
+  // phone that sends none.
+  std::uint32_t route_origin_fix_ms_ = 0;
   // Command id of the last HomeShortcut. The phone answers InvalidState when no
   // home is set; the device cannot know that on its own, so the refusal has to
   // come back as a visible hint instead of a silent no-op.
@@ -203,6 +232,11 @@ class PhoneNavBridge {
   // to a phone that shows it (CapabilityPerformanceRun).
   moto::ble::PerformanceRun last_performance_{};
   bool performance_pending_ = false;
+  PerformanceBests performance_bests_{};
+  bool performance_bests_dirty_ = false;
+  PerformanceBestsStoreCallback performance_bests_store_ = nullptr;
+  moto::ble::FirmwareInfo firmware_info_{};
+  bool firmware_info_pending_ = false;
   std::uint64_t last_attitude_queued_ms_ = 0;
   std::uint16_t next_command_id_ = 1;
   bool link_active_ = false;
@@ -218,6 +252,19 @@ class PhoneNavBridge {
   moto_ui_phone_connection_t render_phone_connection_ =
       MOTO_UI_PHONE_OFFLINE;
   bool render_demo_active_ = false;
+  // Map lag (route_prediction.hpp), render task only: the fix being advanced,
+  // the origin last drawn, and the pull from it to a new fix's estimate.
+  moto::nav::Gcj02Point render_fix_origin_{};
+  std::uint32_t render_fix_ms_ = 0;
+  moto::nav::Gcj02Point predicted_fix_origin_{};
+  std::uint32_t predicted_fix_ms_ = 0;
+  moto::nav::Gcj02Point displayed_origin_{};
+  bool has_displayed_origin_ = false;
+  float correction_east_m_ = 0.0F;
+  float correction_north_m_ = 0.0F;
+  std::uint32_t correction_start_ms_ = 0;
+  // Moves render_snapshot_'s route origin to where the rider is now.
+  void predict_route_origin(bool navigation);
   moto::device::DeviceSettings render_settings_{};
   bool render_ambient_night_ = false;
   enum RenderFlag : std::uint32_t {
@@ -233,6 +280,9 @@ class PhoneNavBridge {
     // Send the newest PerformanceRun: raised from inside an LVGL call, sent
     // by the render task once it is outside it.
     RenderPerformance = 1U << 6U,
+    // Send FirmwareInfo: raised by the handshake on the BLE task, sent by the
+    // render task, which is where every bridge-originated message is sent.
+    RenderFirmwareInfo = 1U << 8U,
     // A page was selected locally. Apply that frame now instead of waiting
     // for the worker's next 25 ms tick; a swipe should land on the new page
     // in the same touch, not one or two frames later.
