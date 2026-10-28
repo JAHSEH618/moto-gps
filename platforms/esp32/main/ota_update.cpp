@@ -77,10 +77,24 @@ Opened open_at(esp_http_client_handle_t client, const char* url,
     esp_http_client_set_header(client, "Range", range);
   }
   if (esp_http_client_open(client, 0) != ESP_OK) {
+    ESP_LOGE(kTag, "open failed: internal free %u largest %u",
+             static_cast<unsigned>(
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
     return {moto::ble::OtaFailure::Network, true};
   }
   const std::int64_t declared = esp_http_client_fetch_headers(client);
-  if (declared < 0) return {moto::ble::OtaFailure::Network, true};
+  if (declared < 0) {
+    ESP_LOGE(kTag,
+             "headers failed at offset %u; internal free %u largest %u",
+             static_cast<unsigned>(offset),
+             static_cast<unsigned>(
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+    return {moto::ble::OtaFailure::Network, true};
+  }
   const int status_code = esp_http_client_get_status_code(client);
   const int wanted = offset == 0 ? 200 : 206;
   if (status_code != wanted) {
@@ -363,8 +377,12 @@ void OtaUpdate::fetch(const Request& request) {
     esp_http_client_config_t config = {};
     config.url = request.url;
     config.timeout_ms = 15'000;
-    config.buffer_size = 4U * 1024U;
-    config.buffer_size_tx = 1U * 1024U;
+    // Both live in internal RAM. The image arrives at ~1 MB/s at worst, so a
+    // 2 KiB receive window costs nothing measurable and leaves the AES engine
+    // the DMA memory it needs: 4 KiB + 1 KiB here left `esp-aes: Failed to
+    // allocate memory` on the first body read.
+    config.buffer_size = 2U * 1024U;
+    config.buffer_size_tx = 512U;
     // A release URL is https; the phone serving the image it already holds is
     // http on the hotspot link. The bundle only matters for the former.
     config.crt_bundle_attach = esp_crt_bundle_attach;
@@ -405,7 +423,25 @@ void OtaUpdate::fetch(const Request& request) {
             std::min(kReadChunkBytes, kStageBytes - staged));
         const int read = esp_http_client_read(
             client, reinterpret_cast<char*>(stage + staged), want);
-        if (read <= 0) break;
+        if (read <= 0) {
+          // A stall that read nothing at all is the interesting one: it says
+          // whether the body never arrived (0 / EAGAIN) or the transport
+          // broke (a negative esp_err_t), which the retry path cannot tell
+          // apart from the log alone.
+          ESP_LOGW(kTag,
+                   "read=%d at %u of %llu (status %d chunked %d complete "
+                   "%d); internal free %u largest %u",
+                   read, static_cast<unsigned>(received),
+                   static_cast<unsigned long long>(total),
+                   esp_http_client_get_status_code(client),
+                   esp_http_client_is_chunked_response(client) ? 1 : 0,
+                   esp_http_client_is_complete_data_received(client) ? 1 : 0,
+                   static_cast<unsigned>(
+                       heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                   static_cast<unsigned>(
+                       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+          break;
+        }
         if (received + static_cast<std::uint32_t>(read) >
             moto::ble::kMaxOtaImageBytes) {
           failure = moto::ble::OtaFailure::TooLarge;
@@ -452,6 +488,7 @@ void OtaUpdate::fetch(const Request& request) {
     ESP_LOGW(kTag, "body stopped at %u of %llu bytes; resuming (%d/%d)",
              static_cast<unsigned>(received),
              static_cast<unsigned long long>(total), resumes, kMaxResumes);
+    log_heap("resume");
     // The stall that got us here was silent; say the update is still alive
     // before the reopen adds its own wait.
     publish(moto::ble::OtaState::Downloading, moto::ble::OtaFailure::None,

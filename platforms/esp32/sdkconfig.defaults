@@ -79,12 +79,15 @@ CONFIG_LV_MEM_SIZE_KILOBYTES=8
 # docs/WAVESHARE_OPTIMIZATION_PLAN.md §4.5). Internal DRAM is the scarce pool,
 # so the driver's dynamic buffers, lwIP and mbedTLS prefer PSRAM. Static RX
 # buffers (~1.6 KB each, held from esp_wifi_init to esp_wifi_deinit) go from
-# 10 to 6; the AMPDU RX window is pinned to the same 6 because the PSRAM
-# option would otherwise raise it to 16, beyond the static buffers.
+# 10 to 4, and the static TX pool from 16 to 8: a TLS session plus the AES
+# engine's DMA buffers could not fit beside the other 16 (an update died in
+# `esp-aes: Failed to allocate memory` with 4.4 KB internal free), and this
+# link only ever carries an OTA body.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
-CONFIG_ESP_WIFI_RX_BA_WIN=6
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_RX_BA_WIN=4
 # With the driver's hot paths in IRAM, linking WiFi alone cost 22 KB of the
 # shared internal SRAM, all day, radio on or off: more than moving
 # phone_bridge to PSRAM gave back. WiFi here is a bulk, occasional transfer,
