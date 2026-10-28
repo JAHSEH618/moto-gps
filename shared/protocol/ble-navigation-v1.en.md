@@ -597,7 +597,7 @@ u8  state                0 Armed (stopped, waiting to roll away), 1 Running, 2 F
 u16 target_kph           50 / 60 / 100, the same table as SettingsState
 u32 run_id               bumps on every start; 0 before the first one
 u32 elapsed_ms           Running: time so far when sent; Finished: the result; Armed: must be 0
-u32 best_ms              best since power-on; 0 when there is none
+u32 best_ms              best for target_kph, kept in NVS across power cycles; 0 when there is none or the rider cleared it
 ```
 
 Running and Finished carry a non-zero `run_id`. The re-send after a handshake repeats the

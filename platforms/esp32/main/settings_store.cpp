@@ -18,6 +18,13 @@ constexpr char kTlogOkKey[] = "tlog.ok";
 constexpr char kImuFifoKey[] = "imu.fifo";
 constexpr char kGyroBiasKey[] = "att.gbias";
 constexpr char kTlogClearKey[] = "tlog.clear";
+constexpr char kPerfBestKey[] = "perf.best";
+constexpr std::uint8_t kPerfBestVersion = 1;
+struct PerfBestBlob {
+  std::uint8_t version;
+  std::uint8_t reserved[3];
+  std::uint32_t best_ms[3];
+};
 // Version byte first, so a later layout is rejected instead of misread.
 constexpr std::uint8_t kGyroBiasVersion = 1;
 struct GyroBiasBlob {
@@ -147,6 +154,33 @@ bool save_gyro_bias(const moto::motion::Vec3f& bias_dps) {
   const GyroBiasBlob blob{kGyroBiasVersion, {}, bias_dps.x, bias_dps.y,
                           bias_dps.z};
   esp_err_t result = nvs_set_blob(handle, kGyroBiasKey, &blob, sizeof(blob));
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  return result == ESP_OK;
+}
+
+bool load_performance_bests(std::array<std::uint32_t, 3>& best_ms) {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+  PerfBestBlob blob{};
+  std::size_t size = sizeof(blob);
+  const esp_err_t result = nvs_get_blob(handle, kPerfBestKey, &blob, &size);
+  nvs_close(handle);
+  if (result != ESP_OK || size != sizeof(blob) ||
+      blob.version != kPerfBestVersion) {
+    return false;
+  }
+  for (std::size_t i = 0; i < best_ms.size(); ++i) best_ms[i] = blob.best_ms[i];
+  return true;
+}
+
+bool save_performance_bests(const std::array<std::uint32_t, 3>& best_ms) {
+  if (!ensure_nvs()) return false;
+  nvs_handle_t handle = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
+  PerfBestBlob blob{kPerfBestVersion, {}, {best_ms[0], best_ms[1], best_ms[2]}};
+  esp_err_t result = nvs_set_blob(handle, kPerfBestKey, &blob, sizeof(blob));
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
   return result == ESP_OK;

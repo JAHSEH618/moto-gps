@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <cstdint>
+
 #include "device_settings.hpp"
 #include "mount_basis.hpp"
 
@@ -51,5 +54,10 @@ bool save_imu_fifo_enabled(bool enabled);
 // rest, kept across power cycles). Returns false when nothing valid is stored.
 bool load_gyro_bias(moto::motion::Vec3f& bias_dps);
 bool save_gyro_bias(const moto::motion::Vec3f& bias_dps);
+
+// The 0-100 best per target in ms, 0 for none, for 50, 60 and 100 km/h
+// (NVS `perf.best`). Returns false when nothing valid is stored.
+bool load_performance_bests(std::array<std::uint32_t, 3>& best_ms);
+bool save_performance_bests(const std::array<std::uint32_t, 3>& best_ms);
 
 }  // namespace moto::device

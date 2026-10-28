@@ -369,6 +369,16 @@ extern "C" void moto_nav_ui_set_performance_callback(
     install_callbacks();
 }
 
+// Only the GTA tree has a 0-100 page, but its target and bests are kept
+// outside the tree, so they are forwarded whichever tree is live.
+extern "C" void moto_nav_ui_set_performance_target(uint16_t target_kph) {
+    moto_ui_gta::set_performance_target(target_kph);
+}
+
+extern "C" void moto_nav_ui_set_performance_bests(const uint32_t *best_ms) {
+    moto_ui_gta::set_performance_bests(best_ms);
+}
+
 extern "C" void moto_nav_ui_set_lean_cal_state(moto_ui_lean_cal_state_t state,
                                                uint8_t value) {
     // Only the GTA tree has a Lean page; its post is atomics-only, so it is

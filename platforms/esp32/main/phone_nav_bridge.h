@@ -48,6 +48,18 @@ class PhoneNavBridge {
   using SettingsStoreCallback =
       bool (*)(const moto::device::DeviceSettings& settings);
   void set_settings_store(SettingsStoreCallback callback);
+  // The 0-100 best per target, ms, 0 for none, in the UI's target order.
+  using PerformanceBests =
+      std::array<std::uint32_t, MOTO_UI_PERFORMANCE_TARGET_COUNT>;
+  // Persists the bests whenever the clock reports a new or cleared one. Same
+  // split as the settings store: the firmware installs
+  // moto::device::save_performance_bests, the host tests a recorder. Called
+  // on the render task, outside the LVGL lock.
+  using PerformanceBestsStoreCallback = bool (*)(const PerformanceBests& bests);
+  void set_performance_bests_store(PerformanceBestsStoreCallback callback);
+  // The bests NVS held at boot. Call it where apply_settings() is called:
+  // it hands them straight to the UI.
+  void restore_performance_bests(const PerformanceBests& bests);
   // The phone's GNSS speed, one call per usable fix, placed on this device's
   // clock (DESIGN_V2 §3.7). A phone that sends GnssInput is heard only
   // through it, with the time the fix was taken; an older phone's snapshot
@@ -111,6 +123,8 @@ class PhoneNavBridge {
                                   void* context);
   // Sends the newest PerformanceRun if one is waiting. Render task only.
   void send_pending_performance();
+  // Stores the bests if a report changed them. Render task only.
+  void store_pending_performance_bests();
 
   void consume_navigation(const moto::ble::NavigationSnapshot& input);
   moto::ble::AckStatus consume_geometry(
@@ -203,6 +217,9 @@ class PhoneNavBridge {
   // to a phone that shows it (CapabilityPerformanceRun).
   moto::ble::PerformanceRun last_performance_{};
   bool performance_pending_ = false;
+  PerformanceBests performance_bests_{};
+  bool performance_bests_dirty_ = false;
+  PerformanceBestsStoreCallback performance_bests_store_ = nullptr;
   std::uint64_t last_attitude_queued_ms_ = 0;
   std::uint16_t next_command_id_ = 1;
   bool link_active_ = false;

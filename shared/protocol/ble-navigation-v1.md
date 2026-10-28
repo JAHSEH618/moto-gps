@@ -541,7 +541,7 @@ u8  state                0 Armed（停稳待起步）、1 Running、2 Finished
 u16 target_kph           50 / 60 / 100，与 SettingsState 的表一致
 u32 run_id               每次起步加一；第一次起步之前为 0
 u32 elapsed_ms           Running：发出时已用时间；Finished：成绩；Armed：必须为 0
-u32 best_ms              本次开机以来的最佳；没有时为 0
+u32 best_ms              target_kph 这一档的最佳，存在 NVS 里，断电不丢；没有或骑手清空后为 0
 ```
 
 Running 与 Finished 的 `run_id` 不能为 0。握手后的补发会重复上一条 Finished，手机按

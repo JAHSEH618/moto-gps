@@ -48,6 +48,17 @@ void apply_settings_to_ui(const moto::device::DeviceSettings& settings,
   moto_nav_ui_set_ambient_night(ambient_night ? 1U : 0U);
   moto_nav_ui_set_theme(theme_for(settings.theme));
   moto_nav_ui_set_show_buildings(settings.show_buildings ? 1U : 0U);
+  moto_nav_ui_set_performance_target(settings.performance_target_kph);
+}
+
+// A target's slot in the UI's bests order (MOTO_UI_PERFORMANCE_TARGET_COUNT):
+// 50, 60, 100 km/h. The UI snaps anything else to 100, and so does this.
+std::size_t performance_target_slot(std::uint16_t target_kph) {
+  switch (target_kph) {
+    case 50: return 0;
+    case 60: return 1;
+    default: return 2;
+  }
 }
 
 struct DemoPose {
@@ -539,6 +550,14 @@ void PhoneNavBridge::performance_changed(const moto_ui_performance_run_t* run,
                                                              : run->elapsed_ms;
     value.best_ms = run->best_ms;
     bridge->performance_pending_ = true;
+    // Every report carries the best for its target, so a new best and a
+    // cleared one both reach NVS the same way.
+    std::uint32_t& best =
+        bridge->performance_bests_[performance_target_slot(run->target_kph)];
+    if (best != run->best_ms) {
+      best = run->best_ms;
+      bridge->performance_bests_dirty_ = true;
+    }
   }
   // Raised from inside the LVGL call that fed the speed; the render task
   // sends it once that call has returned.
@@ -1211,6 +1230,39 @@ void PhoneNavBridge::set_settings_store(
   settings_store_ = callback;
 }
 
+void PhoneNavBridge::set_performance_bests_store(
+    PhoneNavBridge::PerformanceBestsStoreCallback callback) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  performance_bests_store_ = callback;
+}
+
+void PhoneNavBridge::restore_performance_bests(
+    const PhoneNavBridge::PerformanceBests& bests) {
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    performance_bests_ = bests;
+    performance_bests_dirty_ = false;
+  }
+  moto_nav_ui_set_performance_bests(bests.data());
+}
+
+void PhoneNavBridge::store_pending_performance_bests() {
+  PerformanceBests bests{};
+  PerformanceBestsStoreCallback store = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!performance_bests_dirty_ || performance_bests_store_ == nullptr) {
+      return;
+    }
+    performance_bests_dirty_ = false;
+    bests = performance_bests_;
+    store = performance_bests_store_;
+  }
+  // NVS outside the bridge lock and the LVGL lock: a flash write must not
+  // hold up a BLE frame or a map frame.
+  if (!store(bests)) ESP_LOGW(kTag, "0-100 bests not saved to NVS");
+}
+
 void PhoneNavBridge::set_speed_listener(SpeedListener listener,
                                         void* context) {
   const std::lock_guard<std::mutex> lock(state_mutex_);
@@ -1379,7 +1431,10 @@ void PhoneNavBridge::render_pending() {
     }
   }
 
-  if ((requested & RenderPerformance) != 0U) send_pending_performance();
+  if ((requested & RenderPerformance) != 0U) {
+    send_pending_performance();
+    store_pending_performance_bests();
+  }
   constexpr std::uint32_t kSendOnly =
       static_cast<std::uint32_t>(RenderAttitude) |
       static_cast<std::uint32_t>(RenderPerformance);

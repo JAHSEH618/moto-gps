@@ -1115,6 +1115,14 @@ extern "C" void app_main(void) {
   // visibility, so applying before it would leave defaults on screen.
   phone_bridge.apply_settings(boot_settings, false);
   phone_bridge.set_settings_store(moto::device::save_settings);
+  // The 0-100 bests live outside the tree, so they are restored once, here,
+  // and survive every later theme switch.
+  PhoneNavBridge::PerformanceBests performance_bests{};
+  if (moto::device::load_performance_bests(performance_bests)) {
+    phone_bridge.restore_performance_bests(performance_bests);
+  }
+  phone_bridge.set_performance_bests_store(
+      moto::device::save_performance_bests);
   phone_bridge.install_ui_callbacks();
   // Commit the instrument's first frame before the BLE controller starts. The
   // first UI flush used to race NimBLE initialization and the SPI DMA
