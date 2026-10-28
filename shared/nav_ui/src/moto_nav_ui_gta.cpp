@@ -1923,8 +1923,28 @@ bool apply_building_geometry_frame(bool rebind_lines = true) {
     return pixels_changed || rebind_lines;
 }
 
+// True while a finger is on the glass. Read from LVGL's last sample of each
+// pointer device, so it costs no bus traffic of its own.
+bool pointer_pressed() {
+    for(lv_indev_t *indev = lv_indev_get_next(nullptr); indev != nullptr;
+        indev = lv_indev_get_next(indev)) {
+        if(lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER &&
+           lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void route_motion_tick(lv_timer_t *) {
     if(ui.nav_route_target_count < 2 || ui.nav_route_point_count < 2) return;
+    // A finger on the glass is most likely a swipe. Hold the map where it is
+    // until it lifts: while navigating every tick here is a full-disc frame,
+    // and those frames hold the LVGL lock the touch read waits for, so the
+    // swipe got too few samples to reach the gesture distance and the page
+    // turn queued behind map frames. The targets keep updating underneath,
+    // and the first tick after release blends to them.
+    if(pointer_pressed()) return;
     // 0.39 at 25 ms has approximately the same smoothing time constant as
     // the old 0.56 at 40 ms, but supplies smaller and more frequent steps.
     // Screen coordinates need subpixel precision, not geographic doubles.
@@ -3560,10 +3580,15 @@ void create_navigation_page() {
     lv_obj_add_flag(ui.nav_map, LV_OBJ_FLAG_GESTURE_BUBBLE);
     // The Radar owns the whole round canvas; the HUD is overlaid on top.
     lv_obj_set_height(ui.nav_map, MOTO_UI_CANVAS_HEIGHT);
-    // The map is the paper disc, so it is clipped to the dial and the bezel is
-    // drawn over its edge. Nothing square ever shows inside the glass.
+    // The map is the paper disc: its background is the dial's circle, and the
+    // bezel is drawn over its edge. Its children are not clipped to it.
+    // clip_corner made LVGL draw every map frame into two 466x233 ARGB8888
+    // layers, mask them and blend them back, the most expensive path it has,
+    // on a frame that moves at 40 Hz while navigating. What it cut away lies
+    // past r = 233, outside the round glass (the Web preview's canvas is
+    // rounded the same way).
     lv_obj_set_style_radius(ui.nav_map, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_clip_corner(ui.nav_map, true, 0);
+    lv_obj_set_style_clip_corner(ui.nav_map, false, 0);
     lv_obj_set_style_bg_color(ui.nav_map, ui.palette.map_land, 0);
     lv_obj_set_style_bg_opa(ui.nav_map, LV_OPA_COVER, 0);
 
