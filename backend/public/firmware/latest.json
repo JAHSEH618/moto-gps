@@ -1,10 +1,10 @@
 {
   "schema": "moto-gps-firmware/1",
-  "version": "20261028-27dc871",
+  "version": "20261028-7e2e127",
   "file": "moto-gps.bin",
   "url": "https://www.doupaw.site/firmware/moto-gps.bin",
-  "sha256": "1d29668b7233da9bc0e40593fd97d0e04e8bf057b525ec581980aac41c609932",
-  "size_bytes": 5978848,
-  "built_at": "2026-10-28T09:54:02+09:00",
-  "git_commit": "27dc871"
+  "sha256": "bc22f69805ec8e5df400252333b888734fbd88a1697634c1869b39539cc8dd0f",
+  "size_bytes": 5983968,
+  "built_at": "2026-10-28T13:04:12+09:00",
+  "git_commit": "7e2e127"
 }
