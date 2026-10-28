@@ -9,8 +9,8 @@ import SwiftUI
 /// bars.
 ///
 /// Two steps, nothing else: check what doupaw.site publishes, and only when
-/// that is newer than what this phone last flashed does the update section
-/// appear at all.
+/// that is not what the round screen runs does the update section appear at
+/// all.
 struct FirmwareUpdateView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -22,9 +22,9 @@ struct FirmwareUpdateView: View {
     @State private var releaseMessage: String?
     @State private var formError: String?
     @State private var pendingVersion: String?
-    // What this phone last flashed into the device. The protocol carries no
-    // firmware version, so "is there an update" can only be judged against
-    // what we handed over — not against what the round screen reports.
+    // What this phone last flashed into the device. A round screen that
+    // reports its build (FirmwareInfo) is judged on that instead; this is the
+    // fallback for firmware that predates the report.
     @AppStorage("firmware.installedVersion") private var installedVersion = ""
 
     var body: some View {
@@ -69,6 +69,15 @@ struct FirmwareUpdateView: View {
                         MotoLabel(text: checkStateText, tone: checkTone,
                                   uppercased: false)
                             .accessibilityIdentifier("firmware-release-state")
+                    }
+                    if let device = model.deviceFirmware {
+                        MotoRule()
+                        MotoRow(title: "圆屏") {
+                            MotoLabel(text: "\(device.version) · \(device.build)",
+                                      tone: .ink, uppercased: false)
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("firmware-device-build")
+                        }
                     }
                     if let release {
                         MotoRule()
@@ -160,13 +169,14 @@ struct FirmwareUpdateView: View {
         model.deviceSupportsOta && model.firmwareUpdate?.isRunning != true
     }
 
-    /// True when the published manifest is not the version this phone last
-    /// flashed. With nothing on record the answer is "yes": the app cannot
-    /// see the device's firmware version, so the published build is the only
-    /// candidate there is.
+    /// True when the published release is not what the round screen runs:
+    /// its reported build against the manifest's commit, or, for firmware
+    /// that does not report one, the version this phone last flashed. With
+    /// nothing to go on the answer is "yes".
     private var isUpdateAvailable: Bool {
         guard let release else { return false }
-        return release.version != installedVersion
+        return !release.isInstalled(on: model.deviceFirmware,
+                                    lastFlashedVersion: installedVersion)
     }
 
     private var checkStateText: String {
@@ -186,6 +196,11 @@ struct FirmwareUpdateView: View {
             return releaseChecked
                 ? "没读到 doupaw.site 上的清单。确认网络后点「检查更新」重试。"
                 : "点「检查更新」读 doupaw.site 上发布的固件版本。"
+        }
+        if let device = model.deviceFirmware, release.gitCommit != nil {
+            return isUpdateAvailable
+                ? "圆屏现在是构建 \(device.build)，最新发布是 \(release.version)。"
+                : "圆屏运行的就是 \(release.version)，没有更新的发布。"
         }
         if !isUpdateAvailable {
             return "这台手机上次给圆屏刷的就是 \(release.version)，没有更新的发布。"
@@ -241,7 +256,8 @@ struct FirmwareUpdateView: View {
                 }
                 let value = try FirmwareRelease.decode(data)
                 release = value
-                releaseMessage = value.version == installedVersion
+                releaseMessage = value.isInstalled(on: model.deviceFirmware,
+                                                   lastFlashedVersion: installedVersion)
                     ? "已是最新：\(value.version)。"
                     : "发现新固件 \(value.version)。"
             } catch {

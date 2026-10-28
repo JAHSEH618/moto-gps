@@ -737,6 +737,13 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
               performance_pending_ = true;
               request_render(RenderPerformance);
             }
+            // So does one that reads the firmware it is talking to.
+            if ((value.capabilities &
+                 moto::ble::CapabilityFirmwareInfo) != 0U &&
+                !firmware_info_.build.empty()) {
+              firmware_info_pending_ = true;
+              request_render(RenderFirmwareInfo);
+            }
             switch (value.state) {
               case moto::ble::ConnectionState::Ready:
                 ui_phone_connection_ = MOTO_UI_PHONE_ONLINE;
@@ -1246,6 +1253,30 @@ void PhoneNavBridge::restore_performance_bests(
   moto_nav_ui_set_performance_bests(bests.data());
 }
 
+void PhoneNavBridge::set_firmware_info(const moto::ble::FirmwareInfo& info) {
+  const std::lock_guard<std::mutex> lock(state_mutex_);
+  firmware_info_ = info;
+}
+
+void PhoneNavBridge::send_pending_firmware_info() {
+  moto::ble::FirmwareInfo info;
+  SendCallback sender = nullptr;
+  void* sender_context = nullptr;
+  {
+    const std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!firmware_info_pending_ || sender_ == nullptr || !link_active_ ||
+        (phone_capabilities_ & moto::ble::CapabilityFirmwareInfo) == 0U) {
+      return;
+    }
+    firmware_info_pending_ = false;
+    info = firmware_info_;
+    sender = sender_;
+    sender_context = sender_context_;
+  }
+  // No Ack: every handshake sends it again.
+  sender(moto::ble::Message{info}, 0, sender_context);
+}
+
 void PhoneNavBridge::store_pending_performance_bests() {
   PerformanceBests bests{};
   PerformanceBestsStoreCallback store = nullptr;
@@ -1435,9 +1466,11 @@ void PhoneNavBridge::render_pending() {
     send_pending_performance();
     store_pending_performance_bests();
   }
+  if ((requested & RenderFirmwareInfo) != 0U) send_pending_firmware_info();
   constexpr std::uint32_t kSendOnly =
       static_cast<std::uint32_t>(RenderAttitude) |
-      static_cast<std::uint32_t>(RenderPerformance);
+      static_cast<std::uint32_t>(RenderPerformance) |
+      static_cast<std::uint32_t>(RenderFirmwareInfo);
   if ((requested & RenderAttitude) != 0U) send_pending_attitude();
   if ((requested & ~kSendOnly) == 0U) return;
 

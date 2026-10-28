@@ -85,3 +85,17 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
     $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
 )
+
+# The commit this image is built from, for FirmwareInfo (0x1E): see
+# build_info.cmake. A target rather than a configure-time variable, so it runs
+# on every build; the header it writes only changes when the commit does.
+set(MOTO_BUILD_INFO_HEADER "${CMAKE_CURRENT_BINARY_DIR}/moto_build_info.h")
+add_custom_target(moto_build_info
+    COMMAND ${CMAKE_COMMAND}
+        -DREPO=${MOTO_REPOSITORY_ROOT}
+        -DOUT=${MOTO_BUILD_INFO_HEADER}
+        -P ${CMAKE_CURRENT_LIST_DIR}/build_info.cmake
+    BYPRODUCTS ${MOTO_BUILD_INFO_HEADER}
+    VERBATIM)
+add_dependencies(${COMPONENT_LIB} moto_build_info)
+target_include_directories(${COMPONENT_LIB} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

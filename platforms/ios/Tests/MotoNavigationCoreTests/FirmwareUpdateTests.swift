@@ -84,6 +84,37 @@ final class FirmwareUpdateTests: XCTestCase {
         XCTAssertEqual(release.url, "https://doupaw.site/firmware/moto-gps.bin")
         XCTAssertEqual(release.sha256Hex, digest)
         XCTAssertEqual(release.sizeBytes, 6029312)
+        XCTAssertEqual(release.gitCommit, "abc1234")
+    }
+
+    /// The device's own build decides whether a release is installed; the
+    /// version this phone last flashed is only the fallback for a device that
+    /// does not report one.
+    func testAReleaseIsInstalledWhenTheDeviceRunsItsCommit() {
+        let digest = String(repeating: "a1", count: 32)
+        let release = FirmwareRelease(
+            version: "20261028-27dc871",
+            url: "https://example.invalid/moto-gps.bin",
+            sha256Hex: digest, sizeBytes: 6 << 20, gitCommit: "27dc871")
+        let running = DeviceFirmware(version: "0.2.1", build: "27dc871")
+        XCTAssertTrue(release.isInstalled(on: running, lastFlashedVersion: ""))
+        // A USB build of the same commit with local edits is not the release,
+        // and neither is an older build the phone happens to have flashed.
+        let edited = DeviceFirmware(version: "0.2.1", build: "27dc871-dirty")
+        XCTAssertFalse(release.isInstalled(on: edited, lastFlashedVersion: ""))
+        let older = DeviceFirmware(version: "0.2.1", build: "686572e")
+        XCTAssertFalse(release.isInstalled(
+            on: older, lastFlashedVersion: "20261028-27dc871"))
+        // No report from the device: fall back to what this phone flashed.
+        XCTAssertTrue(release.isInstalled(
+            on: nil, lastFlashedVersion: "20261028-27dc871"))
+        XCTAssertFalse(release.isInstalled(on: nil, lastFlashedVersion: ""))
+        // No commit in the manifest: the version is all there is to compare.
+        let bare = FirmwareRelease(
+            version: "20261028-27dc871",
+            url: "https://example.invalid/moto-gps.bin",
+            sha256Hex: digest, sizeBytes: 6 << 20)
+        XCTAssertFalse(bare.isInstalled(on: running, lastFlashedVersion: ""))
     }
 
     func testReleaseManifestIsValidatedBeforeItReachesTheDevice() {

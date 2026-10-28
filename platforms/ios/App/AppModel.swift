@@ -29,6 +29,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var firmwareProblem: FirmwareUpdateProblem?
     @Published private(set) var firmwareAccepted: Bool?
     @Published private(set) var deviceSupportsOta = false
+    /// What the connected round screen says it runs; nil while disconnected
+    /// or for a firmware that does not report it.
+    @Published private(set) var deviceFirmware: DeviceFirmware?
     /// The URL the device is fetching while an update runs: the phone's own
     /// hotspot server, or a release URL the rider pasted.
     @Published private(set) var firmwareURL: String?
@@ -122,6 +125,7 @@ final class AppModel: ObservableObject {
             self.deviceSupportsOta = self.bluetooth.deviceSupportsOta
             if case .connected = snapshot.connection { return }
             self.wifiStatus = nil
+            self.deviceFirmware = nil
             // An update that dies with the link is not "still running": no
             // OtaStatus can reach this phone any more, and the server is no
             // longer read.
@@ -169,6 +173,10 @@ final class AppModel: ObservableObject {
                 self.firmwareWatchdog = nil
                 self.stopFirmwareServer()
             }
+        }
+        bluetooth.onFirmwareInfo = { [weak self] info in
+            self?.deviceFirmware = DeviceFirmware(version: info.version,
+                                                  build: info.build)
         }
         bluetooth.onOtaCommandAck = { [weak self] status in
             guard let self else { return }

@@ -200,6 +200,7 @@ Byte 0 of every logical payload is `payload_revision=1`.
 | `0x1B` | WifiStatus | device→phone | WiFi state change, RSSI while connected, and after each handshake; only to a phone that advertises bit14, no ACK |
 | `0x1C` | OtaCommand | phone→device | when the rider starts an update; only to a device that advertises bit15, ACK_REQUESTED, encrypted and bonded link only |
 | `0x1D` | OtaStatus | device→phone | every state change, at most 2 Hz while downloading; only to a phone that advertises bit15, no ACK |
+| `0x1E` | FirmwareInfo | device→phone | after each handshake; only to a phone that advertises bit16, no ACK |
 | `0x20` | DeviceCommand | device→phone | user action, ACK_REQUESTED+URGENT |
 
 ## 6. Payload encoding
@@ -226,7 +227,8 @@ a peer that advertises this bit, because an older firmware rejects unknown flags
 input (the device takes `0x18`), bit13 performance run (advertised by the phone: it shows the
 round screen's 0-100 results, so the device sends it `0x19`), bit14 WiFi hotspot (both ends: the
 device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`), bit15 OTA (both ends: the
-phone offers an image and takes `0x1D`; the device takes `0x1C` and reports `0x1D`).
+phone offers an image and takes `0x1D`; the device takes `0x1C` and reports `0x1D`), bit16
+firmware info (both ends: the device reports `0x1E`; the phone reads it).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -688,6 +690,24 @@ u32 bytes_received        bytes written to the slot; zero while Idle
 (it cannot boot later). After Ready the device reboots within about a second: the phone treats
 that as a dropped link, not as a failure. Ready means the image is in place, not that the new
 version has run.
+
+### 6.19 FirmwareInfo (`0x1E`, device→phone, 5..81 bytes)
+
+Sent after each handshake to a phone that advertises bit16. No ACK: the next handshake sends
+it again. It is how the phone knows which build it is talking to: the firmware screen compares
+`build` with a release manifest's `git_commit` to tell an installed release from a new one.
+
+```text
+u8  revision
+u8  version_length       1..31
+u8[] version             the firmware's own version (ESP-IDF PROJECT_VER), e.g. 0.2.1
+u8  build_length         1..47
+u8[] build               the commit the image was built from (`git rev-parse --short HEAD`),
+                         with -dirty for a tree that had uncommitted changes, or unknown
+```
+
+Both strings are printable ASCII without spaces (0x21..0x7E). Golden payload (version `0.2.1`,
+build `27dc871`): `0105302e322e310732376463383731`.
 
 ## 7. Display Snapshot to the shared NavSnapshot
 

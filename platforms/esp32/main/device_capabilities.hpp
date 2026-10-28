@@ -25,6 +25,9 @@ inline constexpr std::uint32_t kDeviceCapabilities =
     moto::ble::CapabilityGnssInput | moto::ble::CapabilityWifiHotspot |
     // OtaCommand is routed in app_main.cpp and written by OtaUpdate, so the
     // bit has to be here: without it the app hides the firmware screen.
-    moto::ble::CapabilityOta;
+    moto::ble::CapabilityOta |
+    // PhoneNavBridge sends FirmwareInfo after each handshake; the firmware
+    // screen uses it to tell an installed release from a new one.
+    moto::ble::CapabilityFirmwareInfo;
 
 }  // namespace moto::esp32

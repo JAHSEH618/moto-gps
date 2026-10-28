@@ -126,6 +126,7 @@ enum class MessageType : std::uint8_t {
   WifiStatus = 0x1B,
   OtaCommand = 0x1C,
   OtaStatus = 0x1D,
+  FirmwareInfo = 0x1E,
   DeviceCommand = 0x20,
 };
 
@@ -312,6 +313,10 @@ enum Capability : std::uint32_t {
   // update. Gated like the wifi bit, so a device without an OTA path is
   // never sent 0x1C.
   CapabilityOta = 1U << 15U,
+  // Both directions. The device advertises it when it reports FirmwareInfo;
+  // the phone advertises it when it reads it, and only such a phone is sent
+  // 0x1E.
+  CapabilityFirmwareInfo = 1U << 16U,
 };
 
 struct ConnectionStatus {
@@ -928,6 +933,23 @@ struct OtaStatus {
   bool operator==(const OtaStatus& rhs) const noexcept;
 };
 
+inline constexpr std::size_t kMaxFirmwareVersionBytes = 31;
+inline constexpr std::size_t kMaxFirmwareBuildBytes = 47;
+
+// Device->phone, after each handshake, to a phone that advertises
+// CapabilityFirmwareInfo. No Ack: the next handshake sends it again. Both
+// strings are printable ASCII without spaces. `version` is the firmware's
+// own version (ESP-IDF PROJECT_VER). `build` is the commit the image was
+// built from, as `git rev-parse --short HEAD`, with "-dirty" for a tree that
+// had uncommitted changes; it is what the phone compares with a release
+// manifest's git_commit to tell whether that release is already installed.
+struct FirmwareInfo {
+  std::string version;
+  std::string build;
+
+  bool operator==(const FirmwareInfo& rhs) const noexcept;
+};
+
 using Message = std::variant<ConnectionStatus,                             Heartbeat,
                              Ack,
                              NavigationSnapshot,
@@ -944,7 +966,8 @@ using Message = std::variant<ConnectionStatus,                             Heart
                              WifiStatus,
                              OtaCommand,
                              OtaStatus,
-                             DeviceCommand>;
+                             DeviceCommand,
+                             FirmwareInfo>;
 
 using MessageResult = Result<Message>;
 

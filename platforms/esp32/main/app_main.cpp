@@ -35,6 +35,7 @@
 #include "burn_in.h"
 #include "wifi_link.h"
 #include "ota_update.hpp"
+#include "moto_build_info.h"
 
 #include <new>
 
@@ -1123,6 +1124,14 @@ extern "C" void app_main(void) {
   }
   phone_bridge.set_performance_bests_store(
       moto::device::save_performance_bests);
+  // What the firmware screen compares with a release: PROJECT_VER and the
+  // commit build_info.cmake stamped into this build.
+  moto::ble::FirmwareInfo firmware_info;
+  firmware_info.version = esp_app_get_description()->version;
+  firmware_info.build = MOTO_FIRMWARE_BUILD;
+  ESP_LOGI(kTag, "firmware %s build %s", firmware_info.version.c_str(),
+           firmware_info.build.c_str());
+  phone_bridge.set_firmware_info(firmware_info);
   phone_bridge.install_ui_callbacks();
   // Commit the instrument's first frame before the BLE controller starts. The
   // first UI flush used to race NimBLE initialization and the SPI DMA

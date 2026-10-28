@@ -192,6 +192,8 @@ final class ESP32BLECentral: NSObject {
     var onWifiConfigAck: ((UInt8) -> Void)?
     /// The device's update progress (OtaStatus 0x1D).
     var onOtaStatus: ((MotoBLEOtaStatus) -> Void)?
+    /// What the device runs (FirmwareInfo 0x1E), after each handshake.
+    var onFirmwareInfo: ((MotoBLEFirmwareInfo) -> Void)?
     /// The device's Ack to the newest OtaCommand: 0 accepted, 2 refused
     /// (unbonded link, an update already running, an image that cannot fit).
     var onOtaCommandAck: ((UInt8) -> Void)?
@@ -1808,6 +1810,8 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
                     onWifiStatus?(wifi)
                 } else if let ota = inbound.otaStatus {
                     onOtaStatus?(ota)
+                } else if let info = inbound.firmwareInfo {
+                    onFirmwareInfo?(info)
                 }
                 return
             }

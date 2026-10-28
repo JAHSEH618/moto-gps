@@ -89,6 +89,9 @@ public struct FirmwareRelease: Equatable, Sendable {
     public let url: String
     public let sha256Hex: String
     public let sizeBytes: UInt32
+    /// The commit the image was built from (the manifest's git_commit); nil
+    /// for a manifest that does not say.
+    public var gitCommit: String? = nil
 
     public enum DecodeError: Error, Equatable, LocalizedError, Sendable {
         case unsupportedSchema
@@ -111,6 +114,7 @@ public struct FirmwareRelease: Equatable, Sendable {
         let url: String
         let sha256: String
         let size_bytes: UInt32
+        let git_commit: String?
     }
 
     public static func decode(_ data: Data) throws -> FirmwareRelease {
@@ -132,10 +136,40 @@ public struct FirmwareRelease: Equatable, Sendable {
                                                sha256Hex: manifest.sha256) {
             throw DecodeError.invalid(error.message)
         }
+        let commit = manifest.git_commit?.trimmingCharacters(in: .whitespaces)
         return FirmwareRelease(version: manifest.version,
                                url: manifest.url,
                                sha256Hex: manifest.sha256.lowercased(),
-                               sizeBytes: manifest.size_bytes)
+                               sizeBytes: manifest.size_bytes,
+                               gitCommit: commit?.isEmpty == false ? commit : nil)
+    }
+
+    /// Whether this release is what the round screen already runs. A device
+    /// that reports its build (FirmwareInfo 0x1E) answers exactly: its build
+    /// against the manifest's commit, so a USB-flashed or "-dirty" build is
+    /// not mistaken for the release. Without that report (older firmware, or
+    /// a manifest without git_commit) the phone can only compare with the
+    /// version it last flashed itself.
+    public func isInstalled(on device: DeviceFirmware?,
+                            lastFlashedVersion: String) -> Bool {
+        if let device, let gitCommit {
+            return device.build == gitCommit
+        }
+        return version == lastFlashedVersion
+    }
+}
+
+/// What the round screen says it runs (FirmwareInfo 0x1E).
+public struct DeviceFirmware: Equatable, Sendable {
+    /// The firmware's own version (ESP-IDF PROJECT_VER).
+    public let version: String
+    /// The commit the image was built from, with "-dirty" for a tree that had
+    /// uncommitted changes, or "unknown".
+    public let build: String
+
+    public init(version: String, build: String) {
+        self.version = version
+        self.build = build
     }
 }
 
