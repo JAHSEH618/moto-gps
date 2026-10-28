@@ -88,6 +88,11 @@ class WifiLink {
   void tear_down();
   void connect_attempt(std::uint32_t now_ms);
   void fail(moto::ble::WifiFailure failure);
+  // Lists what the radio can see after a join that found nothing: a hotspot
+  // that is off, one that is 5 GHz-only (iPhone without "Maximize
+  // Compatibility") and a saved name that no longer exists all arrive as
+  // reason 201, and only the AP list tells them apart.
+  void log_visible_aps();
   void set_state(moto::ble::WifiLinkState state,
                  moto::ble::WifiFailure failure);
   void publish();

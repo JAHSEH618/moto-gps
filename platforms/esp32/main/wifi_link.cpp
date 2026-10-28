@@ -616,9 +616,49 @@ void WifiLink::tear_down() {
 
 void WifiLink::fail(WifiFailure failure) {
   ESP_LOGW(kTag, "wifi failed: %s", failure_name(failure));
+  // Before the radio goes down: a scan is the only thing that distinguishes
+  // "the hotspot is not on 2.4 GHz" from "the hotspot is not there at all".
+  if (driver_up_ &&
+      (failure == WifiFailure::NetworkNotFound ||
+       failure == WifiFailure::AuthFailed)) {
+    log_visible_aps();
+  }
   tear_down();
   set_state(WifiLinkState::Failed, failure);
   publish();
+}
+
+void WifiLink::log_visible_aps() {
+  wifi_scan_config_t scan{};
+  scan.show_hidden = true;
+  if (esp_wifi_scan_start(&scan, true) != ESP_OK) {
+    ESP_LOGW(kTag, "scan: radio refused to scan");
+    return;
+  }
+  std::uint16_t found = 0;
+  esp_wifi_scan_get_ap_num(&found);
+  if (found == 0) {
+    ESP_LOGW(kTag, "scan: no access point on 2.4 GHz at all");
+    return;
+  }
+  constexpr std::uint16_t kListed = 12;
+  // Off the task stack: it has 4 KiB and the session watermark leaves about
+  // 1.1 KiB free, while twelve records are ~1.3 KiB. Only the wifi task
+  // scans, so one static buffer is enough.
+  static wifi_ap_record_t records[kListed];
+  std::uint16_t count = std::min(found, kListed);
+  if (esp_wifi_scan_get_ap_records(&count, records) != ESP_OK) {
+    ESP_LOGW(kTag, "scan: %u APs, list unavailable",
+             static_cast<unsigned>(found));
+    return;
+  }
+  ESP_LOGW(kTag, "scan: %u APs on 2.4 GHz, listing %u",
+           static_cast<unsigned>(found), static_cast<unsigned>(count));
+  for (std::uint16_t i = 0; i < count; ++i) {
+    ESP_LOGW(kTag, "  ap \"%.32s\" rssi=%d ch=%u auth=%u", records[i].ssid,
+             records[i].rssi, static_cast<unsigned>(records[i].primary),
+             static_cast<unsigned>(records[i].authmode));
+  }
 }
 
 void WifiLink::set_state(WifiLinkState state, WifiFailure failure) {
