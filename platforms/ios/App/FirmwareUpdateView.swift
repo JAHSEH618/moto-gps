@@ -142,7 +142,8 @@ struct FirmwareUpdateView: View {
             .disabled(!canUpdate)
             .opacity(canUpdate ? 1 : 0.5)
             .accessibilityIdentifier("firmware-update-button")
-            if let message = model.firmwareUpdate?.message ?? formError {
+            if let message = model.firmwareUpdate?.message
+                ?? model.firmwareProblem?.message ?? formError {
                 MotoProse(text: message, tone: .muted)
                     .accessibilityIdentifier("firmware-message")
             }

@@ -1,7 +1,7 @@
 #include "ota_update.hpp"
 
 #include <algorithm>
-#include <cstdlib>
+#include <cstdio>
 #include <cstring>
 
 #include "esp_crt_bundle.h"
@@ -18,13 +18,29 @@ namespace moto::device {
 namespace {
 
 constexpr char kTag[] = "ota";
-// A hotspot join takes a few seconds from a cold radio; 25 s covers one retry
-// cycle of the WiFi worker without leaving the rider at 0% forever.
-constexpr std::uint32_t kNetworkWaitMs = 25'000;
+// WifiLink makes three 20 s join attempts 1.5 s apart before it gives up, and
+// an iPhone hotspot nobody has open in Settings often misses the first one.
+// Waiting for less than all three reported NoWifi while the next attempt was
+// still joining.
+constexpr std::uint32_t kNetworkWaitMs = 65'000;
 constexpr std::uint32_t kNetworkPollMs = 250;
-// The body is read in 4 KiB pieces: one flash sector per write, and small
-// enough that a 10 KiB task stack holds the TLS read path.
+// While nothing else moves (the join, a resume) the last status goes out
+// again this often, so the phone can tell a slow step from a dead screen.
+constexpr std::uint32_t kHeartbeatMs = 2'000;
+// The body is read in 4 KiB pieces: small enough that a 10 KiB task stack
+// holds the TLS read path.
 constexpr std::size_t kReadChunkBytes = 4U * 1024U;
+// The pieces collect in a 64 KiB PSRAM stage that is written one block at a
+// time. The slot is opened with OTA_WITH_SEQUENTIAL_WRITES, so each write
+// erases the block it lands on, under the flash guard with the write, instead
+// of esp_ota_begin erasing 6 MB in one unguarded call before the first byte
+// was even requested. Block-aligned writes keep the driver on its 64 KiB
+// block erase rather than sixteen sector erases.
+constexpr std::size_t kStageBytes = 64U * 1024U;
+// A body that stops short (the hotspot dropped, the server closed early, a
+// read timed out) is picked up where it stopped with a Range request, this
+// many times, before the update fails as Network.
+constexpr int kMaxResumes = 3;
 // Two percent steps or half a second, whichever comes first: the phone's bar
 // moves smoothly and the BLE link keeps its 5 Hz snapshot slot.
 constexpr std::uint8_t kProgressStep = 2;
@@ -35,6 +51,72 @@ constexpr std::uint32_t kRebootDelayMs = 1'200;
 
 std::uint32_t now_ms() {
   return static_cast<std::uint32_t>(esp_timer_get_time() / 1'000LL);
+}
+
+// What one attempt to open the body came to.
+struct Opened {
+  moto::ble::OtaFailure failure = moto::ble::OtaFailure::None;
+  // A connection that dropped is worth another try. An answer the server
+  // will give again (an HTTP error, a size that disagrees, a Range it
+  // ignored) is not.
+  bool retry = false;
+};
+
+// Opens the image at `offset`: the whole body from 0, the rest of it with a
+// Range request after a short read. `total` is the image size: the command's
+// when it stated one, otherwise the first response's.
+Opened open_at(esp_http_client_handle_t client, const char* url,
+               std::uint32_t offset, std::uint32_t stated_size,
+               std::uint64_t* total) {
+  char range[32] = {};
+  if (offset == 0) {
+    esp_http_client_delete_header(client, "Range");
+  } else {
+    std::snprintf(range, sizeof(range), "bytes=%u-",
+                  static_cast<unsigned>(offset));
+    esp_http_client_set_header(client, "Range", range);
+  }
+  if (esp_http_client_open(client, 0) != ESP_OK) {
+    return {moto::ble::OtaFailure::Network, true};
+  }
+  const std::int64_t declared = esp_http_client_fetch_headers(client);
+  if (declared < 0) return {moto::ble::OtaFailure::Network, true};
+  const int status_code = esp_http_client_get_status_code(client);
+  const int wanted = offset == 0 ? 200 : 206;
+  if (status_code != wanted) {
+    ESP_LOGE(kTag, "HTTP %d (wanted %d) from %s", status_code, wanted, url);
+    // A 5xx is the server's bad moment; anything else it will say again.
+    return {moto::ble::OtaFailure::Network, status_code >= 500};
+  }
+  if (offset == 0) {
+    if (declared > static_cast<std::int64_t>(moto::ble::kMaxOtaImageBytes)) {
+      return {moto::ble::OtaFailure::TooLarge, false};
+    }
+    if (stated_size != 0 && declared > 0 &&
+        static_cast<std::uint32_t>(declared) != stated_size) {
+      // The phone stated a size and the server disagrees: the digest cannot
+      // match whatever arrives, so refuse before writing a flash sector.
+      ESP_LOGE(kTag, "size mismatch: command %u, server %lld",
+               static_cast<unsigned>(stated_size),
+               static_cast<long long>(declared));
+      return {moto::ble::OtaFailure::Network, false};
+    }
+    *total = declared > 0 ? static_cast<std::uint64_t>(declared)
+                          : static_cast<std::uint64_t>(stated_size);
+  } else if (*total != 0 && declared > 0 &&
+             offset + static_cast<std::uint64_t>(declared) != *total) {
+    ESP_LOGE(kTag, "resume at %u answered %lld bytes of %llu",
+             static_cast<unsigned>(offset), static_cast<long long>(declared),
+             static_cast<unsigned long long>(*total));
+    return {moto::ble::OtaFailure::Network, false};
+  }
+  return {};
+}
+
+moto::ble::OtaFailure write_failure(esp_err_t result) {
+  return result == ESP_ERR_OTA_VALIDATE_FAILED
+             ? moto::ble::OtaFailure::ImageRejected
+             : moto::ble::OtaFailure::NoMemory;
 }
 
 }  // namespace
@@ -196,6 +278,10 @@ bool OtaUpdate::wait_for_network() {
       ESP_LOGI(kTag, "hotspot up; fetching");
       return true;
     }
+    if (now_ms() - last_publish_ms_ >= kHeartbeatMs) {
+      publish(status_.state, status_.failure, status_.progress_percent,
+              status_.bytes_received);
+    }
     vTaskDelay(pdMS_TO_TICKS(kNetworkPollMs));
   }
   return false;
@@ -250,24 +336,26 @@ void OtaUpdate::fetch(const Request& request) {
   }
 
   moto::ble::OtaFailure failure = moto::ble::OtaFailure::None;
+  // Bytes read from the body (and hashed), and bytes already in the slot;
+  // the difference is what sits in the stage.
+  std::uint32_t received = 0;
   std::uint32_t written = 0;
+  std::size_t staged = 0;
   bool verified = false;
-  std::uint8_t* buffer =
-      static_cast<std::uint8_t*>(std::malloc(kReadChunkBytes));
+  auto* stage = static_cast<std::uint8_t*>(
+      heap_caps_malloc(kStageBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   mbedtls_sha256_context digest;
   mbedtls_sha256_init(&digest);
 
   const esp_partition_t* slot = esp_ota_get_next_update_partition(nullptr);
   esp_ota_handle_t handle = 0;
   esp_http_client_handle_t client = nullptr;
-  if (buffer == nullptr) {
+  if (stage == nullptr) {
     failure = moto::ble::OtaFailure::NoMemory;
   } else if (slot == nullptr) {
     failure = moto::ble::OtaFailure::ImageRejected;
-  } else if (esp_ota_begin(slot, request.size_bytes == 0
-                                     ? OTA_SIZE_UNKNOWN
-                                     : request.size_bytes,
-                           &handle) != ESP_OK) {
+  } else if (esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &handle) !=
+             ESP_OK) {
     failure = moto::ble::OtaFailure::NoMemory;
   }
 
@@ -282,73 +370,98 @@ void OtaUpdate::fetch(const Request& request) {
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.keep_alive_enable = false;
     client = esp_http_client_init(&config);
-    if (client == nullptr ||
-        esp_http_client_open(client, 0) != ESP_OK) {
-      failure = moto::ble::OtaFailure::Network;
-    }
+    if (client == nullptr) failure = moto::ble::OtaFailure::NoMemory;
   }
+
+  // Writes the stage into the slot. The same lock the tlog recorder takes:
+  // an erase stalls the cache and the I2C bus the IMU sampler reads from.
+  const auto flush = [&]() -> esp_err_t {
+    if (staged == 0) return ESP_OK;
+    const bool guarded = flash_guard_take(2'000);
+    const esp_err_t result = esp_ota_write(handle, stage, staged);
+    if (guarded) flash_guard_give();
+    if (result != ESP_OK) {
+      ESP_LOGE(kTag, "esp_ota_write: %s", esp_err_to_name(result));
+      return result;
+    }
+    written += static_cast<std::uint32_t>(staged);
+    staged = 0;
+    return ESP_OK;
+  };
 
   std::uint64_t total = 0;
-  if (failure == moto::ble::OtaFailure::None) {
-    const std::int64_t declared = esp_http_client_fetch_headers(client);
-    const int status_code = esp_http_client_get_status_code(client);
-    if (status_code != 200) {
-      ESP_LOGE(kTag, "HTTP %d from %s", status_code, request.url);
-      failure = moto::ble::OtaFailure::Network;
-    } else if (declared > static_cast<std::int64_t>(moto::ble::kMaxOtaImageBytes)) {
-      failure = moto::ble::OtaFailure::TooLarge;
-    } else if (request.size_bytes != 0 && declared > 0 &&
-               static_cast<std::uint32_t>(declared) != request.size_bytes) {
-      // The phone stated a size and the server disagrees: the digest cannot
-      // match whatever arrives, so refuse before writing a flash sector.
-      ESP_LOGE(kTag, "size mismatch: command %u, server %lld",
-               static_cast<unsigned>(request.size_bytes),
-               static_cast<long long>(declared));
-      failure = moto::ble::OtaFailure::Network;
-    } else {
-      total = declared > 0 ? static_cast<std::uint64_t>(declared)
-                           : static_cast<std::uint64_t>(request.size_bytes);
-    }
-  }
-
+  int resumes = 0;
+  bool complete = false;
+  std::uint8_t last_percent = 0;
   if (failure == moto::ble::OtaFailure::None) {
     mbedtls_sha256_starts(&digest, 0);
-    std::uint8_t last_percent = 0;
-    while (true) {
-      const int read = esp_http_client_read(
-          client, reinterpret_cast<char*>(buffer),
-          static_cast<int>(kReadChunkBytes));
-      if (read < 0) {
-        failure = moto::ble::OtaFailure::Network;
-        break;
+  }
+  while (failure == moto::ble::OtaFailure::None && !complete) {
+    const Opened opened =
+        open_at(client, request.url, received, request.size_bytes, &total);
+    if (opened.failure == moto::ble::OtaFailure::None) {
+      while (true) {
+        const int want = static_cast<int>(
+            std::min(kReadChunkBytes, kStageBytes - staged));
+        const int read = esp_http_client_read(
+            client, reinterpret_cast<char*>(stage + staged), want);
+        if (read <= 0) break;
+        if (received + static_cast<std::uint32_t>(read) >
+            moto::ble::kMaxOtaImageBytes) {
+          failure = moto::ble::OtaFailure::TooLarge;
+          break;
+        }
+        mbedtls_sha256_update(&digest, stage + staged,
+                              static_cast<std::size_t>(read));
+        staged += static_cast<std::size_t>(read);
+        received += static_cast<std::uint32_t>(read);
+        if (staged == kStageBytes) {
+          const esp_err_t result = flush();
+          if (result != ESP_OK) {
+            failure = write_failure(result);
+            break;
+          }
+        }
+        const std::uint8_t percent = percent_of(received, total);
+        if (percent >= last_percent + kProgressStep ||
+            now_ms() - last_publish_ms_ >= kProgressIntervalMs) {
+          last_percent = percent;
+          publish(moto::ble::OtaState::Downloading,
+                  moto::ble::OtaFailure::None, percent, received);
+        }
       }
-      if (read == 0) break;
-      if (written + static_cast<std::uint32_t>(read) >
-          moto::ble::kMaxOtaImageBytes) {
-        failure = moto::ble::OtaFailure::TooLarge;
-        break;
-      }
-      mbedtls_sha256_update(&digest, buffer, static_cast<std::size_t>(read));
-      // The same lock the tlog recorder takes: an erase stalls the cache and
-      // the I2C bus the IMU sampler reads from.
-      const bool guarded = flash_guard_take(2'000);
-      const esp_err_t write =
-          esp_ota_write(handle, buffer, static_cast<std::size_t>(read));
-      if (guarded) flash_guard_give();
-      if (write != ESP_OK) {
-        ESP_LOGE(kTag, "esp_ota_write: %s", esp_err_to_name(write));
-        failure = moto::ble::OtaFailure::NoMemory;
-        break;
-      }
-      written += static_cast<std::uint32_t>(read);
-      const std::uint8_t percent = percent_of(written, total);
-      if (percent >= last_percent + kProgressStep ||
-          now_ms() - last_publish_ms_ >= kProgressIntervalMs) {
-        last_percent = percent;
-        publish(moto::ble::OtaState::Downloading, moto::ble::OtaFailure::None,
-                percent, written);
-      }
+      if (failure != moto::ble::OtaFailure::None) break;
+      // A clean end and a connection that closed early both read 0, and a
+      // timeout reads -ESP_ERR_HTTP_EAGAIN: the count is what says the body
+      // is all here. Taking every 0 for the end hashed a truncated image and
+      // blamed the file with HashMismatch.
+      complete = total != 0
+                     ? received >= total
+                     : esp_http_client_is_complete_data_received(client);
+      if (complete) break;
+    } else if (!opened.retry) {
+      failure = opened.failure;
+      break;
     }
+    esp_http_client_close(client);
+    if (resumes == kMaxResumes) {
+      failure = moto::ble::OtaFailure::Network;
+      break;
+    }
+    ++resumes;
+    ESP_LOGW(kTag, "body stopped at %u of %llu bytes; resuming (%d/%d)",
+             static_cast<unsigned>(received),
+             static_cast<unsigned long long>(total), resumes, kMaxResumes);
+    // The stall that got us here was silent; say the update is still alive
+    // before the reopen adds its own wait.
+    publish(moto::ble::OtaState::Downloading, moto::ble::OtaFailure::None,
+            percent_of(received, total), received);
+    // The radio may be what dropped: give WifiLink its attempts back.
+    if (!wait_for_network()) failure = moto::ble::OtaFailure::NoWifi;
+  }
+  if (failure == moto::ble::OtaFailure::None) {
+    const esp_err_t result = flush();
+    if (result != ESP_OK) failure = write_failure(result);
   }
 
   if (client != nullptr) {
@@ -359,11 +472,11 @@ void OtaUpdate::fetch(const Request& request) {
   if (failure == moto::ble::OtaFailure::None) {
     std::uint8_t actual[moto::ble::kOtaSha256Bytes] = {};
     mbedtls_sha256_finish(&digest, actual);
-    if (written == 0) {
+    if (received == 0) {
       failure = moto::ble::OtaFailure::Network;
     } else {
       publish(moto::ble::OtaState::Verifying, moto::ble::OtaFailure::None, 100,
-              written);
+              received);
       if (std::memcmp(actual, request.sha256.data(), sizeof(actual)) != 0) {
         ESP_LOGE(kTag, "SHA-256 does not match the command");
         failure = moto::ble::OtaFailure::HashMismatch;
@@ -371,7 +484,7 @@ void OtaUpdate::fetch(const Request& request) {
     }
   }
   mbedtls_sha256_free(&digest);
-  if (buffer != nullptr) std::free(buffer);
+  if (stage != nullptr) heap_caps_free(stage);
 
   if (failure == moto::ble::OtaFailure::None) {
     const esp_err_t ended = esp_ota_end(handle);
@@ -387,14 +500,14 @@ void OtaUpdate::fetch(const Request& request) {
   if (!verified) {
     // Nothing points at this slot, so aborting leaves the running image alone.
     esp_ota_abort(handle);
-    fail(failure, written);
+    fail(failure, received);
     running_.store(false);
     return;
   }
 
   log_heap("after");
   publish(moto::ble::OtaState::Ready, moto::ble::OtaFailure::None, 100,
-          written);
+          received);
   ESP_LOGI(kTag, "image in place (%u bytes); rebooting into %s",
            static_cast<unsigned>(written), slot->label);
   vTaskDelay(pdMS_TO_TICKS(kRebootDelayMs));

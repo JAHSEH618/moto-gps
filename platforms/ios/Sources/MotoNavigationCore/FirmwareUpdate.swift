@@ -206,3 +206,34 @@ public struct FirmwareUpdateStatus: Equatable, Sendable {
         state == .downloading || state == .verifying
     }
 }
+
+/// What the phone concludes on its own when the device never reports how an
+/// update ended: it refused the command, the link died, or it went quiet.
+/// Without these the sheet sat on 传输中 0% with its button disabled. The
+/// device may still be working, so its next OtaStatus overrides any of them.
+public enum FirmwareUpdateProblem: Equatable, Sendable {
+    /// The device answered the OtaCommand with a non-zero Ack status.
+    case refused(ackStatus: UInt8)
+    case linkLost
+    case stalled
+
+    /// The device repeats its status every 2 s while it joins the hotspot.
+    /// Its quietest stretch after that is a TLS open, the header read and
+    /// one read timeout, 15 s each; this outlasts all three.
+    public static let stallSeconds: Double = 90
+
+    public var message: String {
+        switch self {
+        case let .refused(ackStatus):
+            switch ackStatus {
+            case 2: "圆屏拒绝了这次更新：蓝牙还没加密配对，或者圆屏正在进行另一次更新。断开重连后再试。"
+            case 3: "更新命令没有送到圆屏，或者圆屏没能开始更新。请再试一次。"
+            default: "圆屏拒绝了这次更新（Ack 状态 \(ackStatus)）。"
+            }
+        case .linkLost:
+            "蓝牙在更新途中断开，这次的结果不确定。重新连上圆屏后再检查一次。"
+        case .stalled:
+            "圆屏 \(Int(Self.stallSeconds)) 秒没有回报进度，这次更新已放弃。"
+        }
+    }
+}

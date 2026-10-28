@@ -150,4 +150,21 @@ final class FirmwareUpdateTests: XCTestCase {
             XCTAssertNotNil(status.message)
         }
     }
+
+    /// The outcomes the device never reports still end the update with a
+    /// reason, and a refusal says why rather than one sentence for all.
+    func testPhoneSideProblemsExplainThemselves() {
+        let unbonded = FirmwareUpdateProblem.refused(ackStatus: 2)
+        XCTAssertTrue(unbonded.message.contains("配对"))
+        XCTAssertNotEqual(unbonded.message,
+                          FirmwareUpdateProblem.refused(ackStatus: 3).message)
+        XCTAssertTrue(FirmwareUpdateProblem.refused(ackStatus: 9).message
+            .contains("9"))
+        XCTAssertFalse(FirmwareUpdateProblem.linkLost.message.isEmpty)
+        // Three 15 s waits in a row is the longest the device stays silent
+        // while it still works; the watchdog must not fire inside them.
+        XCTAssertGreaterThan(FirmwareUpdateProblem.stallSeconds, 3 * 15)
+        XCTAssertTrue(FirmwareUpdateProblem.stalled.message
+            .contains("\(Int(FirmwareUpdateProblem.stallSeconds))"))
+    }
 }
