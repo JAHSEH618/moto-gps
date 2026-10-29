@@ -7,6 +7,8 @@
 #define MOTO_UI_ROAD_POLYLINE_CAPACITY 40
 #define MOTO_UI_BUILDING_POINT_CAPACITY 192
 #define MOTO_UI_BUILDING_FOOTPRINT_CAPACITY 24
+#define MOTO_UI_AREA_POINT_CAPACITY 128
+#define MOTO_UI_AREA_CAPACITY 12
 #define MOTO_UI_CANVAS_WIDTH 466
 #define MOTO_UI_CANVAS_HEIGHT 466
 
@@ -102,6 +104,20 @@ typedef struct {
     uint8_t building_class;
 } moto_ui_building_span_t;
 
+/* The ground under the streets. Numbered like moto::ble::MapAreaClass. */
+typedef enum {
+    MOTO_UI_AREA_WATER = 0,
+    MOTO_UI_AREA_GREEN = 1,
+    MOTO_UI_AREA_PEDESTRIAN = 2,
+    MOTO_UI_AREA_PARKING = 3,
+} moto_ui_area_class_t;
+
+typedef struct {
+    uint8_t first_point_index;
+    uint8_t point_count;
+    uint8_t area_class;
+} moto_ui_area_span_t;
+
 typedef struct {
     const char *source_name;
     const char *track_title;
@@ -195,6 +211,12 @@ typedef struct {
     uint8_t building_footprint_count;
     moto_ui_building_span_t
         building_footprints[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY];
+    /* Closed outer rings; drawn under the streets on the GTA map whether or
+       not buildings are shown. */
+    uint8_t area_point_count;
+    moto_ui_point_t area_points[MOTO_UI_AREA_POINT_CAPACITY];
+    uint8_t area_count;
+    moto_ui_area_span_t areas[MOTO_UI_AREA_CAPACITY];
     const char *road_name;
     const char *next_road_name;
     /* Device-side attitude telemetry for the PERF / LEAN pages. */

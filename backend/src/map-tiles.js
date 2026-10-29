@@ -21,6 +21,14 @@ const MOTOR_ROADS = new Set([
   "living_street", "service", "unclassified", "road", "track",
 ]);
 
+// Protomaps landuse kinds drawn as green space. Sports pitches and
+// playgrounds stay off: they are small, and as often paved as grass.
+const GREEN_LANDUSE = new Set([
+  "park", "garden", "forest", "wood", "grass", "grassland", "meadow", "scrub",
+  "village_green", "golf_course", "nature_reserve", "national_park",
+  "recreation_ground", "dog_park", "cemetery", "allotments", "wetland",
+]);
+
 export class MapTileError extends Error {
   constructor(code, message, retryable = true) {
     super(message);
@@ -50,10 +58,20 @@ function roadClass(detail) {
   return detail === "service" ? "service" : "other";
 }
 
+// The ground under the streets. Protomaps (basemap v4) has no surface car
+// parks: amenity=parking is neither a landuse nor a water polygon there, so
+// "parking" only appears from a source that has them.
+function areaClass(layerName, kind) {
+  if (layerName === "water") return kind === "fountain" ? null : "water";
+  if (GREEN_LANDUSE.has(kind)) return "green";
+  if (kind === "pedestrian" || kind === "parking") return kind;
+  return null;
+}
+
 export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new Date().toISOString() }) {
   validateTileCoordinates(z, x, y);
   const result = {
-    schema_version: 1, coordinate_system: "GCJ-02", tile: { z, x, y }, roads: [], buildings: [],
+    schema_version: 1, coordinate_system: "GCJ-02", tile: { z, x, y }, roads: [], buildings: [], areas: [],
     source: { provider: "protomaps-openstreetmap", licence: "ODbL-1.0",
       attribution_url: "https://www.openstreetmap.org/copyright", retrieved_at: retrievedAt,
       source_revision: revision, bbox_wgs84: tileBoundsWgs84(z, x, y) },
@@ -79,7 +97,7 @@ export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new
   }
   try {
     const tile = new VectorTile(new PbfReader(data));
-    for (const layerName of ["roads", "buildings"]) {
+    for (const layerName of ["roads", "buildings", "water", "landuse"]) {
       const layer = tile.layers[layerName];
       if (!layer) continue;
       if (layer.length > 50_000) throw new MapTileError("MAP_TILE_TOO_LARGE", "map tile has too many source features");
@@ -94,6 +112,21 @@ export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new
           for (const line of lines) {
             const vertices = points(line);
             if (vertices.length >= 2) result.roads.push({ class: roadClass(detail), points_e6: vertices });
+          }
+        } else if (layerName === "water" || layerName === "landuse") {
+          // Polygons only: streams and ditches also arrive as lines.
+          const kind = areaClass(layerName, String(properties.kind ?? ""));
+          if (feature.type !== 3 || !kind) continue;
+          const geometry = feature.toGeoJSON(x, y, z).geometry;
+          const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+          for (const polygon of polygons) {
+            // Outer ring only. A shoreline too long for one feature is dropped
+            // instead of failing the whole tile: roads and buildings matter more.
+            const ring = polygon[0] ?? [];
+            if (ring.length > 2049) continue;
+            const vertices = points(ring, true);
+            if (new Set(vertices.map((v) => v.join(","))).size < 3) continue;
+            result.areas.push({ class: kind, points_e6: vertices });
           }
         } else {
           // Ignore address points and elevated building parts: footprints use each polygon's outer ring.
@@ -115,7 +148,7 @@ export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new
     if (error instanceof MapTileError) throw error;
     throw new MapTileError("MAP_INVALID_TILE", "map source returned an invalid vector tile");
   }
-  if (result.roads.length + result.buildings.length > 12_000) {
+  if (result.roads.length + result.buildings.length + result.areas.length > 12_000) {
     throw new MapTileError("MAP_TILE_TOO_LARGE", "map tile has too many features");
   }
   if (Buffer.byteLength(JSON.stringify(result)) > MAXIMUM_TILE_BYTES) {

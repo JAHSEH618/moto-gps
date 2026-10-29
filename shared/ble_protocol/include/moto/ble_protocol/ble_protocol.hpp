@@ -55,6 +55,11 @@ constexpr std::size_t kMaxMapSceneRoads = 40;
 constexpr std::size_t kMaxMapSceneRoadPoints = 255;
 constexpr std::size_t kMaxMapSceneBuildings = 24;
 constexpr std::size_t kMaxMapSceneBuildingPoints = 192;
+// Water, green space, pedestrian and parking polygons under the streets. The
+// phone clips each one to the window and simplifies it, so a park that spans
+// the whole disc costs a handful of points, not its OSM outline.
+constexpr std::size_t kMaxMapSceneAreas = 12;
+constexpr std::size_t kMaxMapSceneAreaPoints = 128;
 
 struct ByteView {
   const std::uint8_t* data = nullptr;
@@ -317,6 +322,11 @@ enum Capability : std::uint32_t {
   // the phone advertises it when it reads it, and only such a phone is sent
   // 0x1E.
   CapabilityFirmwareInfo = 1U << 16U,
+  // The device draws MapScene areas. MapScene carries them as an optional
+  // trailing section that an older decoder refuses as TrailingPayload, so the
+  // phone sends areas only to a device with this bit and an empty list to any
+  // other; the scene without areas is byte-for-byte the old layout.
+  CapabilityMapAreas = 1U << 17U,
 };
 
 struct ConnectionStatus {
@@ -565,6 +575,24 @@ struct MapBuildingFootprint {
   bool operator==(const MapBuildingFootprint& rhs) const noexcept;
 };
 
+// The ground the streets are cut through. Parking is a surface lot; a parking
+// garage stays a MapBuildingClass::Parking footprint.
+enum class MapAreaClass : std::uint8_t {
+  Water = 0,
+  Green = 1,
+  Pedestrian = 2,
+  Parking = 3,
+};
+
+struct MapArea {
+  MapAreaClass area_class = MapAreaClass::Green;
+  // The outer ring only: holes are not drawn. The closing point is implicit
+  // and must not repeat points.front().
+  std::vector<GeoPointE6> points;
+
+  bool operator==(const MapArea& rhs) const noexcept;
+};
+
 struct MapScene {
   CoordinateSystem coordinate_system = CoordinateSystem::Gcj02;
   std::uint32_t scene_revision = 0;
@@ -572,6 +600,9 @@ struct MapScene {
   std::uint16_t radius_m = 0;
   std::vector<MapRoadPolyline> roads;
   std::vector<MapBuildingFootprint> buildings;
+  // Empty unless the device advertises CapabilityMapAreas. An empty list is
+  // not written at all, which keeps the pre-area layout for older firmware.
+  std::vector<MapArea> areas;
 
   bool operator==(const MapScene& rhs) const noexcept;
 };

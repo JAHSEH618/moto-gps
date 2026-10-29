@@ -194,6 +194,71 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertTrue(window.buildings.contains { $0.osmWayID == 999 })
     }
 
+    func testAreasAreClippedToTheWindowLargestFirstWithinTheBudget() throws {
+        let origin = OfflineMapPointE6(latitudeE6: 36_680_000, longitudeE6: 117_130_000)
+        // A lake 4 km across whose shore runs through the window, with far
+        // more vertices than the whole area budget.
+        let lake = (0 ..< 400).map { index -> OfflineMapPointE6 in
+            let angle = Double(index) / 400 * 2 * .pi
+            return point(origin, northM: 2_000 * sin(angle), eastM: 1_700 + 2_000 * cos(angle))
+        }
+        // Twenty parks of 40 m x 40 m, more than the area count allows, and a
+        // 5 m planter too small to draw.
+        var areas = [OfflineMapArea(areaClass: "water", points: lake)]
+        for index in 0 ..< 20 {
+            let corner = point(origin, northM: Double(index * 45 - 450), eastM: -300)
+            areas.append(OfflineMapArea(areaClass: "green", points: [
+                corner,
+                point(corner, northM: 0, eastM: 40),
+                point(corner, northM: 40, eastM: 40),
+                point(corner, northM: 40, eastM: 20),
+                point(corner, northM: 40, eastM: 0),
+            ]))
+        }
+        areas.append(OfflineMapArea(areaClass: "pedestrian", points: [
+            origin, point(origin, northM: 0, eastM: 5), point(origin, northM: 5, eastM: 5),
+        ]))
+        var document = makeDocument(origin: origin, roads: [], buildings: [])
+        document.areas = areas
+        let window = InMemoryOfflineMapSceneIndex(document: document).query(
+            around: origin, radiusM: 500, revision: 1
+        )
+
+        XCTAssertEqual(window.areas.count, OfflineMapSceneLimits.areas)
+        XCTAssertLessThanOrEqual(window.areas.reduce(0) { $0 + $1.points.count },
+                                 OfflineMapSceneLimits.areaPoints)
+        XCTAssertEqual(window.areas.first?.areaClass, "water")
+        XCTAssertFalse(window.areas.contains { $0.areaClass == "pedestrian" })
+        let metresPerLatitudeE6 = 111_195.0 / 1_000_000
+        let metresPerLongitudeE6 = metresPerLatitudeE6 * cos(Double(origin.latitudeE6) / 1_000_000 * .pi / 180)
+        for area in window.areas {
+            XCTAssertGreaterThanOrEqual(area.points.count, 3)
+            XCTAssertNotEqual(area.points.first, area.points.last)
+            for vertex in area.points {
+                XCTAssertLessThanOrEqual(abs(Double(vertex.latitudeE6 - origin.latitudeE6)) * metresPerLatitudeE6, 501)
+                XCTAssertLessThanOrEqual(abs(Double(vertex.longitudeE6 - origin.longitudeE6)) * metresPerLongitudeE6, 501)
+            }
+        }
+        // The clipped shore still reaches the window's east edge.
+        let lakeEast = try XCTUnwrap(window.areas.first?.points.map {
+            Double($0.longitudeE6 - origin.longitudeE6) * metresPerLongitudeE6
+        }.max())
+        XCTAssertGreaterThan(lakeEast, 499)
+
+        // The shared codec takes the scene with areas, and an older firmware
+        // gets the same scene without them.
+        XCTAssertEqual(window.makeBLEInput().areas.count, OfflineMapSceneLimits.areas)
+        XCTAssertTrue(window.makeBLEInput(includeAreas: false).areas.isEmpty)
+        let codec = MotoBLEProtocolCodec(maximumFrameSize: 182)
+        XCTAssertFalse(try codec.encodeMapScene(window.makeBLEInput()).isEmpty)
+    }
+
+    func testSceneDocumentsWithoutAreasStillDecode() throws {
+        let document = try loadDocument()
+        XCTAssertTrue(document.areas.isEmpty)
+        XCTAssertFalse(document.roads.isEmpty)
+    }
+
     func testNearbyStreetsAreNotCrowdedOutByDistantMainRoads() {
         let origin = OfflineMapPointE6(latitudeE6: 36_680_000, longitudeE6: 117_130_000)
         // Sixty primaries at the edge of the window, listed first, and ten

@@ -249,6 +249,10 @@ bool valid_map_building_class(MapBuildingClass building_class) {
   return enum_at_most(building_class, MapBuildingClass::Parking);
 }
 
+bool valid_map_area_class(MapAreaClass area_class) {
+  return enum_at_most(area_class, MapAreaClass::Parking);
+}
+
 bool valid_command_kind(DeviceCommandKind kind) {
   switch (kind) {
     case DeviceCommandKind::PageSelected:
@@ -416,12 +420,14 @@ Error validate(const MapScene& value) {
     return Error::OutOfRange;
   }
   if (value.roads.size() > kMaxMapSceneRoads ||
-      value.buildings.size() > kMaxMapSceneBuildings) {
+      value.buildings.size() > kMaxMapSceneBuildings ||
+      value.areas.size() > kMaxMapSceneAreas) {
     return Error::TooManyItems;
   }
 
   std::size_t road_points = 0;
   std::size_t building_points = 0;
+  std::size_t area_points = 0;
   const auto validate_point = [&value](const GeoPointE6& point) {
     if (!valid_geo_point(point)) {
       return false;
@@ -467,6 +473,24 @@ Error validate(const MapScene& value) {
       return Error::TooManyItems;
     }
     for (const GeoPointE6& point : building.points) {
+      if (!validate_point(point)) {
+        return Error::OutOfRange;
+      }
+    }
+  }
+  for (const MapArea& area : value.areas) {
+    if (!valid_map_area_class(area.area_class)) {
+      return Error::InvalidEnum;
+    }
+    if (area.points.size() < 3 || area.points.size() > 255 ||
+        area.points.front() == area.points.back()) {
+      return Error::OutOfRange;
+    }
+    area_points += area.points.size();
+    if (area_points > kMaxMapSceneAreaPoints) {
+      return Error::TooManyItems;
+    }
+    for (const GeoPointE6& point : area.points) {
       if (!validate_point(point)) {
         return Error::OutOfRange;
       }
@@ -863,6 +887,15 @@ BytesResult encode_payload(const T& value) {
       writer.u8(static_cast<std::uint8_t>(building.building_class));
       write_points(building.points);
     }
+    // Optional trailing section: absent, not a zero count, when there are no
+    // areas, so a scene for an older device keeps its old bytes.
+    if (!value.areas.empty()) {
+      writer.u8(static_cast<std::uint8_t>(value.areas.size()));
+      for (const MapArea& area : value.areas) {
+        writer.u8(static_cast<std::uint8_t>(area.area_class));
+        write_points(area.points);
+      }
+    }
   } else if constexpr (std::is_same_v<T, HomeLocation>) {
     writer.u8(static_cast<std::uint8_t>(value.coordinate_system));
     writer.u8(value.has_home ? 1U : 0U);
@@ -1195,6 +1228,33 @@ MessageResult decode_map_scene(ByteView payload) {
         }
         read_points(point_count, building.points);
         value.buildings.push_back(std::move(building));
+      }
+      if (reader.ok() && reader.remaining() > 0) {
+        // The area section. A present section with no areas has a second
+        // encoding of the same scene, so a zero count is refused.
+        const std::size_t area_count = reader.u8();
+        if (reader.ok() &&
+            (area_count == 0 || area_count > kMaxMapSceneAreas)) {
+          reader.fail(area_count == 0 ? Error::OutOfRange
+                                      : Error::TooManyItems);
+        }
+        std::size_t area_point_count = 0;
+        value.areas.reserve(reader.ok() ? area_count : 0);
+        for (std::size_t i = 0; i < area_count && reader.ok(); ++i) {
+          MapArea area;
+          area.area_class = static_cast<MapAreaClass>(reader.u8());
+          const std::size_t point_count = reader.u8();
+          area_point_count += point_count;
+          if (point_count < 3 ||
+              area_point_count > kMaxMapSceneAreaPoints) {
+            reader.fail(area_point_count > kMaxMapSceneAreaPoints
+                            ? Error::TooManyItems
+                            : Error::OutOfRange);
+            break;
+          }
+          read_points(point_count, area.points);
+          value.areas.push_back(std::move(area));
+        }
       }
       reader.require_end();
     }
@@ -1754,11 +1814,16 @@ bool MapBuildingFootprint::operator==(
   return building_class == rhs.building_class && points == rhs.points;
 }
 
+bool MapArea::operator==(const MapArea& rhs) const noexcept {
+  return area_class == rhs.area_class && points == rhs.points;
+}
+
 bool MapScene::operator==(const MapScene& rhs) const noexcept {
   return std::tie(coordinate_system, scene_revision, view_origin, radius_m,
-                  roads, buildings) ==
+                  roads, buildings, areas) ==
          std::tie(rhs.coordinate_system, rhs.scene_revision,
-                  rhs.view_origin, rhs.radius_m, rhs.roads, rhs.buildings);
+                  rhs.view_origin, rhs.radius_m, rhs.roads, rhs.buildings,
+                  rhs.areas);
 }
 
 bool AttitudeSample::operator==(const AttitudeSample& rhs) const noexcept {

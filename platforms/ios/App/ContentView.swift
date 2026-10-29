@@ -323,6 +323,7 @@ struct ContentView: View {
                             route: rideMap.route,
                             roads: rideMap.roads,
                             buildings: rideMap.buildings,
+                            areas: rideMap.areas,
                             progress: rideMap.progress,
                             showsSweep: false,
                             showsHome: rideMap.home != nil,
@@ -760,6 +761,7 @@ struct ContentView: View {
         var route: [CGPoint] = []
         var roads: [[CGPoint]] = []
         var buildings: [[CGPoint]] = []
+        var areas: [MotoRadarArea] = []
         var progress: Double?
         /// Home in radar units (1 = rim), in the same projection as the route.
         var home: CGPoint?
@@ -828,6 +830,14 @@ struct ContentView: View {
                         longitude: Double($0.longitudeE6) / 1_000_000
                     ))
                 }
+            }
+            map.areas = window.areas.map { area in
+                MotoRadarArea(kind: area.areaClass, points: area.points.map {
+                    normalise(offset(
+                        latitude: Double($0.latitudeE6) / 1_000_000,
+                        longitude: Double($0.longitudeE6) / 1_000_000
+                    ))
+                })
             }
         }
         return map

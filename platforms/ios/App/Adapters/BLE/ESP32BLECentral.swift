@@ -259,6 +259,9 @@ final class ESP32BLECentral: NSObject {
     /// one run-loop turn.
     private static let writeWithoutResponsePacingMs: UInt64 = 15
     private static let mapSceneCapability: UInt32 = 1 << 7
+    /// The device draws MapScene areas (protocol bit 17). An older firmware
+    /// refuses a scene that carries them, so it gets the scene without.
+    private static let mapAreasCapability: UInt32 = 1 << 17
     /// The device understands NavigationHeadingCompass (protocol bit 11).
     private static let compassHeadingCapability: UInt32 = 1 << 11
     /// The device takes GnssInput, fixes stamped with when they were taken
@@ -1148,7 +1151,9 @@ final class ESP32BLECentral: NSObject {
         else { return }
 
         guard let frames = encodeDroppingFailure("map scene", {
-            try codec.encodeMapScene(scene.makeBLEInput())
+            try codec.encodeMapScene(scene.makeBLEInput(
+                includeAreas: peerCapabilities & Self.mapAreasCapability != 0
+            ))
         })
         else { return }
         let sequence = codec.lastEncodedSequence
@@ -1156,7 +1161,7 @@ final class ESP32BLECentral: NSObject {
         mapSceneFinalFrame = frames.last
         do {
             try send(frames)
-            trace("map queued revision=\(scene.revision) roads=\(scene.roads.count) buildings=\(scene.buildings.count) frames=\(frames.count)")
+            trace("map queued revision=\(scene.revision) roads=\(scene.roads.count) buildings=\(scene.buildings.count) areas=\(scene.areas.count) frames=\(frames.count)")
             // Keep the latest complete scene so a later BLE reconnection can
             // restore the map even when the motorcycle has not moved 100 m.
         } catch {

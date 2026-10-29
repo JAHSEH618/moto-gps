@@ -49,6 +49,28 @@ final class SurroundingMapStoreTests: XCTestCase {
         XCTAssertThrowsError(try MapTileDocument.decode(JSONSerialization.data(withJSONObject: object), expectedTile: tile))
     }
 
+    func testTileAreasDecodeAndAnUnknownAreaClassIsRefused() throws {
+        let tile = MapTileID(x: 1, y: 2)
+        // A tile cached before the gateway sent areas has no "areas" key.
+        XCTAssertTrue(try MapTileDocument.decode(mapTileTestData(tile), expectedTile: tile).areas.isEmpty)
+
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: mapTileTestData(tile)) as? [String: Any])
+        object["areas"] = [["class": "water", "points_e6": [
+            [40_000_000, -73_000_000], [40_000_100, -73_000_000], [40_000_100, -73_000_200],
+        ]]]
+        let lake = try MapTileDocument.decode(JSONSerialization.data(withJSONObject: object), expectedTile: tile)
+        XCTAssertEqual(lake.areas.map(\.areaClass), ["water"])
+
+        object["areas"] = [["class": "glacier", "points_e6": [
+            [40_000_000, -73_000_000], [40_000_100, -73_000_000], [40_000_100, -73_000_200],
+        ]]]
+        XCTAssertThrowsError(try MapTileDocument.decode(JSONSerialization.data(withJSONObject: object), expectedTile: tile))
+        object["areas"] = [["class": "green", "points_e6": [
+            [40_000_000, -73_000_000], [40_000_100, -73_000_000], [40_000_000, -73_000_000],
+        ]]]
+        XCTAssertThrowsError(try MapTileDocument.decode(JSONSerialization.data(withJSONObject: object), expectedTile: tile))
+    }
+
     func testConcurrentConsumersShareOneTileRequest() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

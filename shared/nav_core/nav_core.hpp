@@ -19,6 +19,10 @@ constexpr std::size_t kRoadContextPointCapacity = 255;
 constexpr std::size_t kRoadContextPolylineCapacity = 40;
 constexpr std::size_t kBuildingContextPointCapacity = 192;
 constexpr std::size_t kBuildingContextFootprintCapacity = 24;
+// Matches kMaxMapSceneAreas / kMaxMapSceneAreaPoints: the ground under the
+// streets, already clipped to the window and simplified by the phone.
+constexpr std::size_t kAreaContextPointCapacity = 128;
+constexpr std::size_t kAreaContextCapacity = 12;
 
 enum class RoadContextClass : std::uint8_t {
   Motorway = 0,
@@ -35,6 +39,14 @@ enum class BuildingContextClass : std::uint8_t {
   Parking = 2,
 };
 
+// Numbered like moto::ble::MapAreaClass.
+enum class AreaContextClass : std::uint8_t {
+  Water = 0,
+  Green = 1,
+  Pedestrian = 2,
+  Parking = 3,
+};
+
 struct RoadContextPolylineSpan {
   std::uint8_t first_point_index = 0;
   std::uint8_t point_count = 0;
@@ -45,6 +57,12 @@ struct BuildingContextFootprintSpan {
   std::uint8_t first_point_index = 0;
   std::uint8_t point_count = 0;
   BuildingContextClass building_class = BuildingContextClass::Generic;
+};
+
+struct AreaContextSpan {
+  std::uint8_t first_point_index = 0;
+  std::uint8_t point_count = 0;
+  AreaContextClass area_class = AreaContextClass::Green;
 };
 
 struct NavCoreConfig {
@@ -132,6 +150,14 @@ struct NavSnapshot {
       building_context_footprints{};
   std::uint8_t building_context_point_count = 0;
   std::uint8_t building_context_footprint_count = 0;
+
+  // MapScene areas (water, green space, pedestrian, parking), on the same
+  // transform. Outer rings with an implicit closing edge, like buildings.
+  bool has_area_context = false;
+  std::array<Gcj02Point, kAreaContextPointCapacity> area_context_points{};
+  std::array<AreaContextSpan, kAreaContextCapacity> area_context_spans{};
+  std::uint8_t area_context_point_count = 0;
+  std::uint8_t area_context_count = 0;
   std::uint32_t map_scene_revision = 0;
 
   std::string route_id;

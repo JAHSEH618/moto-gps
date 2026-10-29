@@ -70,6 +70,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<MotoBLEMapPointInput *> *points;
 @end
 
+/// water, green, pedestrian or parking; any other name is dropped rather
+/// than drawn as the wrong ground. An implicitly closed outer ring.
+@interface MotoBLEMapAreaInput : NSObject
+@property(nonatomic, copy) NSString *className;
+@property(nonatomic, copy) NSArray<MotoBLEMapPointInput *> *points;
+@end
+
 @interface MotoBLEMapSceneInput : NSObject
 @property(nonatomic) uint32_t sceneRevision;
 @property(nonatomic) int32_t originLatitudeE6;
@@ -77,6 +84,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) uint16_t radiusM;
 @property(nonatomic, copy) NSArray<MotoBLEMapRoadInput *> *roads;
 @property(nonatomic, copy) NSArray<MotoBLEMapBuildingInput *> *buildings;
+/// Empty unless the device advertises CapabilityMapAreas.
+@property(nonatomic, copy) NSArray<MotoBLEMapAreaInput *> *areas;
 @end
 
 /// Saved home address (message 0x16). Latitude and longitude must already be

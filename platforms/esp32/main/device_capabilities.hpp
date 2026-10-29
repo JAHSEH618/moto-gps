@@ -28,6 +28,8 @@ inline constexpr std::uint32_t kDeviceCapabilities =
     moto::ble::CapabilityOta |
     // PhoneNavBridge sends FirmwareInfo after each handshake; the firmware
     // screen uses it to tell an installed release from a new one.
-    moto::ble::CapabilityFirmwareInfo;
+    moto::ble::CapabilityFirmwareInfo |
+    // The GTA map fills MapScene areas under the streets.
+    moto::ble::CapabilityMapAreas;
 
 }  // namespace moto::esp32

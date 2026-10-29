@@ -57,6 +57,33 @@ test("real Jinan and Shanghai vector tiles become full GCJ footprints and drivab
   assert.ok(Math.min(...jinan.roads.flatMap((r) => r.points_e6.map((p) => p[1]))) > 117116000);
 });
 
+test("water and landuse polygons become GCJ area rings; lines, fountains and pitches do not", async (t) => {
+  const expected = {
+    jinan: [27044, 12791, { water: 5, green: 24, pedestrian: 6 }],
+    shanghai: [27440, 13389, { water: 3, green: 48, pedestrian: 6 }],
+  };
+  for (const [city, [x, y, counts]] of Object.entries(expected)) {
+    const data = await readFile(new URL(`../fixtures/protomaps-${city}-15-${x}-${y}.mvt`, import.meta.url));
+    const value = transformVectorTile(data, { z: 15, x, y, revision: "20260915" });
+    const actual = {};
+    for (const area of value.areas) {
+      actual[area.class] = (actual[area.class] ?? 0) + 1;
+      assert.ok(area.points_e6.length >= 3 && area.points_e6.length <= 2048);
+      assert.notDeepEqual(area.points_e6[0], area.points_e6.at(-1), "rings are implicitly closed");
+      assert.ok(area.points_e6.every(([lat, lon]) => Number.isInteger(lat) && Number.isInteger(lon)));
+    }
+    // Protomaps has no surface car-park polygons, so no tile here has parking.
+    assert.deepEqual(actual, counts, city);
+  }
+  // A cached tile from before areas is a miss, so the next request rebuilds it.
+  const fresh = transformVectorTile(fixture, { z: 15, x: 27044, y: 12791, revision: "20260915" });
+  const { areas, ...stale } = fresh;
+  assert.ok(areas.length > 0);
+  const cache = new MapDiskCache(await directory(t), 64 * 1024 ** 2);
+  await cache.put("map-v1-0123456789abcdef-15-27044-12791.json", stale);
+  assert.equal(await cache.get("map-v1-0123456789abcdef-15-27044-12791.json", { z: 15, x: 27044, y: 12791 }), null);
+});
+
 test("invalid coordinates, corrupt MVT and oversized tiles never produce successful partial maps", () => {
   for (const point of [[14, 1, 1], [15, -1, 0], [15, 32768, 0], [15, 0.5, 1], [15, NaN, 0]]) {
     assert.throws(() => tileBoundsWgs84(...point), { code: "INVALID_REQUEST" });

@@ -102,6 +102,11 @@ struct MapPalette {
     // and the skyline must not move with them.
     lv_color_t skyline_far;
     lv_color_t skyline_near;
+    // MapScene areas, indexed by moto_ui_area_class_t: water, green space,
+    // pedestrian paving, surface parking. Hue carries water and green; the
+    // two paved kinds are a step either side of the land, so none of them
+    // reaches the brightness of a street.
+    lv_color_t map_area[4];
 };
 
 // GTA III, Liberty City by day: the cover's white field as the paper and the
@@ -147,6 +152,12 @@ constexpr MapPalette kGtaDayPalette = {
     LV_COLOR_MAKE(0x5C, 0x5C, 0x57),
     LV_COLOR_MAKE(0xD6, 0xD2, 0xC8),  // skyline: far towers
     LV_COLOR_MAKE(0xB4, 0xB0, 0xA6),  // skyline: near towers
+    {
+        LV_COLOR_MAKE(0x3B, 0x58, 0x78),  // water: the radar's slate blue
+        LV_COLOR_MAKE(0x4E, 0x6A, 0x3E),  // green: park olive
+        LV_COLOR_MAKE(0x62, 0x5F, 0x57),  // pedestrian: paving, over land
+        LV_COLOR_MAKE(0x45, 0x48, 0x4D),  // parking: cool asphalt, under it
+    },
 };
 
 // GTA III, Liberty City at night: true black, box-art white type, and the
@@ -195,6 +206,12 @@ constexpr MapPalette kGtaNightPalette = {
     // Unused by night: the night skyline is lit towers in building tones.
     LV_COLOR_MAKE(0x2E, 0x2E, 0x2E),
     LV_COLOR_MAKE(0x24, 0x24, 0x24),
+    {
+        LV_COLOR_MAKE(0x18, 0x2A, 0x40),  // water: deep navy
+        LV_COLOR_MAKE(0x1F, 0x3A, 0x22),  // green: dark park
+        LV_COLOR_MAKE(0x2C, 0x2A, 0x26),  // pedestrian: warm paving
+        LV_COLOR_MAKE(0x1C, 0x1E, 0x22),  // parking: below the land
+    },
 };
 
 // Frame colours shared by both themes. Neon pink is the HUD's own colour, the
@@ -405,6 +422,18 @@ struct Ui {
     std::uint8_t nav_building_point_count = 0;
     std::uint8_t nav_building_footprint_count = 0;
     std::uint32_t nav_building_scene_revision = 0;
+    // MapScene areas: one fill layer under the buildings and streets, shown
+    // whenever a scene carries areas (it is not part of the building switch).
+    lv_obj_t *nav_area_fill = nullptr;
+    lv_point_precise_t nav_area_points[MOTO_UI_AREA_POINT_CAPACITY]{};
+    float nav_area_x[MOTO_UI_AREA_POINT_CAPACITY]{};
+    float nav_area_y[MOTO_UI_AREA_POINT_CAPACITY]{};
+    float nav_area_target_x[MOTO_UI_AREA_POINT_CAPACITY]{};
+    float nav_area_target_y[MOTO_UI_AREA_POINT_CAPACITY]{};
+    moto_ui_area_span_t nav_area_spans[MOTO_UI_AREA_CAPACITY]{};
+    std::uint8_t nav_area_point_count = 0;
+    std::uint8_t nav_area_count = 0;
+    std::uint32_t nav_area_scene_revision = 0;
     lv_obj_t *nav_roads[MOTO_UI_ROAD_POLYLINE_CAPACITY]{};
     // One layer under every road: the radar's dark casing. Drawn as a single
     // pass so a later road's casing never cuts across an earlier road.
@@ -723,6 +752,7 @@ void reset_ui_state() {
     ui.nav_route_identity = ~std::uint32_t{0};
     ui.nav_road_scene_revision = ~std::uint32_t{0};
     ui.nav_building_scene_revision = ~std::uint32_t{0};
+    ui.nav_area_scene_revision = ~std::uint32_t{0};
 }
 
 // Every screen that owns the whole widget tree leaves through here. The
@@ -1606,6 +1636,160 @@ void draw_map_line(lv_layer_t *layer, const lv_draw_line_dsc_t &line) {
     layer->_clip_area = original_clip;
 }
 
+// The longest ring either fill layer draws: a building footprint or an area.
+constexpr std::size_t kMaxMapRingPoints =
+    MOTO_UI_BUILDING_POINT_CAPACITY > MOTO_UI_AREA_POINT_CAPACITY
+        ? MOTO_UI_BUILDING_POINT_CAPACITY
+        : MOTO_UI_AREA_POINT_CAPACITY;
+
+// Even-odd scanline fill of one closed ring, `points` in the object's local
+// coordinates and `area` its screen coordinates. Rows outside the layer's
+// clip are skipped, and consecutive rows with the same single span are drawn
+// as one rectangle.
+void fill_polygon_scanlines(lv_layer_t *layer, const lv_area_t &area,
+                            const lv_area_t &clip,
+                            const lv_point_precise_t *points,
+                            std::uint8_t count, float minimum_y,
+                            float maximum_y,
+                            const lv_draw_rect_dsc_t &fill) {
+    const int32_t local_width = area.x2 - area.x1;
+    const int32_t local_height = area.y2 - area.y1;
+    const int32_t clip_left = std::max<int32_t>(0, clip.x1 - area.x1);
+    const int32_t clip_right = std::min<int32_t>(local_width,
+                                                  clip.x2 - area.x1);
+    const int32_t first_row = std::max(
+        std::max<int32_t>(0, clip.y1 - area.y1),
+        static_cast<int32_t>(std::ceil(minimum_y)));
+    const int32_t last_row = std::min(
+        std::min<int32_t>(local_height, clip.y2 - area.y1),
+        static_cast<int32_t>(std::floor(maximum_y)));
+    // Most OSM footprints are rectangles: the scanline span repeats for
+    // every row. Merge identical spans into one rectangle instead of
+    // submitting one draw task per row. The old row-per-rect path was the
+    // dominant cost of a moving map frame once building fills were on.
+    bool run_active = false;
+    int32_t run_x1 = 0;
+    int32_t run_x2 = 0;
+    int32_t run_y1 = 0;
+    int32_t run_y2 = 0;
+    const auto flush_run = [&]() {
+        if(!run_active) return;
+        lv_area_t run_area = {
+            area.x1 + run_x1,
+            area.y1 + run_y1,
+            area.x1 + run_x2,
+            area.y1 + run_y2,
+        };
+        lv_draw_rect(layer, &fill, &run_area);
+        run_active = false;
+    };
+    for(int32_t row = first_row; row <= last_row; ++row) {
+        const float scan_y = static_cast<float>(row) + 0.5F;
+        float crossings[kMaxMapRingPoints];
+        std::size_t crossing_count = 0;
+        for(std::uint8_t i = 0; i < count; ++i) {
+            const std::uint8_t next = (i + 1U) % count;
+            const float y0 = static_cast<float>(points[i].y);
+            const float y1 = static_cast<float>(points[next].y);
+            if(!((y0 <= scan_y && y1 > scan_y) ||
+                 (y1 <= scan_y && y0 > scan_y))) {
+                continue;
+            }
+            const float t = (scan_y - y0) / (y1 - y0);
+            crossings[crossing_count++] =
+                static_cast<float>(points[i].x) +
+                t * (static_cast<float>(points[next].x) -
+                     static_cast<float>(points[i].x));
+        }
+        std::sort(crossings, crossings + crossing_count);
+        if(crossing_count == 2) {
+            const int32_t first_column = std::max(
+                clip_left, static_cast<int32_t>(
+                               std::ceil(crossings[0] - 0.5F)));
+            const int32_t last_column = std::min(
+                clip_right, static_cast<int32_t>(
+                                std::floor(crossings[1] - 0.5F)));
+            if(first_column <= last_column) {
+                if(run_active && run_x1 == first_column &&
+                   run_x2 == last_column && run_y2 + 1 == row) {
+                    run_y2 = row;
+                } else {
+                    flush_run();
+                    run_active = true;
+                    run_x1 = first_column;
+                    run_x2 = last_column;
+                    run_y1 = row;
+                    run_y2 = row;
+                }
+                continue;
+            }
+        }
+        flush_run();
+        for(std::size_t i = 0; i + 1 < crossing_count; i += 2) {
+            const int32_t first_column = std::max(
+                clip_left, static_cast<int32_t>(
+                               std::ceil(crossings[i] - 0.5F)));
+            const int32_t last_column = std::min(
+                clip_right, static_cast<int32_t>(
+                                std::floor(crossings[i + 1] - 0.5F)));
+            if(first_column > last_column) continue;
+            lv_area_t row_area = {
+                area.x1 + first_column,
+                area.y1 + row,
+                area.x1 + last_column,
+                area.y1 + row,
+            };
+            lv_draw_rect(layer, &fill, &row_area);
+        }
+    }
+    flush_run();
+}
+
+// Areas are filled by scanline, edge to edge with no antialiasing: exact,
+// the same whatever part of the map a refresh redraws, and even-odd, so a
+// ring the phone's clip left crossing itself still fills. LVGL's triangles
+// are antialiased on every edge, so a triangulated area showed the land
+// through each internal cut.
+void draw_area_fills(lv_event_t *event) {
+    if(lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
+    if(ui.nav_area_point_count < 3 || ui.nav_area_count == 0) return;
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const lv_area_t clip = layer->_clip_area;
+
+    lv_draw_rect_dsc_t fill;
+    lv_draw_rect_dsc_init(&fill);
+    fill.bg_opa = LV_OPA_COVER;
+    fill.radius = 0;
+    fill.border_width = 0;
+
+    for(std::uint8_t a = 0; a < ui.nav_area_count; ++a) {
+        const moto_ui_area_span_t span = ui.nav_area_spans[a];
+        const lv_point_precise_t *points =
+            &ui.nav_area_points[span.first_point_index];
+        const std::uint8_t count = span.point_count;
+        float minimum_x = points[0].x;
+        float maximum_x = points[0].x;
+        float minimum_y = points[0].y;
+        float maximum_y = points[0].y;
+        for(std::uint8_t i = 1; i < count; ++i) {
+            minimum_x = std::min(minimum_x, points[i].x);
+            maximum_x = std::max(maximum_x, points[i].x);
+            minimum_y = std::min(minimum_y, points[i].y);
+            maximum_y = std::max(maximum_y, points[i].y);
+        }
+        if(area.x1 + maximum_x < clip.x1 || area.x1 + minimum_x > clip.x2) {
+            continue;
+        }
+        fill.bg_color =
+            ui.palette.map_area[span.area_class < 4U ? span.area_class : 0U];
+        fill_polygon_scanlines(layer, area, clip, points, count, minimum_y,
+                               maximum_y, fill);
+    }
+}
+
 void draw_building_fills(lv_event_t *event) {
     if(lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
     if(ui.nav_building_point_count < 3 ||
@@ -1621,11 +1805,6 @@ void draw_building_fills(lv_event_t *event) {
     // columns outside that dirty area instead of submitting thousands of
     // fully clipped rectangles to LVGL.
     const lv_area_t clip = layer->_clip_area;
-    const int32_t local_width = area.x2 - area.x1;
-    const int32_t local_height = area.y2 - area.y1;
-    const int32_t clip_left = std::max<int32_t>(0, clip.x1 - area.x1);
-    const int32_t clip_right = std::min<int32_t>(local_width,
-                                                  clip.x2 - area.x1);
 
     lv_draw_rect_dsc_t fill;
     lv_draw_rect_dsc_init(&fill);
@@ -1738,92 +1917,8 @@ void draw_building_fills(lv_event_t *event) {
             continue;
         }
 
-        const int32_t first_row = std::max(
-            std::max<int32_t>(0, clip.y1 - area.y1),
-            static_cast<int32_t>(std::ceil(minimum_y)));
-        const int32_t last_row = std::min(
-            std::min<int32_t>(local_height, clip.y2 - area.y1),
-            static_cast<int32_t>(std::floor(maximum_y)));
-        // Most OSM footprints are rectangles: the scanline span repeats for
-        // every row. Merge identical spans into one rectangle instead of
-        // submitting one draw task per row. The old row-per-rect path was the
-        // dominant cost of a moving map frame once building fills were on.
-        bool run_active = false;
-        int32_t run_x1 = 0;
-        int32_t run_x2 = 0;
-        int32_t run_y1 = 0;
-        int32_t run_y2 = 0;
-        const auto flush_run = [&]() {
-            if(!run_active) return;
-            lv_area_t run_area = {
-                area.x1 + run_x1,
-                area.y1 + run_y1,
-                area.x1 + run_x2,
-                area.y1 + run_y2,
-            };
-            lv_draw_rect(layer, &fill, &run_area);
-            run_active = false;
-        };
-        for(int32_t row = first_row; row <= last_row; ++row) {
-            const float scan_y = static_cast<float>(row) + 0.5F;
-            float crossings[MOTO_UI_BUILDING_POINT_CAPACITY];
-            std::size_t crossing_count = 0;
-            for(std::uint8_t i = 0; i < count; ++i) {
-                const std::uint8_t next = (i + 1U) % count;
-                const float y0 = static_cast<float>(points[i].y);
-                const float y1 = static_cast<float>(points[next].y);
-                if(!((y0 <= scan_y && y1 > scan_y) ||
-                     (y1 <= scan_y && y0 > scan_y))) {
-                    continue;
-                }
-                const float t = (scan_y - y0) / (y1 - y0);
-                crossings[crossing_count++] =
-                    static_cast<float>(points[i].x) +
-                    t * (static_cast<float>(points[next].x) -
-                         static_cast<float>(points[i].x));
-            }
-            std::sort(crossings, crossings + crossing_count);
-            if(crossing_count == 2) {
-                const int32_t first_column = std::max(
-                    clip_left, static_cast<int32_t>(
-                                   std::ceil(crossings[0] - 0.5F)));
-                const int32_t last_column = std::min(
-                    clip_right, static_cast<int32_t>(
-                                    std::floor(crossings[1] - 0.5F)));
-                if(first_column <= last_column) {
-                    if(run_active && run_x1 == first_column &&
-                       run_x2 == last_column && run_y2 + 1 == row) {
-                        run_y2 = row;
-                    } else {
-                        flush_run();
-                        run_active = true;
-                        run_x1 = first_column;
-                        run_x2 = last_column;
-                        run_y1 = row;
-                        run_y2 = row;
-                    }
-                    continue;
-                }
-            }
-            flush_run();
-            for(std::size_t i = 0; i + 1 < crossing_count; i += 2) {
-                const int32_t first_column = std::max(
-                    clip_left, static_cast<int32_t>(
-                                   std::ceil(crossings[i] - 0.5F)));
-                const int32_t last_column = std::min(
-                    clip_right, static_cast<int32_t>(
-                                    std::floor(crossings[i + 1] - 0.5F)));
-                if(first_column > last_column) continue;
-                lv_area_t row_area = {
-                    area.x1 + first_column,
-                    area.y1 + row,
-                    area.x1 + last_column,
-                    area.y1 + row,
-                };
-                lv_draw_rect(layer, &fill, &row_area);
-            }
-        }
-        flush_run();
+        fill_polygon_scanlines(layer, area, clip, points, count, minimum_y,
+                               maximum_y, fill);
         packed_index += static_cast<std::size_t>(count) + 1U;
     }
 }
@@ -1970,6 +2065,21 @@ bool apply_road_geometry_frame(bool rebind_lines = true) {
         }
     }
     return pixels_changed || rebind_lines;
+}
+
+bool apply_area_geometry_frame() {
+    if(ui.nav_area_point_count < 3 || ui.nav_area_count == 0) return false;
+    bool pixels_changed = false;
+    for(std::uint8_t i = 0; i < ui.nav_area_point_count; ++i) {
+        const auto x = static_cast<lv_value_precise_t>(
+            std::lround(ui.nav_area_x[i]));
+        const auto y = static_cast<lv_value_precise_t>(
+            std::lround(ui.nav_area_y[i]));
+        pixels_changed = pixels_changed || ui.nav_area_points[i].x != x ||
+                         ui.nav_area_points[i].y != y;
+        ui.nav_area_points[i] = {x, y};
+    }
+    return pixels_changed;
 }
 
 bool apply_building_geometry_frame(bool rebind_lines = true) {
@@ -2124,6 +2234,32 @@ void route_motion_tick(lv_timer_t *) {
         }
     }
 
+    bool areas_moved = false;
+    for(std::uint8_t index = 0; index < ui.nav_area_count; ++index) {
+        const moto_ui_area_span_t span = ui.nav_area_spans[index];
+        bool area_moved = false;
+        for(std::uint8_t j = 0; j < span.point_count; ++j) {
+            const std::uint8_t i = span.first_point_index + j;
+            const float dx = ui.nav_area_target_x[i] - ui.nav_area_x[i];
+            const float dy = ui.nav_area_target_y[i] - ui.nav_area_y[i];
+            if(std::abs(dx) < 0.08F && std::abs(dy) < 0.08F) {
+                ui.nav_area_x[i] = ui.nav_area_target_x[i];
+                ui.nav_area_y[i] = ui.nav_area_target_y[i];
+                continue;
+            }
+            include(ui.nav_area_x[i], ui.nav_area_y[i]);
+            ui.nav_area_x[i] += dx * blend;
+            ui.nav_area_y[i] += dy * blend;
+            include(ui.nav_area_x[i], ui.nav_area_y[i]);
+            area_moved = true;
+        }
+        if(area_moved) {
+            include_span(ui.nav_area_x, ui.nav_area_y,
+                         span.first_point_index, span.point_count);
+            areas_moved = true;
+        }
+    }
+
     bool buildings_moved = false;
     for(std::uint8_t footprint = 0;
         footprint < ui.nav_building_footprint_count; ++footprint) {
@@ -2157,6 +2293,9 @@ void route_motion_tick(lv_timer_t *) {
     // common map layer. Rebinding every road/building used to invalidate the
     // same 466x232 region dozens of times per frame.
     bool pixels_changed = false;
+    if(areas_moved) {
+        pixels_changed = apply_area_geometry_frame() || pixels_changed;
+    }
     if(buildings_moved) {
         pixels_changed = apply_building_geometry_frame(false) || pixels_changed;
     }
@@ -2292,6 +2431,65 @@ void apply_building_visibility() {
         } else {
             lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
         }
+    }
+}
+
+void update_area_geometry(const moto_ui_state_t *state) {
+    const std::uint8_t point_count = std::min<std::uint8_t>(
+        state->area_point_count, MOTO_UI_AREA_POINT_CAPACITY);
+    std::uint8_t area_count = std::min<std::uint8_t>(
+        state->area_count, MOTO_UI_AREA_CAPACITY);
+    // The presenter only emits spans inside its points; a span that is not
+    // ends the list here rather than reading past the copied points.
+    for(std::uint8_t i = 0; i < area_count; ++i) {
+        const moto_ui_area_span_t span = state->areas[i];
+        if(span.point_count < 3 || span.first_point_index >= point_count ||
+           span.point_count > point_count - span.first_point_index) {
+            area_count = i;
+            break;
+        }
+    }
+    if(point_count < 3 || area_count == 0) {
+        // Like buildings: 40 Hz motion frames without areas must not repaint.
+        const bool had_areas = ui.nav_area_count != 0;
+        ui.nav_area_point_count = 0;
+        ui.nav_area_count = 0;
+        ui.nav_area_scene_revision = state->map_scene_revision;
+        if(had_areas) invalidate_map();
+        return;
+    }
+
+    bool spans_changed =
+        ui.nav_area_scene_revision != state->map_scene_revision ||
+        ui.nav_area_point_count != point_count ||
+        ui.nav_area_count != area_count;
+    for(std::uint8_t i = 0; i < point_count; ++i) {
+        ui.nav_area_target_x[i] = state->area_points[i].x;
+        ui.nav_area_target_y[i] = state->area_points[i].y;
+    }
+    for(std::uint8_t i = 0; i < area_count; ++i) {
+        const moto_ui_area_span_t next = state->areas[i];
+        spans_changed = spans_changed ||
+                        ui.nav_area_spans[i].first_point_index !=
+                            next.first_point_index ||
+                        ui.nav_area_spans[i].point_count != next.point_count ||
+                        ui.nav_area_spans[i].area_class != next.area_class;
+        ui.nav_area_spans[i] = next;
+    }
+
+    const bool snap = spans_changed || ui.reduce_motion;
+    ui.nav_area_point_count = point_count;
+    ui.nav_area_count = area_count;
+    ui.nav_area_scene_revision = state->map_scene_revision;
+    if(snap) {
+        for(std::uint8_t i = 0; i < point_count; ++i) {
+            ui.nav_area_x[i] = ui.nav_area_target_x[i];
+            ui.nav_area_y[i] = ui.nav_area_target_y[i];
+        }
+    }
+    if(snap) {
+        apply_area_geometry_frame();
+        invalidate_map();
     }
 }
 
@@ -2936,6 +3134,7 @@ void update_home_blip(const moto_ui_state_t *state);
 void update_radar_ring(const moto_ui_state_t *state);
 
 void update_navigation(const moto_ui_state_t *state) {
+    update_area_geometry(state);
     update_building_geometry(state);
     update_road_geometry(state);
     update_route_geometry(state);
@@ -3778,6 +3977,18 @@ void create_navigation_page() {
     lv_obj_set_style_bg_color(ui.nav_map_background,
                               ui.palette.map_land, 0);
     lv_obj_set_style_bg_opa(ui.nav_map_background, LV_OPA_COVER, 0);
+
+    // Water, parks and paving lie on the land, under every footprint and
+    // street. The layer draws nothing until a scene carries areas.
+    ui.nav_area_fill = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_area_fill);
+    lv_obj_remove_flag(ui.nav_area_fill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(ui.nav_area_fill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.nav_area_fill, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_pos(ui.nav_area_fill, 0, 0);
+    lv_obj_add_event_cb(ui.nav_area_fill, draw_area_fills, LV_EVENT_DRAW_MAIN,
+                        nullptr);
 
     // Footprint fills sit beneath the building outlines. A triangle fan from
     // the footprint centroid gives the GTA-style flat blocks without a
@@ -5617,6 +5828,7 @@ void moto_ui_gta::set_motion_state(const moto_ui_state_t *state) {
     // remain untouched so LVGL submits a small, bounded dirty region.
     if(ui.page == MOTO_UI_PAGE_NAVIGATION) {
         ui.nav_heading_presmoothed = state->heading_presmoothed != 0;
+        update_area_geometry(state);
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);

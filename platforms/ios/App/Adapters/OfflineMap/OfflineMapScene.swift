@@ -54,6 +54,20 @@ struct OfflineMapBuilding: Codable, Equatable, Sendable {
     }
 }
 
+/// Water, green space, pedestrian paving or a surface car park: the ground
+/// the streets are cut through. The outer ring only, implicitly closed.
+struct OfflineMapArea: Codable, Equatable, Sendable {
+    static let classes: Set<String> = ["water", "green", "pedestrian", "parking"]
+
+    let areaClass: String
+    let points: [OfflineMapPointE6]
+
+    private enum CodingKeys: String, CodingKey {
+        case areaClass = "class"
+        case points = "points_e6"
+    }
+}
+
 struct OfflineMapSource: Codable, Equatable, Sendable {
     let provider: String
     let licence: String
@@ -79,6 +93,8 @@ enum OfflineMapSceneLimits {
     static let roadPoints = 255
     static let buildings = 24
     static let buildingPoints = 192
+    static let areas = 12
+    static let areaPoints = 128
 }
 
 struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
@@ -89,9 +105,11 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
     let radiusM: UInt16
     let roads: [OfflineMapRoad]
     let buildings: [OfflineMapBuilding]
+    /// Absent from documents written before areas existed.
+    var areas: [OfflineMapArea] = []
     let source: OfflineMapSource
 
-    private enum CodingKeys: String, CodingKey {
+    fileprivate enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case coordinateSystem = "coordinate_system"
         case sceneRevision = "scene_revision"
@@ -99,6 +117,7 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
         case radiusM = "radius_m"
         case roads
         case buildings
+        case areas
         case source
     }
 
@@ -120,6 +139,22 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
     }
 }
 
+extension OfflineMapSceneDocument {
+    // In an extension so the memberwise initializer survives.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        coordinateSystem = try values.decode(String.self, forKey: .coordinateSystem)
+        sceneRevision = try values.decode(UInt32.self, forKey: .sceneRevision)
+        viewOrigin = try values.decode(OfflineMapPointE6.self, forKey: .viewOrigin)
+        radiusM = try values.decode(UInt16.self, forKey: .radiusM)
+        roads = try values.decode([OfflineMapRoad].self, forKey: .roads)
+        buildings = try values.decode([OfflineMapBuilding].self, forKey: .buildings)
+        areas = try values.decodeIfPresent([OfflineMapArea].self, forKey: .areas) ?? []
+        source = try values.decode(OfflineMapSource.self, forKey: .source)
+    }
+}
+
 enum OfflineMapSceneError: Error, Equatable {
     case resourceMissing
     case unsupportedFormat
@@ -132,6 +167,8 @@ struct OfflineMapSceneWindow: Equatable, Sendable {
     let radiusM: UInt16
     let roads: [OfflineMapRoad]
     let buildings: [OfflineMapBuilding]
+    /// Already clipped to the window and simplified, within the wire budget.
+    var areas: [OfflineMapArea] = []
 }
 
 protocol OfflineMapSceneQuerying: Sendable {
@@ -182,14 +219,21 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         let bounds: Bounds
     }
 
+    private struct IndexedArea: Sendable {
+        let value: OfflineMapArea
+        let bounds: Bounds
+    }
+
     private let roads: [IndexedRoad]
     private let buildings: [IndexedBuilding]
+    private let areas: [IndexedArea]
 
     init(document: OfflineMapSceneDocument) {
         roads = document.roads.map { IndexedRoad(value: $0, bounds: Bounds(points: $0.points)) }
         buildings = document.buildings.map {
             IndexedBuilding(value: $0, bounds: Bounds(points: $0.points))
         }
+        areas = document.areas.map { IndexedArea(value: $0, bounds: Bounds(points: $0.points)) }
     }
 
     func query(
@@ -285,8 +329,46 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             origin: origin,
             radiusM: UInt16(radius),
             roads: selectedRoads,
-            buildings: selectedBuildings
+            buildings: selectedBuildings,
+            areas: selectedAreas(around: origin, radiusM: radius)
         )
+    }
+
+    /// A park or a lake is usually far larger than the window, and its OSM
+    /// outline far longer than the whole area budget. Each ring is clipped to
+    /// the window's square, then simplified, coarser until it fits; the
+    /// largest areas go first because they change the most of the screen.
+    private func selectedAreas(
+        around origin: OfflineMapPointE6,
+        radiusM: Double
+    ) -> [OfflineMapArea] {
+        let candidates = areas
+            .filter { $0.bounds.intersects(origin: origin, radiusM: radiusM * 2.squareRoot()) }
+            .compactMap { indexed -> (area: OfflineMapArea, areaM2: Double)? in
+                let clipped = Self.clippedRing(indexed.value.points, around: origin, halfSideM: radiusM)
+                guard clipped.count >= 3 else { return nil }
+                let areaM2 = Self.polygonAreaM2(clipped, around: origin)
+                guard areaM2 >= Self.minimumAreaM2 else { return nil }
+                return (OfflineMapArea(areaClass: indexed.value.areaClass, points: clipped), areaM2)
+            }
+            .sorted { $0.areaM2 > $1.areaM2 }
+
+        var selected: [OfflineMapArea] = []
+        var pointCount = 0
+        for candidate in candidates {
+            guard selected.count < OfflineMapSceneLimits.areas else { break }
+            let budget = min(Self.areaPointCap, OfflineMapSceneLimits.areaPoints - pointCount)
+            guard budget >= 3 else { break }
+            var ring: [OfflineMapPointE6] = []
+            for tolerance in Self.areaToleranceStepsM {
+                ring = Self.simplifiedRing(candidate.area.points, around: origin, toleranceM: tolerance)
+                if ring.count <= budget { break }
+            }
+            guard ring.count >= 3, ring.count <= budget else { continue }
+            selected.append(OfflineMapArea(areaClass: candidate.area.areaClass, points: ring))
+            pointCount += ring.count
+        }
+        return selected
     }
 
     private static func clippedRuns(
@@ -339,6 +421,93 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         return pointInPolygon(origin, points)
     }
 
+    /// 400 m² is about 11 × 11 px on the round screen: smaller is noise.
+    private static let minimumAreaM2 = 400.0
+    /// No single area may take more than this share of the 128-point budget.
+    private static let areaPointCap = 48
+    /// An area edge is a fill boundary, not a street the rider follows: 3 m
+    /// (under 2 px) to start, coarser only for a ring that would not fit.
+    private static let areaToleranceStepsM: [Double] = [3, 6, 12, 24, 48]
+
+    /// Sutherland-Hodgman against the square of half-side `halfSideM` around
+    /// the origin, in local metres. The result may run along the square's
+    /// edges where the area continues off screen, which is what fills it to
+    /// the edge of the window.
+    private static func clippedRing(
+        _ points: [OfflineMapPointE6],
+        around origin: OfflineMapPointE6,
+        halfSideM: Double
+    ) -> [OfflineMapPointE6] {
+        var ring = points.map { localMetres($0, around: origin) }
+        let planes: [(inside: ((Double, Double)) -> Bool, cut: ((Double, Double), (Double, Double)) -> (Double, Double))] = [
+            ({ $0.0 >= -halfSideM }, { a, b in edgePoint(a, b, x: -halfSideM) }),
+            ({ $0.0 <= halfSideM }, { a, b in edgePoint(a, b, x: halfSideM) }),
+            ({ $0.1 >= -halfSideM }, { a, b in edgePoint(a, b, y: -halfSideM) }),
+            ({ $0.1 <= halfSideM }, { a, b in edgePoint(a, b, y: halfSideM) }),
+        ]
+        for plane in planes {
+            guard let last = ring.last else { break }
+            var output: [(Double, Double)] = []
+            var previous = last
+            for current in ring {
+                let currentInside = plane.inside(current)
+                if currentInside != plane.inside(previous) {
+                    output.append(plane.cut(previous, current))
+                }
+                if currentInside { output.append(current) }
+                previous = current
+            }
+            ring = output
+        }
+        var result: [OfflineMapPointE6] = []
+        for point in ring.map({ e6(fromLocal: $0, around: origin) }) where result.last != point {
+            result.append(point)
+        }
+        while result.count > 1, result.first == result.last { result.removeLast() }
+        return result
+    }
+
+    private static func edgePoint(
+        _ a: (Double, Double),
+        _ b: (Double, Double),
+        x: Double? = nil,
+        y: Double? = nil
+    ) -> (Double, Double) {
+        if let x {
+            let t = (x - a.0) / (b.0 - a.0)
+            return (x, a.1 + t * (b.1 - a.1))
+        }
+        let y = y ?? 0
+        let t = (y - a.1) / (b.1 - a.1)
+        return (a.0 + t * (b.0 - a.0), y)
+    }
+
+    private static func e6(
+        fromLocal point: (Double, Double),
+        around origin: OfflineMapPointE6
+    ) -> OfflineMapPointE6 {
+        let metresPerLatitudeE6 = 111_195.0 / 1_000_000
+        let latitudeRadians = Double(origin.latitudeE6) / 1_000_000 * .pi / 180
+        let metresPerLongitudeE6 = metresPerLatitudeE6 * cos(latitudeRadians)
+        return OfflineMapPointE6(
+            latitudeE6: origin.latitudeE6 &+ Int32((point.1 / metresPerLatitudeE6).rounded()),
+            longitudeE6: origin.longitudeE6 &+ Int32((point.0 / metresPerLongitudeE6).rounded())
+        )
+    }
+
+    /// Douglas-Peucker over the closed ring: the first point is repeated at
+    /// the end so the closing edge is simplified too, then dropped again.
+    private static func simplifiedRing(
+        _ points: [OfflineMapPointE6],
+        around origin: OfflineMapPointE6,
+        toleranceM: Double
+    ) -> [OfflineMapPointE6] {
+        guard points.count > 3, let first = points.first else { return points }
+        var ring = simplified(points + [first], around: origin, toleranceM: toleranceM)
+        ring.removeLast()
+        return ring
+    }
+
     /// What the round screen can show before the next scene arrives: about
     /// 360 m around the rider (0.57 px/m inside the 205 px ring) plus the
     /// 100 m the rider may travel before the phone refreshes.
@@ -356,7 +525,8 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
     /// runs still meet the edge of the window where they did.
     private static func simplified(
         _ points: [OfflineMapPointE6],
-        around origin: OfflineMapPointE6
+        around origin: OfflineMapPointE6,
+        toleranceM: Double = simplifyToleranceM
     ) -> [OfflineMapPointE6] {
         guard points.count > 2 else { return points }
         let local = points.map { localMetres($0, around: origin) }
@@ -383,7 +553,7 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
                     farthest = index
                 }
             }
-            if farthestDistance > simplifyToleranceM {
+            if farthestDistance > toleranceM {
                 keep[farthest] = true
                 stack.append((first, farthest))
                 stack.append((farthest, last))
@@ -573,7 +743,9 @@ final class OfflineMapSceneCoordinator {
 }
 
 extension OfflineMapSceneWindow {
-    func makeBLEInput() -> MotoBLEMapSceneInput {
+    /// `includeAreas` is the device's CapabilityMapAreas: an older firmware
+    /// refuses a MapScene that carries them, so it is sent the scene without.
+    func makeBLEInput(includeAreas: Bool = true) -> MotoBLEMapSceneInput {
         let input = MotoBLEMapSceneInput()
         input.sceneRevision = revision
         input.originLatitudeE6 = origin.latitudeE6
@@ -601,6 +773,17 @@ extension OfflineMapSceneWindow {
             }
             return value
         }
+        input.areas = includeAreas ? areas.map { area in
+            let value = MotoBLEMapAreaInput()
+            value.className = area.areaClass
+            value.points = area.points.map { point in
+                let value = MotoBLEMapPointInput()
+                value.latitudeE6 = point.latitudeE6
+                value.longitudeE6 = point.longitudeE6
+                return value
+            }
+            return value
+        } : []
         return input
     }
 }

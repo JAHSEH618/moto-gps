@@ -52,11 +52,14 @@ struct MapTileDocument: Codable, Sendable {
     let tile: MapTileID
     let roads: [OfflineMapRoad]
     let buildings: [OfflineMapBuilding]
+    /// Absent from tiles cached before the gateway sent areas; those are
+    /// replaced by the daily refresh.
+    var areas: [OfflineMapArea] = []
     let source: OfflineMapSource
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version", coordinateSystem = "coordinate_system"
-        case tile, roads, buildings, source
+        case tile, roads, buildings, areas, source
     }
 
     static let maximumBytes = 8 * 1_024 * 1_024
@@ -66,7 +69,7 @@ struct MapTileDocument: Codable, Sendable {
         let value = try JSONDecoder().decode(Self.self, from: data)
         guard expectedTile.isValid, value.tile == expectedTile,
               value.schemaVersion == 1, value.coordinateSystem == "GCJ-02",
-              value.roads.count + value.buildings.count <= 12_000,
+              value.roads.count + value.buildings.count + value.areas.count <= 12_000,
               value.source.provider.count <= 1_024,
               value.source.licence.count <= 1_024,
               value.source.attributionURL.count <= 2_048,
@@ -88,9 +91,27 @@ struct MapTileDocument: Codable, Sendable {
               value.buildings.allSatisfy({
                   buildingClasses.contains($0.buildingClass) && ($0.name?.count ?? 0) <= 1_024 &&
                   validPoints($0.points, minimum: 3) && $0.points.first != $0.points.last
+              }),
+              value.areas.allSatisfy({
+                  OfflineMapArea.classes.contains($0.areaClass) &&
+                  validPoints($0.points, minimum: 3) && $0.points.first != $0.points.last
               })
         else { throw SurroundingMapError.invalidResponse }
         return value
+    }
+}
+
+extension MapTileDocument {
+    // In an extension so the memberwise initializer survives.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        coordinateSystem = try values.decode(String.self, forKey: .coordinateSystem)
+        tile = try values.decode(MapTileID.self, forKey: .tile)
+        roads = try values.decode([OfflineMapRoad].self, forKey: .roads)
+        buildings = try values.decode([OfflineMapBuilding].self, forKey: .buildings)
+        areas = try values.decodeIfPresent([OfflineMapArea].self, forKey: .areas) ?? []
+        source = try values.decode(OfflineMapSource.self, forKey: .source)
     }
 }
 
@@ -604,8 +625,10 @@ final class SurroundingMapStore: ObservableObject {
     private func emit(documents: [MapTileDocument], origin: OfflineMapPointE6) -> Bool {
         var roads: [OfflineMapRoad] = []
         var buildings: [OfflineMapBuilding] = []
+        var areas: [OfflineMapArea] = []
         var roadKeys: Set<RoadKey> = []
         var buildingKeys: Set<RoadKey> = []
+        var areaKeys: Set<RoadKey> = []
         for road in documents.flatMap(\.roads) {
             if roadKeys.insert(RoadKey(id: road.osmWayID, kind: road.roadClass, points: road.points)).inserted {
                 roads.append(road)
@@ -616,18 +639,25 @@ final class SurroundingMapStore: ObservableObject {
                 buildings.append(building)
             }
         }
+        // A park across a tile seam arrives as one piece per tile, each with
+        // the tile's buffer; the pieces overlap in the same colour.
+        for area in documents.flatMap(\.areas) {
+            if areaKeys.insert(RoadKey(id: nil, kind: area.areaClass, points: area.points)).inserted {
+                areas.append(area)
+            }
+        }
         revision &+= 1
         if revision == 0 { revision = 1 }
         let document = OfflineMapSceneDocument(schemaVersion: 1, coordinateSystem: "GCJ-02",
                                               sceneRevision: revision, viewOrigin: origin, radiusM: 500,
-                                              roads: roads, buildings: buildings,
+                                              roads: roads, buildings: buildings, areas: areas,
                                               source: OfflineMapSource(provider: "map-tiles", licence: "ODbL-1.0",
                                                                        attributionURL: "https://www.openstreetmap.org/copyright",
                                                                        retrievedAt: "", bboxWGS84: nil))
         let window = InMemoryOfflineMapSceneIndex(document: document).query(around: origin, radiusM: 500, revision: revision)
         latestWindow = window
         onScene?(window)
-        return !window.roads.isEmpty || !window.buildings.isEmpty
+        return !window.roads.isEmpty || !window.buildings.isEmpty || !window.areas.isEmpty
     }
 
     private static func distance(_ first: OfflineMapPointE6, _ second: OfflineMapPointE6) -> Double {

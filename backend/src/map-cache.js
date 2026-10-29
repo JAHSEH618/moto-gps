@@ -12,6 +12,8 @@ export function isValidCachedTile(value, { z, x, y }) {
     value.coordinate_system === "GCJ-02" &&
     value.tile?.z === z && value.tile?.x === x && value.tile?.y === y &&
     Array.isArray(value.roads) && Array.isArray(value.buildings) &&
+    // Tiles cached before areas existed are misses, so they are rebuilt with them.
+    Array.isArray(value.areas) &&
     Number.isFinite(Date.parse(value.source?.retrieved_at)) &&
     typeof value.source?.source_revision === "string" && value.source.source_revision !== "";
 }

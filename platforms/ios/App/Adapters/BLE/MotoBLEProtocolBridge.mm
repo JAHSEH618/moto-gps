@@ -182,6 +182,21 @@ moto::ble::MapBuildingClass MapBuildingClassFromName(NSString *name) {
   return moto::ble::MapBuildingClass::Generic;
 }
 
+bool MapAreaClassFromName(NSString *name, moto::ble::MapAreaClass *area_class) {
+  if ([name isEqualToString:@"water"]) {
+    *area_class = moto::ble::MapAreaClass::Water;
+  } else if ([name isEqualToString:@"green"]) {
+    *area_class = moto::ble::MapAreaClass::Green;
+  } else if ([name isEqualToString:@"pedestrian"]) {
+    *area_class = moto::ble::MapAreaClass::Pedestrian;
+  } else if ([name isEqualToString:@"parking"]) {
+    *area_class = moto::ble::MapAreaClass::Parking;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 moto::ble::MapScene MapSceneFromInput(MotoBLEMapSceneInput *input) {
   moto::ble::MapScene scene;
   scene.scene_revision = input.sceneRevision;
@@ -206,6 +221,16 @@ moto::ble::MapScene MapSceneFromInput(MotoBLEMapSceneInput *input) {
       building.points.push_back({point.latitudeE6, point.longitudeE6});
     }
     scene.buildings.push_back(std::move(building));
+  }
+  scene.areas.reserve(input.areas.count);
+  for (MotoBLEMapAreaInput *source in input.areas) {
+    moto::ble::MapArea area;
+    if (!MapAreaClassFromName(source.className, &area.area_class)) continue;
+    area.points.reserve(source.points.count);
+    for (MotoBLEMapPointInput *point in source.points) {
+      area.points.push_back({point.latitudeE6, point.longitudeE6});
+    }
+    scene.areas.push_back(std::move(area));
   }
   return scene;
 }
@@ -410,12 +435,24 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 }
 @end
 
+@implementation MotoBLEMapAreaInput
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    _className = @"green";
+    _points = @[];
+  }
+  return self;
+}
+@end
+
 @implementation MotoBLEMapSceneInput
 - (instancetype)init {
   self = [super init];
   if (self) {
     _roads = @[];
     _buildings = @[];
+    _areas = @[];
   }
   return self;
 }

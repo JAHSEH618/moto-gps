@@ -61,6 +61,25 @@
         }
       }
     },
+    "areas": {
+      "description": "Optional. Water, green space, pedestrian paving and surface car parks: outer rings, implicitly closed, clipped to the window.",
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "points_e6"],
+        "properties": {
+          "class": { "enum": ["water", "green", "pedestrian", "parking"] },
+          "points_e6": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 128,
+            "items": { "$ref": "#/$defs/point" }
+          }
+        }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,

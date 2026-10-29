@@ -273,6 +273,13 @@ struct MotoStatusBand<Right: View>: View {
 
 // MARK: - Radar
 
+/// Water, green space or paving from the map window, in the radar's
+/// normalised space. `kind` is the OfflineMapArea class name.
+struct MotoRadarArea: Equatable {
+    var kind: String
+    var points: [CGPoint]
+}
+
 /// The signature shape: the handlebar screen, repeated on the phone.
 /// Circle only — no card, no shadow. Texture lives inside the clip.
 struct MotoRadar: View {
@@ -283,6 +290,8 @@ struct MotoRadar: View {
     /// replaces the abstract grid: a live route over invented streets is a lie.
     var roads: [[CGPoint]] = []
     var buildings: [[CGPoint]] = []
+    /// The ground under the footprints and streets, as the handlebar draws it.
+    var areas: [MotoRadarArea] = []
     /// 0…1 route progress. Rides the outside of the ring, so it is never
     /// mistaken for a second data layer inside the map.
     var progress: Double?
@@ -432,6 +441,23 @@ struct MotoRadar: View {
     /// the route. This is the same geometry the handlebar renders.
     private var mapContext: some View {
         Canvas { context, size in
+            // The same hues as the abstract hero: water and park are the only
+            // colours inside the circle, and Original keeps them grey. Paving
+            // and car parks read as blocks.
+            for area in areas {
+                guard area.points.count > 2 else { continue }
+                var path = Path()
+                path.addLines(area.points.map {
+                    CGPoint(x: $0.x * size.width, y: $0.y * size.height)
+                })
+                path.closeSubpath()
+                let colour: Color = switch area.kind {
+                case "water": theme == .original ? palette.mapBlock2 : palette.mapWater
+                case "green": theme == .original ? palette.mapBlock : palette.mapPark
+                default: palette.mapBlock
+                }
+                context.fill(path, with: .color(colour), style: FillStyle(eoFill: true))
+            }
             for footprint in buildings {
                 guard footprint.count > 2 else { continue }
                 var path = Path()

@@ -10,6 +10,7 @@ function tile(z, x, y, overrides = {}) {
     tile: { z, x, y },
     roads: [{ class: "residential", points_e6: [[1, 2], [3, 4]] }],
     buildings: [],
+    areas: [],
     source: {
       provider: "protomaps-openstreetmap",
       licence: "ODbL-1.0",

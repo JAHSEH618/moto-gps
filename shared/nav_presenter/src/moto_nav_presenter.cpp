@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 namespace moto::nav {
 namespace {
@@ -328,6 +329,45 @@ void project_building_context(const NavSnapshot& snapshot,                      
       static_cast<std::uint8_t>(accepted_footprints);
 }
 
+void project_area_context(const NavSnapshot& snapshot,
+                          const MapTransform& transform,
+                          moto_ui_state_t& output) {
+  output.area_point_count = 0;
+  output.area_count = 0;
+  if (!snapshot.has_route_view || !snapshot.has_area_context ||
+      snapshot.area_context_point_count < 3 ||
+      snapshot.area_context_count == 0) {
+    return;
+  }
+
+  const std::size_t point_count = std::min<std::size_t>(
+      snapshot.area_context_point_count, MOTO_UI_AREA_POINT_CAPACITY);
+  const std::size_t area_count = std::min<std::size_t>(
+      snapshot.area_context_count, MOTO_UI_AREA_CAPACITY);
+  for (std::size_t index = 0; index < point_count; ++index) {
+    output.area_points[index] =
+        project_map_point(snapshot.area_context_points[index], transform);
+  }
+
+  std::size_t accepted_areas = 0;
+  for (std::size_t index = 0; index < area_count; ++index) {
+    const AreaContextSpan& span = snapshot.area_context_spans[index];
+    const std::size_t first = span.first_point_index;
+    const std::size_t count = span.point_count;
+    if (count < 3 || first >= point_count || count > point_count - first) {
+      continue;
+    }
+    output.areas[accepted_areas] = {
+        static_cast<std::uint8_t>(first),
+        static_cast<std::uint8_t>(count),
+        static_cast<std::uint8_t>(span.area_class),
+    };
+    ++accepted_areas;
+  }
+  output.area_point_count = static_cast<std::uint8_t>(point_count);
+  output.area_count = static_cast<std::uint8_t>(accepted_areas);
+}
+
 void map_attitude(const NavSnapshot& snapshot, moto_ui_state_t& output) {
   const bool attitude_valid =
       snapshot.has_attitude && std::isfinite(snapshot.lean_deg) &&
@@ -354,7 +394,12 @@ void map_attitude(const NavSnapshot& snapshot, moto_ui_state_t& output) {
 
 }  // namespace
 
-NavPresenter::NavPresenter() { update(NavSnapshot{}); }
+NavPresenter::NavPresenter() {
+  // ~10 KB with its map window: on the heap, once, rather than in the frame
+  // of whatever task constructs the presenter (app_main's 16 KB stack).
+  const auto empty = std::make_unique<NavSnapshot>();
+  update(*empty);
+}
 
 void NavPresenter::update(const NavSnapshot& snapshot) {
   road_name_.clear();
@@ -430,13 +475,14 @@ void NavPresenter::update_motion(const NavSnapshot& snapshot) {
 void NavPresenter::project_map(const NavSnapshot& snapshot) {
   projected_heading_deg_ = snapshot.heading_deg;
   projected_origin_ = snapshot.route_view_origin;
-  // Route, roads and buildings share one rider-centred transform. Besides
-  // guaranteeing exact layer alignment, this avoids repeating trigonometry
-  // hundreds of times on every high-rate IMU frame.
+  // Route, roads, buildings and areas share one rider-centred transform.
+  // Besides guaranteeing exact layer alignment, this avoids repeating
+  // trigonometry hundreds of times on every high-rate IMU frame.
   const MapTransform transform = map_transform(snapshot);
   project_route_view(snapshot, transform, ui_state_);
   project_road_context(snapshot, transform, ui_state_);
   project_building_context(snapshot, transform, ui_state_);
+  project_area_context(snapshot, transform, ui_state_);
   project_home(snapshot, transform, ui_state_);
 }
 
