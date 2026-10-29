@@ -71,8 +71,8 @@ struct MapPalette {
     lv_color_t coral;
     // Type that sits on the map instead of the paper.
     lv_color_t map_ink;
-    // The halo behind a display numeral: the inverse of `ink`, so the figure
-    // separates from whatever it is printed over.
+    // The inverse of `ink`: the casing under the Speed·G envelope, so the
+    // line separates from the rings it crosses.
     lv_color_t outline;
     // Filled plates. The fill and the ink that goes on it travel together, so
     // a theme cannot invert one without the other.
@@ -271,6 +271,9 @@ constexpr std::uint16_t kPerfDefaultTargetKph = 100;
 // perf_target_line value while the line reads STOP TO ARM.
 constexpr std::uint16_t kPerfHintLine = 0xFFFF;
 constexpr int kPerfSegmentCount = 12;
+// The speed slab under the compass and the friction circle: the chord at its
+// bottom edge (y +122 design, 30 tall) is the width that stays inside r 195.
+constexpr int kSpeedSlabWidth = 122;
 // Every page that clears something on a hold uses this one duration: the
 // Lean peaks, the Speed·G envelope and the 0-100 best.
 constexpr std::uint32_t kHoldToClearMs = 2'000;
@@ -305,9 +308,9 @@ enum class TextRole : std::uint8_t {
     Ink = 0,
     Muted,
     Accent,
-    // Poster-scale numerals: same colour as Ink, heavier casing.
+    // Poster-scale numerals, in the palette's HUD colour.
     Display,
-    // Type printed on the map rather than on the paper.
+    // Type printed on the map rather than on the paper: the one cased role.
     MapInk,
     OnAccent,
     OnSlab,
@@ -805,39 +808,82 @@ lv_color_t role_color(TextRole role) {
     }
 }
 
-// Use this instead of make_label() for any string that must survive a theme
-// switch. The colour is resolved now and again on every theme change.
-void apply_text_outline(lv_obj_t *label, TextRole role) {
-    // The casing is the inverse of the type colour: black behind cream type at
-    // night, paper behind ink type by day. Without that rule a display numeral
-    // disappears into the horizon or the map it is printed over.
-    int width = 0;
-    lv_color_t color = ui.palette.outline;
-    switch(role) {
-        case TextRole::Display: width = px(5); break;
-        case TextRole::Ink:
-        case TextRole::Accent:
-        case TextRole::MapInk: width = px(2); break;
-        case TextRole::OnAccent:
-        case TextRole::OnSlab:
-        case TextRole::Muted:
-        default: width = 0; break;
-    }
-    if(role == TextRole::MapInk) {
-        // Type on the map keeps the game HUD's black casing in both themes.
-        color = kOutlineBlack;
-        width = px(3);
-    }
-    lv_obj_set_style_text_outline_stroke_color(label, color, 0);
-    lv_obj_set_style_text_outline_stroke_width(label, width, 0);
-    lv_obj_set_style_text_outline_stroke_opa(
-        label, width > 0 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+// Cased HUD type. The casing is stamped, not styled: LVGL 9.5 strokes
+// text_outline_stroke_* only for FreeType outline glyphs, and every face here
+// is a generated bitmap font, so that style painted nothing on the board, in
+// the Web build or in the PPM dumps (all three share config/lv_conf.h). The
+// string is drawn again in the casing colour at eight offsets one casing width
+// out, before LVGL draws the face over it.
+//
+// Only type printed over something other than its own paper is cased. The
+// old outline style cased ink and display numerals in the paper colour, which
+// changes no pixel on the paper they sit on; stamping it would cost eight
+// glyph passes of a 176 px numeral per redraw for nothing. Type on the map is
+// cased in both papers: without it the route and the streets run straight
+// into the distance numerals.
+//
+// The casing is the inverse of the face, picked when it is drawn: the game
+// HUD's black behind cream type, the map's paper colour behind dark type. The
+// status line is printed in the palette's accent, which is black by day, and
+// a black casing swallowed it whole.
+constexpr std::int32_t kTextCasingPx = px(3);
+
+lv_color_t casing_behind(lv_color_t face) {
+    const unsigned luma = face.red * 299U + face.green * 587U +
+                          face.blue * 114U;
+    return luma >= 128U * 1000U ? kOutlineBlack : ui.palette.map_ink;
 }
 
+void stamp_text_casing(lv_event_t *event) {
+    lv_obj_t *label = lv_event_get_current_target_obj(event);
+    if(lv_event_get_code(event) == LV_EVENT_REFR_EXT_DRAW_SIZE) {
+        lv_event_set_ext_draw_size(event, kTextCasingPx);
+        return;
+    }
+    const char *text = lv_label_get_text(label);
+    if(text == nullptr || text[0] == '\0') return;
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_draw_label_dsc_t dsc;
+    lv_draw_label_dsc_init(&dsc);
+    dsc.base.layer = layer;
+    lv_obj_init_draw_label_dsc(label, LV_PART_MAIN, &dsc);
+    dsc.text = text;
+    dsc.color = casing_behind(dsc.color);
+    // Lay the string out as lv_label lays out the face, or a centred line
+    // lands a few pixels off its own casing.
+    if(lv_obj_get_style_width(label, LV_PART_MAIN) == LV_SIZE_CONTENT &&
+       lv_obj_get_style_max_width(label, LV_PART_MAIN) == LV_COORD_MAX) {
+        dsc.flag = static_cast<lv_text_flag_t>(dsc.flag | LV_TEXT_FLAG_FIT);
+    }
+    lv_area_t coords;
+    lv_obj_get_content_coords(label, &coords);
+    // Diagonal stamps sit at width/sqrt(2): the casing is round at a
+    // glyph's corners instead of squared off.
+    constexpr std::int32_t w = kTextCasingPx;
+    constexpr std::int32_t d = (w * 7 + 5) / 10;
+    const lv_point_t offsets[] = {{-w, 0}, {w, 0},  {0, -w}, {0, w},
+                                  {-d, -d}, {d, -d}, {-d, d}, {d, d}};
+    for(const lv_point_t &offset : offsets) {
+        lv_area_t at = coords;
+        lv_area_move(&at, offset.x, offset.y);
+        lv_draw_label(layer, &dsc, &at);
+    }
+}
+
+void case_text(lv_obj_t *label) {
+    lv_obj_add_event_cb(label, stamp_text_casing, LV_EVENT_DRAW_MAIN_BEGIN,
+                        nullptr);
+    lv_obj_add_event_cb(label, stamp_text_casing, LV_EVENT_REFR_EXT_DRAW_SIZE,
+                        nullptr);
+    lv_obj_refresh_ext_draw_size(label);
+}
+
+// Use this instead of make_label() for any string that must survive a theme
+// switch. The colour is resolved now and again on every theme change.
 lv_obj_t *make_text(lv_obj_t *parent, const lv_font_t *font, TextRole role,
                     const char *text) {
     lv_obj_t *label = make_label(parent, font, role_color(role), text);
-    apply_text_outline(label, role);
+    if(role == TextRole::MapInk) case_text(label);
     if(ui.themed_text_count < kThemedTextCapacity) {
         ui.themed_text[ui.themed_text_count].object = label;
         ui.themed_text[ui.themed_text_count].role = role;
@@ -1072,7 +1118,6 @@ void apply_text_colors() {
         const ThemedText slot = ui.themed_text[i];
         if(slot.object != nullptr) {
             lv_obj_set_style_text_color(slot.object, role_color(slot.role), 0);
-            apply_text_outline(slot.object, slot.role);
         }
     }
     apply_debug_hidden();
@@ -1500,6 +1545,15 @@ void gesture_event(lv_event_t *) {
     lv_indev_wait_release(indev);
 }
 
+// Every street, casing and route segment goes through here, and LVGL already
+// antialiases the diagonals: with LV_DRAW_SW_COMPLEX (on for the board, the
+// Web build and the native suite) a skewed lv_draw_line is cut by two line
+// masks that give each crossing pixel its fractional coverage. So there is no
+// rasterizer of our own (map AA slice B, closed 2026-10-29). What LVGL does
+// not give is sub-pixel position: endpoints truncate to whole pixels, so a
+// slow street steps a pixel at a time. Reopen that only if the panel shows
+// the crawl, or a capacity map runs slow in `ui dbg`: the masks are the cost
+// there (host: ~0.7 ms a frame for a city, ~6.5 ms for 40 skewed streets).
 void draw_map_line(lv_layer_t *layer, const lv_draw_line_dsc_t &line) {
     const lv_area_t original_clip = layer->_clip_area;
     lv_area_t visible{
@@ -3816,10 +3870,13 @@ void create_navigation_page() {
     lv_obj_add_event_cb(ui.nav_marker, draw_vehicle_marker,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
 
+    // The chord at the line's top edge, less the casing: a status that fills
+    // the box keeps its casing inside r 195. At 240 wide and y 44 the box
+    // ran out to r 235, past the glass.
     ui.nav_status = make_text(page, &moto_font_display_24, TextRole::MapInk, "");
-    lv_obj_set_width(ui.nav_status, px(240));
+    lv_obj_set_width(ui.nav_status, px(139));
     lv_obj_set_style_text_align(ui.nav_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(ui.nav_status, LV_ALIGN_TOP_MID, 0, px(44));
+    lv_obj_align(ui.nav_status, LV_ALIGN_TOP_MID, 0, px(50));
 
     // The next action is the navigation page's single visual hero. The short
     // road window above is deliberately quieter and contains no fake side
@@ -3886,7 +3943,8 @@ void create_navigation_page() {
     lv_obj_set_style_bg_opa(ui.nav_home_hint, LV_OPA_80, 0);
     lv_obj_set_style_pad_hor(ui.nav_home_hint, px(6), 0);
     lv_obj_set_style_pad_ver(ui.nav_home_hint, px(2), 0);
-    lv_obj_align(ui.nav_home_hint, LV_ALIGN_TOP_MID, 0, px(40));
+    // At y 40 the box's top corners reached r 196.
+    lv_obj_align(ui.nav_home_hint, LV_ALIGN_TOP_MID, 0, px(42));
     lv_obj_add_flag(ui.nav_home_hint, LV_OBJ_FLAG_HIDDEN);
     ui.nav_home_hint_timer = lv_timer_create(hide_home_hint, kHomeHintMs,
                                              nullptr);
@@ -3994,7 +4052,9 @@ void create_navigation_page() {
     constexpr int kPagerW = 284;
     constexpr int kPagerH = 60;
     constexpr int kPagerX = MOTO_UI_CANVAS_WIDTH / 2 - kPagerW / 2;
-    constexpr int kPagerY = 92;  // the first row where the body fits the glass
+    // The first row where the body's rounded corners stay inside r 195; at
+    // 92 they reached r 196.
+    constexpr int kPagerY = 94;
     lv_obj_t *pager = box(cover_layer, kPagerX, kPagerY, kPagerW, kPagerH,
                           kPagerBody);
     lv_obj_set_style_radius(pager, 10, 0);
@@ -4040,7 +4100,8 @@ void create_navigation_page() {
     // near zero. Two lines in every state.
     ui.nav_lifecycle_title = make_text(cover_layer, &moto_font_display_72,
                                        TextRole::Ink, "CONNECT\nPHONE");
-    lv_obj_set_width(ui.nav_lifecycle_title, px(300));
+    // The chord at the box's corners; the widest line, READY TO, is ~270.
+    lv_obj_set_width(ui.nav_lifecycle_title, px(282));
     lv_obj_set_style_text_align(ui.nav_lifecycle_title,
                                 LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_letter_space(ui.nav_lifecycle_title, 0, 0);
@@ -4153,7 +4214,7 @@ void create_compass_page() {
     lv_obj_set_style_text_letter_space(ui.compass_heading, px(2), 0);
     lv_obj_align(ui.compass_heading, LV_ALIGN_CENTER, 0, px(64));
 
-    lv_obj_t *speed = make_slab(page, "0 KM/H", 150, 30);
+    lv_obj_t *speed = make_slab(page, "0 KM/H", kSpeedSlabWidth, 30);
     lv_obj_align(speed, LV_ALIGN_CENTER, 0, px(122));
     ui.compass_speed = lv_obj_get_child(speed, 0);
 }
@@ -4216,14 +4277,17 @@ void create_performance_page() {
     ui.perf_strip = lv_obj_create(page);
     lv_obj_remove_style_all(ui.perf_strip);
     lv_obj_clear_flag(ui.perf_strip, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.perf_strip, px(284), px(16));
+    // Twelve segments on a 22 px pitch: the strip's bottom corners stay
+    // inside r 195. On a 24 px pitch its end segments reached r 205 and
+    // printed on the casing.
+    lv_obj_set_size(ui.perf_strip, px(kPerfSegmentCount * 22 - 4), px(16));
     lv_obj_align(ui.perf_strip, LV_ALIGN_CENTER, 0, px(62));
     for(int i = 0; i < kPerfSegmentCount; ++i) {
         lv_obj_t *segment = lv_obj_create(ui.perf_strip);
         lv_obj_remove_style_all(segment);
         lv_obj_clear_flag(segment, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_size(segment, px(20), px(16));
-        lv_obj_set_pos(segment, px(i * 24), 0);
+        lv_obj_set_size(segment, px(18), px(16));
+        lv_obj_set_pos(segment, px(i * 22), 0);
         lv_obj_set_style_bg_color(segment, ui.palette.ink, 0);
         lv_obj_set_style_bg_opa(segment, LV_OPA_20, 0);
         ui.perf_segments[i] = segment;
@@ -4957,7 +5021,7 @@ void create_gg_page() {
     lv_obj_set_name_static(ui.gg_live, "moto-gg-live");
     lv_obj_align(ui.gg_live, LV_ALIGN_TOP_MID, 0, px(34));
 
-    lv_obj_t *speed = make_slab(page, "0 KM/H", 130, 30);
+    lv_obj_t *speed = make_slab(page, "0 KM/H", kSpeedSlabWidth, 30);
     lv_obj_align(speed, LV_ALIGN_CENTER, 0, px(122));
     ui.gg_speed = lv_obj_get_child(speed, 0);
 
@@ -5016,11 +5080,14 @@ void create_music_page() {
 
     ui.music_title = make_text(page, &moto_font_display_40_cjk,
                                TextRole::Display, "NIGHT RIDE");
-    lv_obj_set_width(ui.music_title, px(288));
+    // The chord at the title's top edge. At 288 wide and left-aligned the
+    // first character printed at x 48, half under the casing.
+    lv_obj_set_width(ui.music_title, px(264));
+    lv_obj_set_style_text_align(ui.music_title, LV_TEXT_ALIGN_CENTER, 0);
     // A long title runs across the plate like a station ident instead of
-    // stacking into the artist line. One line, always: the label grows to the
-    // rendered face's line height (the CJK fallback is the taller one), never
-    // to a second line.
+    // stacking into the artist line (LVGL drops the centring while it
+    // scrolls). One line, always: the label grows to the rendered face's line
+    // height (the CJK fallback is the taller one), never to a second line.
     lv_label_set_long_mode(ui.music_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_align(ui.music_title, LV_ALIGN_TOP_MID, 0, px(110));
 
@@ -5036,7 +5103,9 @@ void create_music_page() {
     lv_obj_t *deck = lv_obj_create(page);
     lv_obj_remove_style_all(deck);
     lv_obj_clear_flag(deck, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(deck, px(260), px(64));
+    // 248 wide keeps the block's bottom corners inside r 195; at 260 they
+    // reached r 200.
+    lv_obj_set_size(deck, px(248), px(64));
     lv_obj_align(deck, LV_ALIGN_CENTER, 0, px(52));
     lv_obj_set_style_bg_color(deck, ui.palette.slab, 0);
     lv_obj_set_style_bg_opa(deck, LV_OPA_COVER, 0);
@@ -5090,7 +5159,8 @@ void create_music_page() {
     // Like is a mode, not a transport key: it lives on the plate row.
     lv_obj_t *like = lv_button_create(page);
     ui.music_buttons[3] = like;
-    lv_obj_set_size(like, px(70), px(26));
+    // 68 wide: at 70 the key's top-right corner sat a pixel past r 195.
+    lv_obj_set_size(like, px(68), px(26));
     lv_obj_set_pos(like, px(212), px(68));
     lv_obj_set_style_radius(like, 0, 0);
     lv_obj_set_style_bg_color(like, ui.palette.accent, 0);
@@ -5259,7 +5329,6 @@ void moto_ui_gta::show_boot_screen(void) {
     // A poster in both themes: GTA III's cream logo cased in black. Ink
     // letters by day disappeared into the dark panels.
     const lv_color_t letter = kLimitFace;
-    const lv_color_t casing = kOutlineBlack;
     const struct {
         const char *text;
         int y;
@@ -5272,10 +5341,10 @@ void moto_ui_gta::show_boot_screen(void) {
         lv_obj_align(drop, LV_ALIGN_CENTER, px(5), word.y + px(5));
         lv_obj_t *face = make_label(logo, &moto_font_wordmark_132, letter,
                                     word.text);
-        lv_obj_set_style_text_outline_stroke_color(face, casing, 0);
-        lv_obj_set_style_text_outline_stroke_width(face, px(3), 0);
-        lv_obj_set_style_text_outline_stroke_opa(face, LV_OPA_COVER, 0);
         lv_obj_set_style_text_letter_space(face, word.spacing, 0);
+        // A static frame: eight stamps of a 132 px face cost nothing a rider
+        // waits on.
+        case_text(face);
         lv_obj_align(face, LV_ALIGN_CENTER, 0, word.y);
     }
     lv_obj_add_flag(logo, LV_OBJ_FLAG_HIDDEN);
@@ -5318,10 +5387,6 @@ void moto_ui_gta::show_power_off_screen(void) {
     lv_obj_t *brand = make_label(ui.screen, &moto_font_display_40,
                                  LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), "MOTO");
     lv_obj_set_style_text_letter_space(brand, px(4), 0);
-    lv_obj_set_style_text_outline_stroke_color(
-        brand, LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), 0);
-    lv_obj_set_style_text_outline_stroke_width(brand, px(2), 0);
-    lv_obj_set_style_text_outline_stroke_opa(brand, LV_OPA_COVER, 0);
     lv_obj_align(brand, LV_ALIGN_CENTER, 0, px(-18));
 
     lv_obj_t *status = make_label(ui.screen, &moto_font_display_18,

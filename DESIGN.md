@@ -304,7 +304,7 @@ size that competes.
 
 | Role | Size | Colour |
 |---|---|---|
-| Hero numeral | 176 | `ink`, halo = `outline` |
+| Hero numeral | 176 | `ink`; no halo on paper (type over the map is cased black) |
 | Unit / title | 40 | `ink` or `on_accent` |
 | Plate + label | 24 | `on_accent` / `on_slab` |
 | Micro (nav status, kicker) | 18 | `map_ink` / `on_slab` |
