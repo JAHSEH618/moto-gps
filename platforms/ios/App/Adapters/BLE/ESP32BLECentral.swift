@@ -347,6 +347,13 @@ final class ESP32BLECentral: NSObject {
         return value
     }()
 
+    /// Whether the rider has answered the system Bluetooth alert. The alert
+    /// comes with the (lazy) central, so the app connects at launch only when
+    /// connecting cannot ask.
+    static var hasBluetoothDecision: Bool {
+        CBManager.authorization != .notDetermined
+    }
+
     func toggleConnection() {
         switch snapshot.connection {
         case .connected, .connecting, .scanning:

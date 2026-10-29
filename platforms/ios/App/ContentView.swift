@@ -57,7 +57,9 @@ struct ContentView: View {
         .onChange(of: model.isNavigationActive) { _, active in
             if active { searchFocused = false }
         }
-        .sheet(isPresented: $showsDeviceDetails) { deviceDetails }
+        .sheet(isPresented: $showsDeviceDetails) {
+            deviceDetails.onAppear(perform: model.deviceDetailsDidAppear)
+        }
         .sheet(isPresented: $showsThemeSettings) { themeSettings }
         .sheet(isPresented: $showsMapDownloads) {
             MapDownloadsView(
@@ -1045,6 +1047,7 @@ struct ContentView: View {
     private var searchLocationStatus: String {
         switch model.searchLocationStatus {
         case .available: return "已获取"
+        case .notRequested: return "搜索时请求"
         case .preparing: return "获取中"
         case .permissionDenied: return "未获授权"
         case .unavailable: return "暂不可用"

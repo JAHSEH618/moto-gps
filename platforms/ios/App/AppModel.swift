@@ -82,7 +82,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var recentPlaces: [PlaceSearchResult] = []
     @Published private(set) var isSearchingPlaces = false
     @Published private(set) var placeSearchFailure: String?
-    @Published private(set) var searchLocationStatus: SearchLocationBiasStatus = .preparing
+    @Published private(set) var searchLocationStatus: SearchLocationBiasStatus = .notRequested
     @Published private(set) var routePreviewCandidates: [RoutePreviewCandidate] = []
     @Published private(set) var selectedRoutePreviewID: String?
     @Published private(set) var routePreviewOrigin: WGS84Point?
@@ -103,6 +103,11 @@ final class AppModel: ObservableObject {
     private var routePreviewTask: Task<Void, Never>?
     private var routePreviewRequestID: UInt32 = 1
     private var routePreviewGeneration: UInt64 = 0
+    /// Offline UI checks cannot answer a system alert, so nothing asks.
+    private var asksForPermissions = true
+    /// Set once the central has been told to connect. A later ride does not
+    /// reconnect a round screen the rider disconnected on purpose.
+    private var bluetoothStarted = false
 
     private static let recentPlacesKey = "MotoGPS.RecentPlaces.v1"
     private static let wifiHotspotNameKey = "MotoGPS.WifiHotspotName.v1"
@@ -264,11 +269,18 @@ final class AppModel: ObservableObject {
 
         #if DEBUG
         // Offline UI checks must not request device permissions or contact services.
-        if ProcessInfo.processInfo.arguments.contains("--moto-ui-offline") { return }
+        if ProcessInfo.processInfo.arguments.contains("--moto-ui-offline") {
+            asksForPermissions = false
+            return
+        }
         #endif
-        searchLocation.prepare()
+        // Launch never asks: on a fresh install the alerts would cover the
+        // home cover before the rider has done anything. A rider who already
+        // answered gets a fix and the round screen straight away; the first
+        // ask waits for the search, a route, the demo or the device sheet.
+        searchLocation.resume()
         mediaController.start()
-        bluetooth.connect()
+        if ESP32BLECentral.hasBluetoothDecision { connectDeviceIfNeeded() }
 
         #if DEBUG
         // Command-line-only hook for a repeatable phone-to-round-screen smoke
@@ -389,6 +401,8 @@ final class AppModel: ObservableObject {
         switch searchLocationStatus {
         case .available:
             return "已按当前位置优先排序"
+        case .notRequested:
+            return "暂按全国搜索"
         case .preparing:
             return "正在获取当前位置；暂按全国搜索"
         case .permissionDenied:
@@ -418,8 +432,15 @@ final class AppModel: ObservableObject {
         schedulePlaceSearch(query: query, delay: .milliseconds(480))
     }
 
+    /// The rider is about to type a destination: the first moment a nearby-first
+    /// search gives location a reason to be asked for.
+    func destinationSearchDidFocus() {
+        requestSearchLocationIfNeeded()
+    }
+
     func submitDestinationSearch() {
         guard !isNavigationActive, !isUpdatingGateway else { return }
+        requestSearchLocationIfNeeded()
         searchLocation.refresh()
         let query = destinationQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         schedulePlaceSearch(query: query, delay: .zero)
@@ -611,6 +632,7 @@ final class AppModel: ObservableObject {
             return
         }
 
+        connectDeviceIfNeeded()
         routePreviewTask?.cancel()
         routePreviewTask = nil
         surroundingMap.reset()
@@ -639,6 +661,8 @@ final class AppModel: ObservableObject {
 
     func startDemoNavigation() {
         guard !isNavigationActive, !isUpdatingGateway else { return }
+        connectDeviceIfNeeded()
+        requestSearchLocationIfNeeded()
         surroundingMap.reset()
         runtime?.stop()
         let demoSession = DemoNavigationSession()
@@ -703,6 +727,11 @@ final class AppModel: ObservableObject {
             failRoutePreview("需要当前位置才能规划路线，请在系统设置中允许定位")
             return
         }
+        // Offline UI checks: no fix can come, and nothing may ask for one.
+        if searchLocationStatus == .notRequested, !asksForPermissions { return }
+        // On a fresh install a picked place or the safehouse asks here. Don't
+        // Allow fails the preview through onStatusChange, beside its way to
+        // Settings.
         if searchLocation.refreshForRoutePlanning() {
             // Always wait for this new one-shot fix. Reusing the location that
             // biased an earlier POI search can build a route from home after
@@ -713,7 +742,30 @@ final class AppModel: ObservableObject {
     }
 
     func toggleDeviceConnection() {
+        bluetoothStarted = true
         bluetooth.toggleConnection()
+    }
+
+    /// The device sheet is about the round screen, so it is a fair place for
+    /// the first Bluetooth alert. After that the sheet's own button decides.
+    func deviceDetailsDidAppear() {
+        connectDeviceIfNeeded()
+    }
+
+    /// Asks for location the first time the search or the demo wants a
+    /// position. A route asks through `refreshForRoutePlanning()` instead,
+    /// because it also needs a sharper fix.
+    private func requestSearchLocationIfNeeded() {
+        guard asksForPermissions, searchLocationStatus == .notRequested else { return }
+        searchLocation.prepare()
+    }
+
+    /// Starts the central once. The first call on a fresh install raises the
+    /// Bluetooth alert, so it waits for the device sheet or a ride.
+    private func connectDeviceIfNeeded() {
+        guard asksForPermissions, !bluetoothStarted else { return }
+        bluetoothStarted = true
+        bluetooth.connect()
     }
 
     /// Hands the hotspot to the round screen over the bonded BLE link. The
