@@ -32,7 +32,9 @@ as text. The phone's accent is **neon pink**, the handlebar band's `#F34DAA`,
 not GTA III's clock gold: one accent on both surfaces, and no gold anywhere on
 the phone (2026-10-26, rider's call). All values are exact; no gradients on data surfaces. Phone
 and round screen share the tokens (`MotoPalette.night/.day`,
-`kGtaNightPalette/kGtaDayPalette`).
+`kGtaNightPalette/kGtaDayPalette`); the map ground is the round screen's own,
+copied value for value into `MotoMapStyle` (MotoLiveMap.swift), so the two maps
+cannot drift.
 
 ### Liberty Night
 
@@ -50,7 +52,7 @@ and round screen share the tokens (`MotoPalette.night/.day`,
 | `ok` | `#A5B97A` | completed (armour olive) |
 | `abort` | `#F0614A` | aborted, off-route |
 | `band` | `#F2EEE4` | sheet headers, round-screen rim: the cover's white gutter |
-| map | land `#3A3A3A`, blocks `#222222`/`#1B1B1B`, water `#14202E`, park `#28311F` | radar |
+| map | the round screen's night ground: land `#222222`, streets by class, areas (§3 Map ground) | live map |
 
 ### Liberty Day
 
@@ -67,7 +69,7 @@ and round screen share the tokens (`MotoPalette.night/.day`,
 | `ok` | `#4A5C2A` | completed |
 | `abort` | `#A8281C` | aborted |
 | `band` | `#111111` | sheet headers, rim: the logo panel's black |
-| map | land `#C9C5BB`, blocks `#8F8B83`/`#9C988F`, water `#6E879F`, park `#7D8A5B` | radar |
+| map | the round screen's day ground: land `#4E4E4A`, streets by class, areas (§3 Map ground) | live map |
 
 **The band is brand, not state.** It never signals a warning. Marks drawn on the
 round-screen band (progress, speed sweep, protractor ticks) use the band's own
@@ -131,39 +133,47 @@ Display tracking floor is `-0.02em`. Anything tighter is a defect. `Font.fixedSi
 - Radii: `0` (panels, sheets, buttons, bars), `2` (chips, inputs), `999` (dots and the live indicator only).
 - No shadows anywhere. Elevation is expressed by `surface` steps plus a 1px rule.
 - **Status band**: 54pt min + safe area on the `slab`, closed by a 2pt `accent` rule, three cells (`LINK` / `FIX` / `ETA|CLOCK`) in HUD caps, controls 44×44. It is a bar: it stops growing at `xxxLarge`, its cells and controls offer the large content viewer, and when the row would be wider than the screen it drops the clock first (the system status bar already shows the time). An overflowing band once widened the whole home page.
-- **Cover**: the home hero *is* GTA III's box art — framed panels inside 5pt `band` gutters, edge to edge: the radar panel (the circle takes whatever width the strip leaves: 204 on a 375pt phone, 269 on 440), a fixed 132pt side strip holding the MOTO / GPS logo block (Anton, `on-slab` on `slab`) and the safehouse panel, a wide panel with GO beside 出发, and the command bar as the last panel. Both columns share the taller one's height so the gutters line up. The whole first screen is the poster, and on a 375pt phone the field to type in is on it. The cover grows with Dynamic Type up to `accessibility1` and then holds; the command bar to `accessibility2`. No other screen carries texture. Pricedown (the GTA logo face) is not used: Typodermic's free licence excludes app and device embedding.
-- **Safehouse blip**: HUD-orange house (eaves and a door, the rider arrow's size; white in Original) on a black casing at home's real bearing — north-up, 1.5 km to the rim on the home radar; in the route projection on the ride radar; on the round screen from the route window or, with no route, from the latest map window's centre, above the waiting screen (Original: on its map strip, under a route only). A home past the rim keeps its bearing and rides the rim.
+- **Cover**: the home hero *is* GTA III's box art — framed panels inside 5pt `band` gutters, edge to edge: the map panel (the live map, edge to edge in whatever width the strip leaves, at the height the old circle took: 228 on a 375pt phone, 293 on 440), a fixed 132pt side strip holding the MOTO / GPS logo block (Anton, `on-slab` on `slab`) and the safehouse panel, a wide panel with GO beside 出发, and the command bar as the last panel. Both columns share the taller one's height so the gutters line up. The whole first screen is the poster, and on a 375pt phone the field to type in is on it. The cover grows with Dynamic Type up to `accessibility1` and then holds; the command bar to `accessibility2`. No other screen carries texture. Pricedown (the GTA logo face) is not used: Typodermic's free licence excludes app and device embedding.
+- **Safehouse blip**: HUD-orange house (eaves and a door, the rider arrow's size; white in Original) on a black casing at home's real position — on the home map north-up, on the ride map in the route projection; on the round screen from the route window or, with no route, from the latest map window's centre, above the waiting screen (Original: on its map strip, under a route only). A home past the edge keeps its bearing and rides the edge (the rim on the round screen).
 
-## Circle motif
+## Map motif
 
-The handlebar screen is round; the phone repeats it at three sizes.
+The handlebar screen is round; the phone's map is a **rectangle with square
+corners** (2026-10-29, rider's call: the panels' radius 0 wins over the
+rounded rectangle the old TODO named). It is the same ground as the disc —
+`MotoMapStyle` mirrors `kGtaDayPalette` / `kGtaNightPalette` value for value,
+and Original takes the classic tree's three grey bands with no areas — drawn
+from the same tiles the phone sends the handlebar, at a phone size.
 
-| Size | Where | Content |
-|---|---|---|
-| 204–269 | Home hero | poster street abstraction + sweep, `N` badge on the rim; sized to the cover panel |
-| 176 | Active ride | the real route window, streets and footprints around the rider |
-| 44 | Status band | connection state ring |
+| Where | Orientation | Reach | Content |
+|---|---|---|---|
+| Home cover | north-up | 350 m to the nearer edge | the streets, ground and car parks around the rider; the safehouse |
+| Active ride | heading-up, like the disc | 300 m | the route window over the same ground; the safehouse; progress |
 
-Radar chrome (GTA III radar): **heavy black bezel** (2.8% of the diameter) with a 1.5pt `band` line inside it, rider as a chunky outlined arrow, route stroke in `route` with a 1pt `bg` casing. The abstract hero map is a city, not a grid of lines: land is the road colour and blocks (two tones, some split into lots) sit on it, so streets are the gaps; avenues every fourth street are wider; a river with a curved shoreline and one bridge, and one park. With real data, roads are `map-land` on a `map-block-2` casing over block ground; on the round screen every road sits on a 3px dark casing layer. Devices that ride on the ring and never float over the map:
+**Nothing invented.** The poster abstraction (a city, a river, a bridge, a
+park drawn from a seeded random generator) is gone: CONTRIBUTING forbids
+filling missing geometry with made-up streets, and the cover is not exempt.
+Without a position the panel is bare land with one control, `开启定位，显示附近道路`
+(after a refusal it opens Settings); with a position and no tiles yet it is
+bare land with the store's status. The scene is every road, footprint, area
+and car park of the loaded z15 tiles (`SurroundingMapStore.phoneScene`), not
+the 40-road window the BLE budget allows, so the rectangle's corners are not
+empty.
+
+Chrome: no bezel and no sweep. Streets are the six classes in the round
+screen's colours and design widths (8/7/6/5/3/3, scaled by the map's shorter
+side over 360), one black casing pass 2 pt a side under all of them, quietest
+class first so an arterial crosses over a lane. Areas fill even-odd under the
+streets; footprints follow the building switch. The route is `route` at 9 on a
+15 black casing.
 
 | Device | Spec |
 |---|---|
-| Safehouse blip | `route` house with eaves and a door on a black casing, at home's bearing; past the rim it rides the rim. Present only when home is set. |
-| Compass badge | Circular cream badge (the speed-sign face) with a black `N` and edge in both themes, so it reads on the black casing by day too; it rides the rim at north's bearing. The turn glyph and distance stay inside that ring. |
-| Progress ring | **The ring is the gauge.** The completed fraction of `route_progress_m / total_distance_m` replaces that segment of the 2px rim in `accent`, starting at twelve o'clock. No second track ring: a separate arc read as a halo. Real data only; never repurposed as a health bar. |
-| Counter bar | `ink` slab with `onSlab` numerals in a corner, the way GTA parks cash. |
-
-Map fill inside the circle: `surface` base, park at `ok`, water at `link`, roads and blocks in `ink`. Strength is per theme because dark-on-cream at 10% disappears while light-on-black at 10% reads:
-
-| Layer | Vice | Heat |
-|---|---|---|
-| Blocks / footprints | `ink` 10% | `ink` 17% (abstraction) · 10% (real footprints) |
-| Roads | `ink` 24% (abstraction) · 55% (real) | `ink` 62% (abstraction) · 34% (real) |
-| Park / water | 24% / 22% | 34% / 30% |
-
-The home radar draws a poster abstraction — a city that is clearly not a claim about a location. The ride radar draws the same real window and route the handlebar gets: a live route over invented streets is a lie, so real geometry replaces the grid as soon as a scene exists.
-
-No texture inside the circle in either GTA theme — GTA III's radar is flat, and thin bands turn into haze in glare. Texture never overlays the rider dot or route.
+| Rider | The chunky arrow at the centre. Heading-up it points up; north-up it turns to the course while moving, and is a plain square plate when parked, because an arrow would claim a direction. |
+| Safehouse blip | `route` house with eaves and a door on a black casing, at home's position; past the edge it rides the edge on its bearing. |
+| North plate | `slab` square with `N` in the display face, riding the edge at north's bearing (top centre when north-up). |
+| Car park | Black plate with a `P` in the primary street's light: the basemap has car parks only as points. |
+| Progress | **The edge is the gauge**: a 3 pt `accent` bar along the bottom edge, the completed fraction of `route_progress_m / total_distance_m`. Real data only. |
 
 ### Poster devices (what makes it read as GTA, not as "clean dark UI")
 
@@ -174,8 +184,8 @@ No texture inside the circle in either GTA theme — GTA III's radar is flat, an
 | Menu rows | Numbered pause-screen list (`MotoMenuRow`): `01…08` in the condensed face at 34pt in page ink (the HUD pink is for readings), title `.title3` heavy, one line of detail, 1px rule under every row. Held, the row fills with the `accent` bar and its type turns `onAccent`, the way GTA lights the item under the cursor; the bar overhangs the text by 12pt. Numbers are real order, and each sheet's header repeats its number. |
 | Section head (home) | The word in Anton at 30pt, run out to the margin by a 2pt `ink` rule. No accent tick, no eyebrow. |
 | Rules | 1px default, 2px after a block that ends a group. Never 0.5px, never shadowed. |
-| Map content | Radar draws blocks and streets in `ink` at 10–22%: a minimap silhouette, not a blank disc. |
-| Rider | A chunky arrow, not a dot. Heading is part of the readout. |
+| Map content | The round screen's ground: streets by class on a black casing, water and green, car parks as P plates. Never a made-up city. |
+| Rider | A chunky arrow, not a dot. Heading is part of the readout; with no heading, a plate, not an arrow. |
 | Dusk skyline (round screen) | Liberty City at dusk along the bottom of the launch, compass, lean and music pages and the waiting screen: two rows of towers, far row lighter, neon pink lamps by night, pale print greys with paper windows by day. Frame, not data: it sits between the paper disc and the casing and below every reading, and is static. Not on navigation (the map is the world). |
 | HUD labels (round screen) | State labels (`LAUNCH`, `L`/`R` maxima, `CAL`, `NO IMU`, music source) are cased HUD type with no box, as GTA III's HUD never boxes a label. Counter slabs (`BEST`, `KM/H`) keep their block. |
 | Boot (round screen) | A GTA III loading screen in hard cuts, no fades: bezel black, then the box-art panel grid (radar with route and rider, safehouse, the city under a HUD-orange dusk sky) at 80 ms, the cream MOTO / GPS logo cased in black with a hard drop at 380 ms, then a neon pink loading bar stepping eight times from 520 ms. It measures the 1.25 s boot hold and claims nothing else. |
@@ -355,6 +365,13 @@ Edges are hard: areas are scanline-filled with no antialiasing, because
 LVGL's antialiased triangles leave the land showing through every internal
 cut of a triangulated polygon. Original draws no areas.
 
+**Car parks** (2026-10-29). Protomaps has no surface car-park polygons, only
+points, so the parking area above stays empty from that source and the points
+come as a P instead: a 17-design-px (22 px) plate in the casing black with a
+`P` in the display face in the primary street's light, over the streets and
+under the route, moving with the map. A plate whose corner would pass r 195 is
+not drawn.
+
 ### 4. Composition per page
 
 | Page | One idea |
@@ -363,7 +380,7 @@ cut of a triangulated polygon. Original draws no areas.
 | Lean | **A race lean gauge.** A segmented arc across the top, twelve 5° segments a side to 60°, fills to the lean in quarter degrees: HUD orange, HUD red past 45°, and the segment holding each side's peak keeps its unlit part in neon pink. The unsigned `42°` is the poster in the middle, `L`/`R` peaks beside it, Liberty City at dusk underneath. No horizon and no bike figure: the arc is the scale and the number is the reading. |
 | Speed | The band is the speedometer: cream fills clockwise from twelve, magenta is what is left. |
 | Compass | A rose on the band, a giant cardinal in the middle, the bearing in magenta beneath. |
-| Launch (0–100) | A stopwatch, a shift strip, and the best time. Nothing else. |
+| Launch (0–100) | A stopwatch, a shift strip, and the best time. Nothing else. The clock times from the board's fused speed (`PerformanceClock`), and with no speed the target line reads `NO SPEED` instead of `0-100 KM/H`. |
 | Music | A car-radio faceplate: source plate, track as station ident, three physical keys on one ink deck. |
 
 State plates (`ARMED`, `LIVE`, maxima) are magenta; numeric counters (`BEST`,
@@ -380,11 +397,22 @@ Latin renders as Barlow. The fallback descriptors are copied out of flash
 because the generated tables are `const` and cannot be patched in place.
 
 Cost: 3.6 MiB of flash for the two CJK faces (2.54 MiB at 40 px, 1.04 MiB at
-24 px); the app partition is 7 MiB and the image uses 82 % of it, so the
-remaining 18 % is what the next feature has to fit into. Traditional
-characters, rare characters outside both levels and emoji still render as
-empty boxes: the page draws whatever the phone sends and has no "cannot
-display" treatment yet.
+24 px) plus 10 KB for the Traditional table; the app partition is 7 MiB and
+the image uses 81 % of it, so the remaining 19 % is what the next feature
+has to fit into.
+
+No character is ever painted as an empty box. `copy_display_text`, which both
+themes use for the source, title and artist, replaces a character the label's
+face cannot draw with its Simplified form when the face has that (張學友 reads
+张学友; a one-to-one table generated from ICU's Hant-Hans transform, never
+applied to a character the face draws), folds full-width ASCII and the common
+CJK brackets and marks the face lacks to the half-width ones it has
+(【Live】 reads [Live]), drops emoji and the selectors, joiners, skin tones,
+keycaps, flags and tags that build them, and shows any other run of missing
+characters as one `?`, so the rider can see the title is incomplete. Spaces
+collapse to one between written characters. A label with nothing readable
+left shows its placeholder (`--`); the Classic theme has no CJK face, so a
+Chinese title there is `--`.
 
 ### Review artefacts
 
@@ -444,6 +472,33 @@ an empty scope says so instead of drawing zeros, the 0-100 times are the
 round screen's (PerformanceRun, 0x19) and never re-timed on the phone, and
 the time line says telemetry, not riding, because a connected screen parked on
 a bench counts too. Clearing the log asks first.
+
+### Ride page
+
+Distance left is the one number (`display-hero`). Under it the ride map takes
+the width the stat column leaves and the column's height; the column stacks
+`ETA`, `SPEED` and, while the round screen is sending attitude, `LEAN`:
+`23°` with `L` or `R` once it rounds to at least a degree. The lean cell is
+there only while the newest sample is under 0.5 s old (`AttitudeReadout`), so
+a dropped link or a still board never leaves a stale angle; it is a glance,
+and the handlebar's Lean page stays the live instrument (2026-10-29, rider's
+call: one lean number, no pitch/G pair). The cells stack beside the map rather
+than run in a row under it, so there are never three equal stats side by side.
+
+### Ride log (MENU → 09 骑行记录)
+
+Every real navigation is a Ride, recorded automatically (ADR 0002): the demo
+is not. A ride shorter than 200 m or a minute is dropped as an abandoned
+start. The sheet is the race board's sibling: the total distance at
+`display-xl` with the ride count on a slab, then one row per ride, newest
+first — destination, date, `已到达` when it arrived, distance in mono. A row
+opens in place to its slabs (time, moving time, average and top speed, deepest
+lean each side), its speed over time as one ink line, and the 0-100 runs that
+finished during it. A ride keeps numbers only: distance is summed as fixes
+arrive and the track is thrown away, so the list is not a map of the rider's
+life (`RideLog` in `MotoNavigationCore`, `RideLog.json` on the phone). Deleting
+one ride or clearing all asks nothing more than the row's own button, and
+clearing all asks first.
 
 ## Do / Don't
 
