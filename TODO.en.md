@@ -58,8 +58,9 @@ Per-item progress, acceptance numbers and design trade-offs are recorded in [doc
 - [ ] **(B)** Settle the phone ride screen's attitude readout in `DESIGN.md`, then implement it
 - [ ] **(B)** Replace the phone home and ride maps with a rounded-rectangle GTA-style live map drawn only from real scene geometry
 - [x] **(A)** GTA map six-class road colours and widths
-- [ ] **(A)** GTA map: road casing, coverage anti-aliasing for roads and the route, water / green / pedestrian / parking areas
-- [ ] **(A)** Once the out-of-bounds elements are fixed, commit the inside-the-disc geometry check as a test
+- [x] **(A)** GTA map: road casing has a render test; anti-aliasing stays on LVGL's own line masks (diagonals measured with coverage edges) instead of a custom rasterizer, and `draw_map_line` says when to reopen it
+- [ ] **(A)** GTA map: water / green / pedestrian / parking areas
+- [x] **(A)** The out-of-bounds elements are fixed and every element's ink sits inside r 195; the inside-the-disc check is a test (in the local `tests/`, which git does not track)
 - [x] **(A/B)** Three themes controlled from the phone: Original (the black-and-white round screen from before the fork, its own widget tree), GTA Day and GTA Night, plus GTA Auto; the phone changes its own look and the round screen follows through `SettingsState`
 - [x] **(A)** Track-title glyphs now cover both GB2312 levels: `scripts/generate_fonts.sh` generates 6,876 characters, 2.54 MiB of flash at 40 px and 1.04 MiB at 24 px; traditional characters, rare characters and emoji still render as empty boxes and need an explicit "cannot display" treatment
 - [ ] **(B)** Screenshot-accept the route-preview screen against a real gateway and a live fix
@@ -131,7 +132,7 @@ For the detailed status and the iPhone foreground/background boundaries that can
 - [ ] **(A/B)** Implement the "only change route for a clear benefit" policy on the authoritative iPhone navigation side
 - [ ] **(A/B)** Extend the upper limit, chunking and low-memory degradation tests of the BLE local route window
 - [ ] **(A)** Expand the Chinese road-name font library and verify Flash, RAM and the missing-glyph fallback
-- [ ] **(A)** Optimise long-route matching performance with a progress window and precomputed coordinates
+- [x] **(A)** Optimise long-route matching performance with a progress window and precomputed coordinates: a fix visits only the window's segments, so its cost no longer grows with the route
 - [ ] **(B)** Record real iPhone Core Location logs and verify the city, elevated road, tunnel, mountain road and parallel road cases
 - [ ] **(B)** Before productisation, obtain AMap's written authorisation conclusion for hardware terminals, route caching, traffic data and commercial use
 - [ ] **(B)** For the production online surrounding-road layer, enable the AMap "traffic situation query" advanced API, verify the `roads[].polyline` coverage with `extensions=all`, and obtain explicit written authorisation for in-vehicle / smart-hardware projection
