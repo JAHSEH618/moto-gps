@@ -71,8 +71,8 @@ struct MapPalette {
     lv_color_t coral;
     // Type that sits on the map instead of the paper.
     lv_color_t map_ink;
-    // The halo behind a display numeral: the inverse of `ink`, so the figure
-    // separates from whatever it is printed over.
+    // The inverse of `ink`: the casing under the Speed·G envelope, so the
+    // line separates from the rings it crosses.
     lv_color_t outline;
     // Filled plates. The fill and the ink that goes on it travel together, so
     // a theme cannot invert one without the other.
@@ -305,9 +305,9 @@ enum class TextRole : std::uint8_t {
     Ink = 0,
     Muted,
     Accent,
-    // Poster-scale numerals: same colour as Ink, heavier casing.
+    // Poster-scale numerals, in the palette's HUD colour.
     Display,
-    // Type printed on the map rather than on the paper.
+    // Type printed on the map rather than on the paper: the one cased role.
     MapInk,
     OnAccent,
     OnSlab,
@@ -805,39 +805,82 @@ lv_color_t role_color(TextRole role) {
     }
 }
 
-// Use this instead of make_label() for any string that must survive a theme
-// switch. The colour is resolved now and again on every theme change.
-void apply_text_outline(lv_obj_t *label, TextRole role) {
-    // The casing is the inverse of the type colour: black behind cream type at
-    // night, paper behind ink type by day. Without that rule a display numeral
-    // disappears into the horizon or the map it is printed over.
-    int width = 0;
-    lv_color_t color = ui.palette.outline;
-    switch(role) {
-        case TextRole::Display: width = px(5); break;
-        case TextRole::Ink:
-        case TextRole::Accent:
-        case TextRole::MapInk: width = px(2); break;
-        case TextRole::OnAccent:
-        case TextRole::OnSlab:
-        case TextRole::Muted:
-        default: width = 0; break;
-    }
-    if(role == TextRole::MapInk) {
-        // Type on the map keeps the game HUD's black casing in both themes.
-        color = kOutlineBlack;
-        width = px(3);
-    }
-    lv_obj_set_style_text_outline_stroke_color(label, color, 0);
-    lv_obj_set_style_text_outline_stroke_width(label, width, 0);
-    lv_obj_set_style_text_outline_stroke_opa(
-        label, width > 0 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+// Cased HUD type. The casing is stamped, not styled: LVGL 9.5 strokes
+// text_outline_stroke_* only for FreeType outline glyphs, and every face here
+// is a generated bitmap font, so that style painted nothing on the board, in
+// the Web build or in the PPM dumps (all three share config/lv_conf.h). The
+// string is drawn again in the casing colour at eight offsets one casing width
+// out, before LVGL draws the face over it.
+//
+// Only type printed over something other than its own paper is cased. The
+// old outline style cased ink and display numerals in the paper colour, which
+// changes no pixel on the paper they sit on; stamping it would cost eight
+// glyph passes of a 176 px numeral per redraw for nothing. Type on the map is
+// cased in both papers: without it the route and the streets run straight
+// into the distance numerals.
+//
+// The casing is the inverse of the face, picked when it is drawn: the game
+// HUD's black behind cream type, the map's paper colour behind dark type. The
+// status line is printed in the palette's accent, which is black by day, and
+// a black casing swallowed it whole.
+constexpr std::int32_t kTextCasingPx = px(3);
+
+lv_color_t casing_behind(lv_color_t face) {
+    const unsigned luma = face.red * 299U + face.green * 587U +
+                          face.blue * 114U;
+    return luma >= 128U * 1000U ? kOutlineBlack : ui.palette.map_ink;
 }
 
+void stamp_text_casing(lv_event_t *event) {
+    lv_obj_t *label = lv_event_get_current_target_obj(event);
+    if(lv_event_get_code(event) == LV_EVENT_REFR_EXT_DRAW_SIZE) {
+        lv_event_set_ext_draw_size(event, kTextCasingPx);
+        return;
+    }
+    const char *text = lv_label_get_text(label);
+    if(text == nullptr || text[0] == '\0') return;
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_draw_label_dsc_t dsc;
+    lv_draw_label_dsc_init(&dsc);
+    dsc.base.layer = layer;
+    lv_obj_init_draw_label_dsc(label, LV_PART_MAIN, &dsc);
+    dsc.text = text;
+    dsc.color = casing_behind(dsc.color);
+    // Lay the string out as lv_label lays out the face, or a centred line
+    // lands a few pixels off its own casing.
+    if(lv_obj_get_style_width(label, LV_PART_MAIN) == LV_SIZE_CONTENT &&
+       lv_obj_get_style_max_width(label, LV_PART_MAIN) == LV_COORD_MAX) {
+        dsc.flag = static_cast<lv_text_flag_t>(dsc.flag | LV_TEXT_FLAG_FIT);
+    }
+    lv_area_t coords;
+    lv_obj_get_content_coords(label, &coords);
+    // Diagonal stamps sit at width/sqrt(2): the casing is round at a
+    // glyph's corners instead of squared off.
+    constexpr std::int32_t w = kTextCasingPx;
+    constexpr std::int32_t d = (w * 7 + 5) / 10;
+    const lv_point_t offsets[] = {{-w, 0}, {w, 0},  {0, -w}, {0, w},
+                                  {-d, -d}, {d, -d}, {-d, d}, {d, d}};
+    for(const lv_point_t &offset : offsets) {
+        lv_area_t at = coords;
+        lv_area_move(&at, offset.x, offset.y);
+        lv_draw_label(layer, &dsc, &at);
+    }
+}
+
+void case_text(lv_obj_t *label) {
+    lv_obj_add_event_cb(label, stamp_text_casing, LV_EVENT_DRAW_MAIN_BEGIN,
+                        nullptr);
+    lv_obj_add_event_cb(label, stamp_text_casing, LV_EVENT_REFR_EXT_DRAW_SIZE,
+                        nullptr);
+    lv_obj_refresh_ext_draw_size(label);
+}
+
+// Use this instead of make_label() for any string that must survive a theme
+// switch. The colour is resolved now and again on every theme change.
 lv_obj_t *make_text(lv_obj_t *parent, const lv_font_t *font, TextRole role,
                     const char *text) {
     lv_obj_t *label = make_label(parent, font, role_color(role), text);
-    apply_text_outline(label, role);
+    if(role == TextRole::MapInk) case_text(label);
     if(ui.themed_text_count < kThemedTextCapacity) {
         ui.themed_text[ui.themed_text_count].object = label;
         ui.themed_text[ui.themed_text_count].role = role;
@@ -1072,7 +1115,6 @@ void apply_text_colors() {
         const ThemedText slot = ui.themed_text[i];
         if(slot.object != nullptr) {
             lv_obj_set_style_text_color(slot.object, role_color(slot.role), 0);
-            apply_text_outline(slot.object, slot.role);
         }
     }
     apply_debug_hidden();
@@ -5259,7 +5301,6 @@ void moto_ui_gta::show_boot_screen(void) {
     // A poster in both themes: GTA III's cream logo cased in black. Ink
     // letters by day disappeared into the dark panels.
     const lv_color_t letter = kLimitFace;
-    const lv_color_t casing = kOutlineBlack;
     const struct {
         const char *text;
         int y;
@@ -5272,10 +5313,10 @@ void moto_ui_gta::show_boot_screen(void) {
         lv_obj_align(drop, LV_ALIGN_CENTER, px(5), word.y + px(5));
         lv_obj_t *face = make_label(logo, &moto_font_wordmark_132, letter,
                                     word.text);
-        lv_obj_set_style_text_outline_stroke_color(face, casing, 0);
-        lv_obj_set_style_text_outline_stroke_width(face, px(3), 0);
-        lv_obj_set_style_text_outline_stroke_opa(face, LV_OPA_COVER, 0);
         lv_obj_set_style_text_letter_space(face, word.spacing, 0);
+        // A static frame: eight stamps of a 132 px face cost nothing a rider
+        // waits on.
+        case_text(face);
         lv_obj_align(face, LV_ALIGN_CENTER, 0, word.y);
     }
     lv_obj_add_flag(logo, LV_OBJ_FLAG_HIDDEN);
@@ -5318,10 +5359,6 @@ void moto_ui_gta::show_power_off_screen(void) {
     lv_obj_t *brand = make_label(ui.screen, &moto_font_display_40,
                                  LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), "MOTO");
     lv_obj_set_style_text_letter_space(brand, px(4), 0);
-    lv_obj_set_style_text_outline_stroke_color(
-        brand, LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), 0);
-    lv_obj_set_style_text_outline_stroke_width(brand, px(2), 0);
-    lv_obj_set_style_text_outline_stroke_opa(brand, LV_OPA_COVER, 0);
     lv_obj_align(brand, LV_ALIGN_CENTER, 0, px(-18));
 
     lv_obj_t *status = make_label(ui.screen, &moto_font_display_18,
