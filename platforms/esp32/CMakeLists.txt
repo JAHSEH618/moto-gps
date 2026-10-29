@@ -42,3 +42,12 @@ endif()
 set(PROJECT_VER "0.2.1")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(moto_gps_esp32)
+
+# A saved sdkconfig wins over sdkconfig.defaults, so refuse to build from one
+# that has drifted from them (check_sdkconfig.cmake). The defaults files are
+# configure inputs, so a pull that changes one runs the check again.
+include("${CMAKE_CURRENT_LIST_DIR}/check_sdkconfig.cmake")
+idf_build_get_property(moto_sdkconfig SDKCONFIG)
+idf_build_get_property(moto_sdkconfig_defaults SDKCONFIG_DEFAULTS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${moto_sdkconfig_defaults})
+moto_check_sdkconfig("${moto_sdkconfig}" "${moto_sdkconfig_defaults}")

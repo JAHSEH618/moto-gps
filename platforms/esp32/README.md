@@ -20,12 +20,23 @@ idf.py -C platforms/esp32 build
 
 首次构建会下载 Component Manager 依赖，产物在 `platforms/esp32/build/`。
 
+`platforms/esp32/sdkconfig` 在首次配置时由 `sdkconfig.defaults` 生成，之后它优先于 defaults：
+defaults 再改，已有的值也不会跟着变。所以每次配置都会用 `check_sdkconfig.cmake` 对比两者，
+不一致就报错并列出每一项。把旧文件移开再构建即可：
+
+```sh
+mv platforms/esp32/sdkconfig platforms/esp32/sdkconfig.old
+```
+
+确实要保留本地改动时，配置时加 `-DMOTO_ALLOW_SDKCONFIG_DRIFT=ON`，差异只作警告。
+
 上面是开发版，会把 IMU 数据录进 `tlog` 分区（默认，`CONFIG_MOTO_TLOG_DISABLE` 未设）。发布版叠加 `sdkconfig.release`，设 `CONFIG_MOTO_TLOG_DISABLE=y` 关掉 tlog，分区表不变，产物在 `platforms/esp32/build-release/`：
 
 ```sh
+rm -f platforms/esp32/build-release/sdkconfig
 idf.py -C platforms/esp32 -B platforms/esp32/build-release \
   -DSDKCONFIG=build-release/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" reconfigure build
 ```
 `dependencies.lock` 中 LVGL 是项目根目录下的相对路径，若本地工具重写成绝对路径，
 不要把个人路径提交回仓库。不要手动修改 `managed_components` 来维持编译。
