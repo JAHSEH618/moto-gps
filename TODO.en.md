@@ -59,7 +59,9 @@ Per-item progress, acceptance numbers and design trade-offs are recorded in [doc
 - [ ] **(B)** Replace the phone home and ride maps with a rounded-rectangle GTA-style live map drawn only from real scene geometry
 - [x] **(A)** GTA map six-class road colours and widths
 - [x] **(A)** GTA map: road casing has a render test; anti-aliasing stays on LVGL's own line masks (diagonals measured with coverage edges) instead of a custom rasterizer, and `draw_map_line` says when to reopen it
-- [ ] **(A)** GTA map: water / green / pedestrian / parking areas
+- [x] **(A)** GTA map: water / green / pedestrian / parking areas. MapScene gains an optional trailing area section (capability bit 17, so older firmware never receives it); the phone clips and simplifies to 12 areas / 128 points, the round screen scanline-fills them under the streets, and the ride radar draws the same; the backend extracts them from Protomaps' `water`/`landuse` layers
+- [ ] **(B)** After flashing, check the areas on the panel: legibility of both palettes, and the `ui dbg` frame time of a capacity map that includes areas
+- [ ] **(B)** Surface car parks have no data: Protomaps does not emit `amenity=parking` polygons, so the parking class is always empty for now; drawing them needs another source
 - [x] **(A)** The out-of-bounds elements are fixed and every element's ink sits inside r 195; the inside-the-disc check is a test (in the local `tests/`, which git does not track)
 - [x] **(A/B)** Three themes controlled from the phone: Original (the black-and-white round screen from before the fork, its own widget tree), GTA Day and GTA Night, plus GTA Auto; the phone changes its own look and the round screen follows through `SettingsState`
 - [x] **(A)** Track-title glyphs now cover both GB2312 levels: `scripts/generate_fonts.sh` generates 6,876 characters, 2.54 MiB of flash at 40 px and 1.04 MiB at 24 px; traditional characters, rare characters and emoji still render as empty boxes and need an explicit "cannot display" treatment

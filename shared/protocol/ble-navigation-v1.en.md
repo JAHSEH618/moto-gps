@@ -228,7 +228,9 @@ input (the device takes `0x18`), bit13 performance run (advertised by the phone:
 round screen's 0-100 results, so the device sends it `0x19`), bit14 WiFi hotspot (both ends: the
 device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`), bit15 OTA (both ends: the
 phone offers an image and takes `0x1D`; the device takes `0x1C` and reports `0x1D`), bit16
-firmware info (both ends: the device reports `0x1E`; the phone reads it).
+firmware info (both ends: the device reports `0x1E`; the phone reads it), bit17 map areas
+(advertised by the device: it draws the optional area section at the end of MapScene; the phone
+includes that section only for a device with this bit, see §6.8).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -427,9 +429,25 @@ repeat building_count:
   repeat point_count:
     svarint lat_delta_e6     relative to view_origin
     svarint lon_delta_e6
+
+Optional area section (2026-10-29, only to a device that advertises bit17):
+u8  area_count              1..12; with no areas the section is absent, never 0
+repeat area_count:
+  u8 area_class             0 water, 1 green, 2 pedestrian, 3 parking (surface lot)
+  u8 point_count            3..255; total area points in the frame <=128
+  repeat point_count:
+    svarint lat_delta_e6     relative to view_origin
+    svarint lon_delta_e6
 ```
 
-The last building point must not repeat the first point; the renderer adds the closing edge. All
+The last point of a building or an area must not repeat the first point; the renderer adds the
+closing edge. Areas are outer rings only; holes are not drawn. The area section is an optional
+trailing section after the buildings and does not bump the payload revision: a scene without
+areas is byte-for-byte the old layout (golden `map_scene.payload`), and a scene with areas only
+appends to it (`map_scene_areas.payload`). An older firmware rejects the section as
+`TrailingPayload` and drops the whole frame, so the phone includes it only when the device
+advertises bit17 and otherwise sends the same scene without areas. The decoder refuses an empty
+section (`area_count = 0`) so that a scene has exactly one encoding. All
 points must be inside the safety bound of `±100000 E6` in latitude and longitude from the
 origin; the app should still do the actual circular/rectangular clipping by `radius_m`. The
 complete payload should carry `ACK_REQUESTED` and is Acked only after validation, decoding and a
@@ -437,12 +455,16 @@ successful commit. A higher `scene_revision` atomically replaces the old window;
 revision, a partial packet and a CRC error all leave the screen unchanged.
 
 This encoding is usually about 1.8–2.9 KiB for 255 road points + 192 building points; under a
-185-byte GATT value that is about 11–18 protocol fragments. It must not be sent at the
+185-byte GATT value that is about 11–18 protocol fragments. With a full 12 areas / 128 points
+added and every coordinate at the `±100000 E6` bound (3 bytes per varint), the worst case still
+fits the 4 KiB message limit; `test_widest_map_scene_fits_one_message` holds that. It must not be sent at the
 positioning frame rate: refreshing once after about 100 m of travel, when approaching the window
 edge or when crossing a 500 m offline tile is enough. The current data path is connected:
 the iOS `SurroundingMapStore` selects a window, which `ESP32BLECentral` sends through the shared
 C++ codec; the ESP32 `PhoneNavBridge` validates and atomically commits it, then passes it through
-`NavPresenter` to the road and building LVGL layers. Implementing this path does not establish
+`NavPresenter` to the area, road and building LVGL layers. The phone clips each area to the
+window's square and simplifies it, from 3 m and doubling until it fits the budget, largest
+areas first. Implementing this path does not establish
 that map coverage in every region, weak-network behavior or road testing has been accepted.
 
 ### 6.9 DeviceCommand (`0x20`, fixed 13 bytes)

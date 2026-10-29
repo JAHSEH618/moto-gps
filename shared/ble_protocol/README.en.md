@@ -15,8 +15,9 @@ implementation should use the golden fixture as the byte-compatibility baseline 
 rely only on its own language's round-trip.
 
 The optional Jinan offline mini-map uses `MapScene (0x14)`: the phone clips and sends a fully
-replacing road/building rolling window, and the ESP32 neither stores nor queries the city-wide
-database. For the capacity, the generated sample and the boundary that is not yet wired up see
+replacing road/building/area (water, green, pedestrian, parking) rolling window, and the ESP32
+neither stores nor queries the city-wide database; the area section goes only to a device that
+advertises bit17. For the capacity, the generated sample and the boundary that is not yet wired up see
 [`../demo_fixture/JINAN_OFFLINE_MAP_MVP.en.md`](../demo_fixture/JINAN_OFFLINE_MAP_MVP.en.md).
 
 Building the codec on its own:

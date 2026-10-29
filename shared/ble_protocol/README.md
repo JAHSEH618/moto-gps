@@ -11,7 +11,8 @@ NavPresenter` 映射见 [`../protocol/ble-navigation-v1.md`](../protocol/ble-nav
 跨语言实现应以黄金 fixture 为字节兼容基准，不能只依赖本语言 round-trip。
 
 可选的济南离线小地图使用 `MapScene (0x14)`：手机裁剪并发送一个完整替换的
-道路/建筑滚动窗口，ESP32 不保存或查询全市数据库。容量、生成样本和当前尚未接线
+道路/建筑/面要素（水、绿地、步行、停车）滚动窗口，ESP32 不保存或查询全市数据库；
+面要素段只发给声明 bit17 的设备。容量、生成样本和当前尚未接线
 的边界见 [`../demo_fixture/JINAN_OFFLINE_MAP_MVP.md`](../demo_fixture/JINAN_OFFLINE_MAP_MVP.md)。
 
 独立构建 codec：

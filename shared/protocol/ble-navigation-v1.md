@@ -199,7 +199,9 @@ bit11 compass heading（设备理解 NavigationSnapshot 的 HeadingCompass 标�
 bit13 performance run（手机声明：它要显示圆屏的 0-100 成绩，设备才发 `0x19`）、
 bit14 WiFi hotspot（双方声明：设备接收 `0x1A` 并回报 `0x1B`，手机显示 `0x1B`）、
 bit15 OTA（双方声明：设备接收 `0x1C` 并回报 `0x1D`，手机提供固件并显示 `0x1D`）、
-bit16 firmware info（双方声明：设备回报 `0x1E`，手机读取）。
+bit16 firmware info（双方声明：设备回报 `0x1E`，手机读取）、
+bit17 map areas（设备声明：它能画 MapScene 末尾的面要素段；手机只给声明了它的设备
+带上这一段，见 §6.8）。
 
 `0x16`、`0x17` 与 `0x18` 都是选择性消息：手机只向声明了对应能力位的对端发送。旧固件
 根本不认识这些类型，而不是收到后忽略。
@@ -387,18 +389,35 @@ repeat building_count:
   repeat point_count:
     svarint lat_delta_e6     相对 view_origin
     svarint lon_delta_e6
+
+可选面要素段（2026-10-29，仅发给声明 bit17 的设备）：
+u8  area_count              1..12；没有面要素时整段不写，不写 0
+repeat area_count:
+  u8 area_class             0 water, 1 green, 2 pedestrian, 3 parking（地面停车场）
+  u8 point_count            3..255；全帧面要素点合计 <=128
+  repeat point_count:
+    svarint lat_delta_e6     相对 view_origin
+    svarint lon_delta_e6
 ```
 
-建筑最后一点不得重复第一点，闭合边由渲染器补上。所有点必须在 origin 的经纬各
+建筑和面要素的最后一点都不得重复第一点，闭合边由渲染器补上；面要素只有外环，
+不画洞。面要素段是追加在建筑之后的可选段，不升 payload revision：没有面要素的
+场景与旧格式逐字节相同（黄金帧 `map_scene.payload`），带面要素的场景只是在其后
+追加（`map_scene_areas.payload`）。旧固件会把这段当作 `TrailingPayload` 拒绝整帧，
+所以手机只在设备声明 bit17 时带上它，否则发不带面要素的同一场景。解码器拒绝
+`area_count = 0` 的空段，保证同一场景只有一种编码。所有点必须在 origin 的经纬各
 `±100000 E6` 安全界内；App 仍应按 `radius_m` 做实际圆/矩形裁剪。完整 payload
 建议带 `ACK_REQUESTED`，在校验、解码并提交成功后才回复 Ack。更高
 `scene_revision` 原子替换旧窗口；旧 revision、半包和 CRC 错误均不改变屏幕。
 
 本编码对 255 个道路点 + 192 个建筑点通常约 1.8–2.9 KiB；在 185-byte GATT value
-下约 11–18 个协议分片。它不应按定位帧率发送：前进约 100 m、靠近窗口边缘或跨
+下约 11–18 个协议分片。再加满 12 块 / 128 点的面要素，且所有坐标都取到
+`±100000 E6` 边界（每个 varint 3 字节）的最坏情况也不超过 4 KiB 的消息上限，
+`test_widest_map_scene_fits_one_message` 守着这一点。它不应按定位帧率发送：前进约 100 m、靠近窗口边缘或跨
 500 m 离线分块时刷新一次即可。当前链路已接入：iOS 的 `SurroundingMapStore`
 选择窗口，经 `ESP32BLECentral` 和共享 C++ codec 下发；ESP32 的 `PhoneNavBridge`
-校验并原子提交后，经 `NavPresenter` 交给道路与建筑 LVGL 图层。代码接入不等于
+校验并原子提交后，经 `NavPresenter` 交给面要素、道路与建筑 LVGL 图层。手机把面要素
+裁到窗口方框内，再按 3 m 起、逐级加倍的容差简化到预算里，大的先选。代码接入不等于
 所有地区的地图覆盖、弱网或道路实测已经验收。
 
 ### 6.9 DeviceCommand (`0x20`, 固定 13 字节)

@@ -328,15 +328,32 @@ identity; "SPEED" over a speedometer is a word doing no work.
 | Surface | Day | Night |
 |---|---|---|
 | Paper (lean, speed, compass, launch, music) | cream `#F6F0D7` | midnight `#141024` |
-| Map (navigation only) | green `#1E7A46` | midnight `#141024` |
+| Map (navigation only) | radar grey `#4E4E4A` | charcoal `#222222` |
 | Ink (hero, horizon) | `#17151B` | `#F6F0D7` |
 | Halo behind display type | paper (inverse of ink) | bezel |
 | Band / plates | `#F34DAA` | `#F34DAA` |
 | Counter slab | `#17151B` on paper | `#07050D` |
 
 Day is a poster (ink on paper, magenta plates); night is the same poster
-inverted. The green map is the only surface that is not the theme paper, and it
+inverted. The radar map is the only surface that is not the theme paper, and it
 appears only where the map is the content. The bezel never changes.
+
+**Map ground** (2026-10-29). MapScene areas are filled on the land, under
+footprints, streets and the route, whether or not buildings are shown. Hue
+carries water and green, the two GTA radar colours; pedestrian paving and
+surface car parks are a step either side of the land, so none of the four
+reaches a street's brightness and the route stays the loudest line.
+
+| Area | Day (on `#4E4E4A`) | Night (on `#222222`) |
+|---|---|---|
+| Water | slate `#3B5878` | navy `#182A40` |
+| Green | olive `#4E6A3E` | dark park `#1F3A22` |
+| Pedestrian | paving `#625F57` | `#2C2A26` |
+| Parking | asphalt `#45484D` | `#1C1E22` |
+
+Edges are hard: areas are scanline-filled with no antialiasing, because
+LVGL's antialiased triangles leave the land showing through every internal
+cut of a triangulated polygon. Original draws no areas.
 
 ### 4. Composition per page
 
