@@ -30,7 +30,7 @@ constexpr std::uint8_t kCmdAck = 0x00;
 constexpr std::uint8_t kCmdReqFifo = 0x05;
 constexpr std::uint8_t kFifoStream128 = 0x0E;  // Stream, 128 samples, RD_MODE=0
 constexpr float kAccelLsbPerG = 4096.0F;       // +-8 g
-constexpr float kGyroLsbPerDps = 64.0F;        // +-512 dps
+constexpr float kGyroLsbPerDps = 32.0F;        // +-1024 dps
 constexpr float kGravity = 9.80665F;
 constexpr std::uint32_t kHandshakeTimeoutUs = 3000;
 constexpr std::uint32_t kWindowLimitUs = 2000;
@@ -100,8 +100,9 @@ bool Qmi8658Fifo::begin(qmi8658_dev_t* device) {
   std::uint8_t ctrl1 = 0;
   read_register(kCtrl1, &ctrl1, 1);
   ESP_LOGI(kTag, "CTRL1=0x%02x (expect 0x70)", ctrl1);
-  // CTRL2/3: +-8 g, +-512 dps, 448.4 Hz in 6DOF (ODR code 0100).
-  if (!write_register(kCtrl2, 0x24) || !write_register(kCtrl3, 0x54)) {
+  // CTRL2/3: +-8 g, +-1024 dps, 448.4 Hz in 6DOF (ODR code 0100). Same
+  // range as the latch chain, so an A/B run compares like with like.
+  if (!write_register(kCtrl2, 0x24) || !write_register(kCtrl3, 0x64)) {
     fall_back("ODR/range write failed");
     return false;
   }
