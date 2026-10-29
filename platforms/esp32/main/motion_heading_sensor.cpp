@@ -136,7 +136,7 @@ void MotionHeadingSensor::configure_poll_mode() {
   ESP_ERROR_CHECK_WITHOUT_ABORT(
       qmi8658_set_accel_odr(&device_, QMI8658_ACCEL_ODR_125HZ));
   ESP_ERROR_CHECK_WITHOUT_ABORT(
-      qmi8658_set_gyro_range(&device_, QMI8658_GYRO_RANGE_512DPS));
+      qmi8658_set_gyro_range(&device_, QMI8658_GYRO_RANGE_1024DPS));
   ESP_ERROR_CHECK_WITHOUT_ABORT(
       qmi8658_set_gyro_odr(&device_, QMI8658_GYRO_ODR_125HZ));
   qmi8658_write_register(&device_, 0x02, 0x40);  // AI on, BE off

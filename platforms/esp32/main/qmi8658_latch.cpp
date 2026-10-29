@@ -24,22 +24,32 @@ constexpr std::uint8_t kTempLow = 0x33;
 constexpr std::uint8_t kCmdAck = 0x00;
 constexpr std::uint8_t kCmdAhbClockGating = 0x12;
 
-// QMI8658B Rev D §5.4: aFS=010 (±8 g), aODR=0100 (448.4 Hz in 6DOF).
+// QMI8658B Rev D §5.4: aFS=010 (±8 g), aODR=0100 (448.4 Hz in 6DOF); gFS=110
+// (±1024 dps) at the same ODR. ±512 dps clipped a hand flip (x at −512.0) and
+// left ~18° of Lean until the board was still again; riding stays far below
+// either range, bench handling does not.
 // INT2_EN is set even though the board does not route INT2: the CTRL9
 // completion path on this die has only been observed with the interrupt
 // enabled (the FIFO path writes 0x70 and its handshake works). Byte order
 // stays little-endian (BE=0).
 constexpr std::uint8_t kCtrl1AutoIncrementLittleEndian = 0x40;
 constexpr std::uint8_t kCtrl2Accel8g448 = 0x24;
-constexpr std::uint8_t kCtrl3Gyro512dps448 = 0x54;
+constexpr std::uint8_t kCtrl3Gyro1024dps448 = 0x64;
 // Both LPFs on, mode 10 = 5.39% of ODR (~24.2 Hz at 448.4 Hz). The layout is
 // bit6:5 gyro mode, bit4 gyro enable, bit2:1 accel mode, bit0 accel enable.
 constexpr std::uint8_t kCtrl5BothLpfMode10 = 0x55;
 constexpr std::uint8_t kCtrl7SyncAccelGyro = 0x83;
 
 constexpr float kAccelLsbPerG = 4096.0F;  // ±8 g
-constexpr float kGyroLsbPerDps = 64.0F;   // ±512 dps
+constexpr float kGyroLsbPerDps = 32.0F;   // ±1024 dps
 constexpr float kGravity = 9.80665F;
+// The raw CTRL3 write, the driver call before it and this decode must agree:
+// the driver's range enum is the gFS field, and full scale is 32768 LSB.
+static_assert(kCtrl3Gyro1024dps448 ==
+                  ((QMI8658_GYRO_RANGE_1024DPS << 4) | 0x04),
+              "CTRL3 must be gFS=±1024 dps with gODR code 0100");
+static_assert(kGyroLsbPerDps * 1024.0F == 32768.0F,
+              "gyro LSB scale must match the ±1024 dps range");
 constexpr std::uint32_t kHandshakeTimeoutUs = 3000;
 constexpr std::uint32_t kStatusRetryUs = 50;
 // AHB clock gating switches a clock domain and is much slower than a FIFO
@@ -175,14 +185,14 @@ bool Qmi8658Latch::begin(qmi8658_dev_t* device) {
   if (qmi8658_set_accel_range(device_, QMI8658_ACCEL_RANGE_8G) != ESP_OK ||
       qmi8658_set_accel_odr(
           device_, static_cast<qmi8658_accel_odr_t>(0x04)) != ESP_OK ||
-      qmi8658_set_gyro_range(device_, QMI8658_GYRO_RANGE_512DPS) != ESP_OK ||
+      qmi8658_set_gyro_range(device_, QMI8658_GYRO_RANGE_1024DPS) != ESP_OK ||
       qmi8658_set_gyro_odr(
           device_, static_cast<qmi8658_gyro_odr_t>(0x04)) != ESP_OK) {
     fall_back("range/ODR configuration failed");
     return false;
   }
   if (!write_register(kCtrl2, kCtrl2Accel8g448) ||
-      !write_register(kCtrl3, kCtrl3Gyro512dps448)) {
+      !write_register(kCtrl3, kCtrl3Gyro1024dps448)) {
     fall_back("CTRL2/CTRL3 write failed");
     return false;
   }
@@ -217,11 +227,13 @@ bool Qmi8658Latch::begin(qmi8658_dev_t* device) {
   }
 
   std::uint8_t ctrl1 = 0;
+  std::uint8_t ctrl3 = 0;
   std::uint8_t ctrl5 = 0;
   std::uint8_t ctrl7 = 0;
   std::uint8_t ctrl8 = 0;
   std::uint8_t statusint = 0;
   read_register(kCtrl1, &ctrl1, 1);
+  read_register(kCtrl3, &ctrl3, 1);
   read_register(kCtrl5, &ctrl5, 1);
   read_register(kCtrl7, &ctrl7, 1);
   read_register(kCtrl8, &ctrl8, 1);
@@ -235,10 +247,10 @@ bool Qmi8658Latch::begin(qmi8658_dev_t* device) {
     return false;
   }
   ESP_LOGI(kTag,
-           "latch ready: CTRL1=0x%02x (expect 0x40) CTRL5=0x%02x (expect "
-           "0x55) CTRL7=0x%02x (expect 0x83) CTRL8=0x%02x, 448.4 Hz, LPF "
-           "5.39%%, read %u us",
-           ctrl1, ctrl5, ctrl7, ctrl8,
+           "latch ready: CTRL1=0x%02x (expect 0x40) CTRL3=0x%02x (expect "
+           "0x64) CTRL5=0x%02x (expect 0x55) CTRL7=0x%02x (expect 0x83) "
+           "CTRL8=0x%02x, 448.4 Hz, LPF 5.39%%, read %u us",
+           ctrl1, ctrl3, ctrl5, ctrl7, ctrl8,
            static_cast<unsigned>(kPeriodUs));
 
   active_ = true;
