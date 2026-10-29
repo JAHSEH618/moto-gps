@@ -238,13 +238,14 @@ struct HomeScreen: View {
                     .font(.system(.largeTitle, weight: .heavy))
                     .foregroundStyle(palette.ink)
                     .lineLimit(1)
-                // The claim is decoration: at sizes where it would truncate,
-                // it steps out rather than end in an ellipsis.
-                ViewThatFits(in: .horizontal) {
-                    MotoLabel(text: "spot · plan · ride", tone: .muted, token: .micro)
-                        .fixedSize()
-                    EmptyView()
-                }
+                // Wraps at large sizes instead of ending in an ellipsis. Never
+                // fixed-width: a label that reports its full width here widens
+                // the cover, and the cover widens the page.
+                Text("SPOT · PLAN · RIDE")
+                    .font(type.mono(.micro))
+                    .tracking(MotoMetrics.microTracking)
+                    .foregroundStyle(palette.inkMuted(contrast: contrast))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
