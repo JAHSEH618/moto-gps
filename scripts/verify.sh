@@ -142,8 +142,9 @@ build_esp32() {
   fi
   # export.sh is written for bash; sourcing it from zsh leaves idf.py off PATH.
   bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 build" || return 1
-  # Release overlay (CONFIG_MOTO_TLOG_DISABLE=y) in its own build dir, so the
-  # disabled branches keep compiling. A saved sdkconfig wins over the
+  # Release overlay (CONFIG_MOTO_TLOG_DISABLE=y) in its own build dir: the
+  # image scripts/publish_firmware.mjs publishes, and the reason the disabled
+  # branches keep compiling. A saved sdkconfig wins over the
   # defaults files and a Kconfig edit does not trigger a reconfigure, so the
   # release config is regenerated every time and then checked.
   rm -f platforms/esp32/build-release/sdkconfig
@@ -160,7 +161,10 @@ build_esp32() {
 }
 
 verify_app_size() {
-  scripts/check_app_size.sh
+  # The release image is the one published for OTA; the bench image is the
+  # one flashed over USB. Both land in the same 7 MiB slot.
+  scripts/check_app_size.sh platforms/esp32/build-release/moto_gps_esp32.bin || return 1
+  scripts/check_app_size.sh platforms/esp32/build/moto_gps_esp32.bin
 }
 
 step_run "todo log" verify_todo_log

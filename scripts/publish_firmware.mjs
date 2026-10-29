@@ -3,8 +3,12 @@
 // latest.json. The round screen fetches the URL over the phone's hotspot; the
 // manifest is what the phone reads to fill in the URL and SHA-256.
 //
+// Only the release overlay (platforms/esp32/sdkconfig.release) is published:
+// a bench build from build/ keeps the tlog recorder writing flash on every
+// ride, so an image whose build directory lacks CONFIG_MOTO_TLOG_DISABLE is
+// refused.
+//
 //   node scripts/publish_firmware.mjs
-//   node scripts/publish_firmware.mjs --bin=build-release/moto_gps_esp32.bin
 //   node scripts/publish_firmware.mjs --check
 //
 // Vercel serves backend/public at the site root, so the default files are
@@ -18,7 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = {
-  bin: resolve(repositoryRoot, "platforms/esp32/build/moto_gps_esp32.bin"),
+  bin: resolve(repositoryRoot, "platforms/esp32/build-release/moto_gps_esp32.bin"),
   out: resolve(repositoryRoot, "backend/public/firmware"),
   baseURL: "https://www.doupaw.site/firmware",
   name: "moto-gps.bin",
@@ -73,6 +77,20 @@ function git(...args) {
   }
 }
 
+// ESP-IDF writes the build's resolved config to <build>/config/sdkconfig.h,
+// next to the image, so the directory says which overlay made it.
+export function releaseConfigProblem(binPath) {
+  const header = resolve(dirname(binPath), "config/sdkconfig.h");
+  if (!existsSync(header)) {
+    return `no config/sdkconfig.h next to ${binPath}; publish the image from its build directory`;
+  }
+  if (!/^#define CONFIG_MOTO_TLOG_DISABLE 1$/mu.test(readFileSync(header, "utf8"))) {
+    return `${binPath} is a bench build with the tlog recorder on; ` +
+      "build the release overlay into platforms/esp32/build-release and publish that";
+  }
+  return null;
+}
+
 export function sha256Of(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
@@ -98,7 +116,7 @@ export function main(argv = process.argv.slice(2)) {
   if (options.help) {
     console.log(`usage: node scripts/publish_firmware.mjs [options]
 
-  --bin=PATH       built image (default platforms/esp32/build/moto_gps_esp32.bin)
+  --bin=PATH       release image (default platforms/esp32/build-release/moto_gps_esp32.bin)
   --out=DIR        static output (default backend/public/firmware)
   --base-url=URL   public base (default https://www.doupaw.site/firmware)
   --name=FILE      served name (default moto-gps.bin)
@@ -114,6 +132,8 @@ export function main(argv = process.argv.slice(2)) {
   if (!existsSync(options.bin)) {
     throw new Error(`firmware image not found: ${options.bin}\nBuild it first or pass --bin=...`);
   }
+  const configProblem = releaseConfigProblem(options.bin);
+  if (configProblem) throw new Error(configProblem);
   const image = readFileSync(options.bin);
   if (image.byteLength < kMinimumImageBytes || image.byteLength > kMaximumImageBytes) {
     throw new Error(`image is ${image.byteLength} bytes; an OTA slot holds ${kMinimumImageBytes}..${kMaximumImageBytes}`);

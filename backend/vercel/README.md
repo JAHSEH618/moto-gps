@@ -197,15 +197,25 @@ https://www.doupaw.site/firmware/moto-gps.bin   ESP32 app 镜像
 https://www.doupaw.site/firmware/latest.json   版本、URL、SHA-256、字节数
 ```
 
-发布（在仓库根目录）：
+发布的是 release 构建：`platforms/esp32/sdkconfig.release` 叠在 `sdkconfig.defaults` 上，
+设置 `CONFIG_MOTO_TLOG_DISABLE=y`，圆屏不再往 tlog 分区写数据。`build/` 里的台架构建保留录制，
+只用于 USB 烧录。先提交，在干净的工作区里构建，否则镜像和清单里的版本都会带 `-dirty`。
+在仓库根目录：
 
 ```sh
-node scripts/publish_firmware.mjs   --bin=platforms/esp32/build/moto_gps_esp32.bin
+rm -f platforms/esp32/build-release/sdkconfig   # 旧 sdkconfig 会盖过 overlay
+idf.py -C platforms/esp32 -B platforms/esp32/build-release \
+  -DSDKCONFIG=build-release/sdkconfig \
+  -DSDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.release' \
+  reconfigure build
+node scripts/publish_firmware.mjs
 node scripts/publish_firmware.mjs --check
 cd backend && npx vercel --prod
 ```
 
-脚本只接受 1 MiB–7 MiB 的镜像（与 OTA 分区一致），计算 SHA-256，并把同一个
+脚本默认读取 `build-release/moto_gps_esp32.bin`，并检查同一构建目录生成的
+`config/sdkconfig.h`：没有 `CONFIG_MOTO_TLOG_DISABLE` 的台架镜像会被拒绝。
+它只接受 1 MiB–7 MiB 的镜像（与 OTA 分区一致），计算 SHA-256，并把同一个
 `moto-gps.bin` 与 `latest.json` 写进 `backend/public/firmware/`。仓库的 `.gitignore`
 默认忽略 `*.bin`，这个目录有显式例外，所以 Vercel 从 Git 部署时拿得到文件。
 `--check` 在 CI 或发布前确认清单没有落后于镜像。

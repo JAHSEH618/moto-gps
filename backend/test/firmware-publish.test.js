@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
-import { buildManifest, readOptions, sha256Of } from "../../scripts/publish_firmware.mjs";
+import {
+  buildManifest,
+  readOptions,
+  releaseConfigProblem,
+  sha256Of,
+} from "../../scripts/publish_firmware.mjs";
 
 test("the publish manifest carries the fields the phone reads", () => {
   const manifest = buildManifest({
@@ -27,6 +35,26 @@ test("the publish manifest carries the fields the phone reads", () => {
 test("publish options reject a path as the served file name", () => {
   assert.throws(() => readOptions(["--name=../escape.bin"], {}),
                 /plain file name/u);
+});
+
+test("the default image is the release build", () => {
+  assert.match(readOptions([], {}).bin, /platforms\/esp32\/build-release\/moto_gps_esp32\.bin$/u);
+});
+
+test("only an image built with the recorder off can be published", (t) => {
+  const build = mkdtempSync(join(tmpdir(), "moto-publish-"));
+  t.after(() => rmSync(build, { recursive: true, force: true }));
+  const bin = join(build, "moto_gps_esp32.bin");
+
+  assert.match(releaseConfigProblem(bin), /no config\/sdkconfig\.h/u);
+
+  mkdirSync(join(build, "config"));
+  writeFileSync(join(build, "config/sdkconfig.h"), "#define CONFIG_MOTO_LCD_H_RES 466\n");
+  assert.match(releaseConfigProblem(bin), /bench build/u);
+
+  writeFileSync(join(build, "config/sdkconfig.h"),
+                "#define CONFIG_MOTO_LCD_H_RES 466\n#define CONFIG_MOTO_TLOG_DISABLE 1\n");
+  assert.equal(releaseConfigProblem(bin), null);
 });
 
 test("the digest is lower-case SHA-256", () => {

@@ -1,7 +1,12 @@
-# Release overlay, applied on top of sdkconfig.defaults:
+# Release overlay, applied on top of sdkconfig.defaults. This is the image
+# scripts/publish_firmware.mjs publishes for OTA; the bench build in build/
+# keeps the recorder. A saved sdkconfig wins over the defaults files, so
+# remove it before configuring:
+#   rm -f platforms/esp32/build-release/sdkconfig
 #   idf.py -C platforms/esp32 -B platforms/esp32/build-release \
 #     -DSDKCONFIG=build-release/sdkconfig \
-#     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
+#     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" \
+#     reconfigure build
 # The partition table is shared with the development build.
 
 # No telemetry recorder: the tlog partition is left untouched.
