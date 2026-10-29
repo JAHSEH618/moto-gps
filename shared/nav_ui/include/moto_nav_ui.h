@@ -353,7 +353,9 @@ struct _lv_obj_t;
 struct _lv_obj_t *moto_nav_ui_page_root(moto_ui_page_t page);
 
 /* Lean-page profiling (bench only). The clock is supplied by the platform so
-   the shared UI stays free of esp_timer; when it is NULL the timers are off. */
+   the shared UI stays free of esp_timer; when it is NULL the timers are off.
+   Built with MOTO_UI_DEBUG_TOOLS=0 (the firmware's release image), these are
+   no-ops: nothing is timed or hidden, and the stats read zero. */
 typedef uint64_t (*moto_ui_debug_clock_t)(void);
 
 typedef enum {

@@ -52,6 +52,9 @@ bool board_port_lock(uint32_t timeout_ms);
 /** Release a lock previously acquired with board_port_lock. */
 void board_port_unlock(void);
 
+/* Bench frame-time window. Not built into a release image
+   (CONFIG_MOTO_BENCH_TOOLS_DISABLE): there the timing callbacks are never
+   registered and these three do not exist. */
 /** Reset the display frame-time window (bench page measurements). */
 void board_port_reset_display_timing(void);
 /** Print the current window on demand, tagged `manual`. */

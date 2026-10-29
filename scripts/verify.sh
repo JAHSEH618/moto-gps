@@ -142,22 +142,25 @@ build_esp32() {
   fi
   # export.sh is written for bash; sourcing it from zsh leaves idf.py off PATH.
   bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 build" || return 1
-  # Release overlay (CONFIG_MOTO_TLOG_DISABLE=y) in its own build dir: the
-  # image scripts/publish_firmware.mjs publishes, and the reason the disabled
-  # branches keep compiling. A saved sdkconfig wins over the
-  # defaults files and a Kconfig edit does not trigger a reconfigure, so the
-  # release config is regenerated every time and then checked.
+  # Release overlay (CONFIG_MOTO_TLOG_DISABLE=y, CONFIG_MOTO_BENCH_TOOLS_DISABLE=y)
+  # in its own build dir: the image scripts/publish_firmware.mjs publishes, and
+  # the reason the disabled branches keep compiling. A saved sdkconfig wins
+  # over the defaults files and a Kconfig edit does not trigger a reconfigure,
+  # so the release config is regenerated every time and then checked.
   rm -f platforms/esp32/build-release/sdkconfig
   bash -c ". '$idf/export.sh' >/dev/null && idf.py -C platforms/esp32 \
     -B platforms/esp32/build-release \
     -DSDKCONFIG=build-release/sdkconfig \
     -DSDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.release' \
     reconfigure build" || return 1
-  if ! grep -q '^#define CONFIG_MOTO_TLOG_DISABLE 1' \
-      platforms/esp32/build-release/config/sdkconfig.h; then
-    echo "release build does not have CONFIG_MOTO_TLOG_DISABLE set"
-    return 1
-  fi
+  local flag
+  for flag in CONFIG_MOTO_TLOG_DISABLE CONFIG_MOTO_BENCH_TOOLS_DISABLE; do
+    if ! grep -q "^#define $flag 1" \
+        platforms/esp32/build-release/config/sdkconfig.h; then
+      echo "release build does not have $flag set"
+      return 1
+    fi
+  done
 }
 
 verify_app_size() {

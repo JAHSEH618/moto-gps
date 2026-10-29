@@ -17,5 +17,7 @@ void burn_in_note_navigation(bool route_active);
 // Returns true if the panel should now be on.
 bool burn_in_toggle_panel();
 
-// `burnin ...` bench commands; `args` is the text after "burnin".
+// `burnin ...` bench commands; `args` is the text after "burnin". Not built
+// into a release image (CONFIG_MOTO_BENCH_TOOLS_DISABLE); the protection
+// itself is.
 void burn_in_command(const char* args);

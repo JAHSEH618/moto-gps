@@ -4,7 +4,11 @@
 
 #include "esp_heap_caps.h"  // HEAPPROBE
 #include "sdkconfig.h"
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE  // HEAPPROBE
 #define HEAPPROBE(label) ESP_LOGW("heapprobe", "%-14s free %u min %u largest %u", label, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))  // HEAPPROBE
+#else  // HEAPPROBE
+#define HEAPPROBE(label) ((void)0)  // HEAPPROBE
+#endif  // HEAPPROBE
 #include "ams_client_nimble.h"
 #include "ble_nav_transport_nimble.h"
 #include "bsp/esp-bsp.h"
@@ -66,10 +70,18 @@ static moto::device::OtaUpdate* g_ota = nullptr;
 // §3.6, W0). Constructed in app_main once the presenter exists.
 alignas(PhoneNavBridge) EXT_RAM_BSS_ATTR static std::uint8_t
     g_phone_bridge_storage[sizeof(PhoneNavBridge)];
+// The `sys tasks` registry. Like every bench tool, absent from a release image
+// (CONFIG_MOTO_BENCH_TOOLS_DISABLE).
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
 static TaskHandle_t g_task_cmd = nullptr;
 static TaskHandle_t g_task_ui_flags = nullptr;
 static TaskHandle_t g_task_demo = nullptr;
 static TaskHandle_t g_task_power = nullptr;
+// Where xTaskCreate stores a handle for `sys tasks`; nowhere in a release.
+#define BENCH_TASK_HANDLE(handle) (&(handle))
+#else
+#define BENCH_TASK_HANDLE(handle) nullptr
+#endif
 
 // "Screen unlit for 6 hours clears the tlog" retention. RTC memory survives
 // deep sleep, and the RTC counter keeps counting through it, so this measures
@@ -112,6 +124,7 @@ bool screen_unlit_for_clear(std::uint64_t* elapsed_us = nullptr) {
   if (elapsed_us != nullptr) *elapsed_us = elapsed;
   return elapsed >= kUnlitClearAfterUs;
 }
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
 // Bench-only lean sweep: a repeatable 40 Hz UI load for the page frame-rate
 // measurement. Zero means off.
 static volatile std::uint32_t g_ui_bench_lean_until_ms = 0;
@@ -124,6 +137,12 @@ static std::uint32_t g_dbg_frames0 = 0;
 std::uint64_t ui_debug_clock_us() {
   return static_cast<std::uint64_t>(esp_timer_get_time());
 }
+#else
+// No bench sweep and no bench battery value: the readers below fold to the
+// rider's path.
+constexpr std::uint32_t g_ui_bench_lean_until_ms = 0;
+constexpr bool g_ui_bench_battery = false;
+#endif
 
 moto::device::MountRecord mount_record_from(
     const moto::motion::MountCalibration& mount) {
@@ -148,6 +167,7 @@ void lean_mode_changed(std::uint8_t mode, void*) {
   tlog.note_mode(mode, fast ? 448 : 125, fast ? 112 : 125);
 }
 
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
 const char* task_state_name(eTaskState state) {
   switch (state) {
     case eRunning: return "running";
@@ -195,6 +215,7 @@ void log_tasks() {
            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 }
+#endif  // CONFIG_MOTO_BENCH_TOOLS_DISABLE
 
 void ui_flags_task(void*) {
   while (true) {
@@ -223,7 +244,11 @@ int read_console_byte() {
 }
 
 void serial_command_task(void* context) {
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
   auto* sensor = static_cast<MotionHeadingSensor*>(context);
+#else
+  (void)context;
+#endif
   if (!usb_serial_jtag_is_driver_installed()) {
     usb_serial_jtag_driver_config_t config =
         USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -246,7 +271,26 @@ void serial_command_task(void* context) {
     }
     line[used] = '\0';
     used = 0;
-    if (std::strcmp(line, "imu stats") == 0) {
+    // Read-only status: all a release image answers. Everything after the
+    // #ifndef is a bench tool.
+    if (std::strcmp(line, "tlog status") == 0) {
+      std::uint64_t unlit_us = 0;
+      const bool unlit = screen_unlit_for_clear(&unlit_us);
+      ESP_LOGI(kTag,
+               "tlog status: ready=%d full=%d dirty=%d records=%lu blocks=%lu "
+               "unlit=%llu s unlit_clear=%d",
+               tlog.ready() ? 1 : 0, tlog.full() ? 1 : 0,
+               tlog.dirty() ? 1 : 0,
+               static_cast<unsigned long>(tlog.records()),
+               static_cast<unsigned long>(tlog.blocks()),
+               static_cast<unsigned long long>(unlit_us / 1'000'000ULL),
+               unlit ? 1 : 0);
+    } else if (std::strcmp(line, "wifi status") == 0) {
+      if (g_wifi != nullptr) g_wifi->log_status();
+    } else if (std::strcmp(line, "ota status") == 0) {
+      if (g_ota != nullptr) g_ota->log_status();
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
+    } else if (std::strcmp(line, "imu stats") == 0) {
       const moto::motion::LatchStats& latch = sensor->latch_stats();
       const moto::motion::FifoStats& fifo = sensor->fifo_stats();
       const char* reason = sensor->fallback_reason();
@@ -392,18 +436,6 @@ void serial_command_task(void* context) {
       ESP_LOGW(kTag, "tlog clear requested; rebooting to erase the partition");
       vTaskDelay(pdMS_TO_TICKS(100));
       esp_restart();
-    } else if (std::strcmp(line, "tlog status") == 0) {
-      std::uint64_t unlit_us = 0;
-      const bool unlit = screen_unlit_for_clear(&unlit_us);
-      ESP_LOGI(kTag,
-               "tlog status: ready=%d full=%d dirty=%d records=%lu blocks=%lu "
-               "unlit=%llu s unlit_clear=%d",
-               tlog.ready() ? 1 : 0, tlog.full() ? 1 : 0,
-               tlog.dirty() ? 1 : 0,
-               static_cast<unsigned long>(tlog.records()),
-               static_cast<unsigned long>(tlog.blocks()),
-               static_cast<unsigned long long>(unlit_us / 1'000'000ULL),
-               unlit ? 1 : 0);
     } else if (std::strncmp(line, "ui page ", 8) == 0) {
       // Bench-only page switch: lets the frame-time window be attributed to a
       // page without touching the screen. The touch path stays authoritative
@@ -575,12 +607,8 @@ void serial_command_task(void* context) {
       if (g_wifi != nullptr) g_wifi->request_up();
     } else if (std::strcmp(line, "wifi down") == 0) {
       if (g_wifi != nullptr) g_wifi->request_down();
-    } else if (std::strcmp(line, "wifi status") == 0) {
-      if (g_wifi != nullptr) g_wifi->log_status();
     } else if (std::strcmp(line, "wifi forget") == 0) {
       if (g_wifi != nullptr) g_wifi->request_forget();
-    } else if (std::strcmp(line, "ota status") == 0) {
-      if (g_ota != nullptr) g_ota->log_status();
     } else if (std::strcmp(line, "ota confirm") == 0) {
       // Bench: confirms the running image without waiting for a handshake, for
       // a device being tested without a phone.
@@ -590,6 +618,7 @@ void serial_command_task(void* context) {
       ESP_LOGI(kTag, "display timing window reset");
     } else if (std::strcmp(line, "ui perf") == 0) {
       board_port_log_display_timing();
+#endif  // CONFIG_MOTO_BENCH_TOOLS_DISABLE
     }
   }
 }
@@ -871,6 +900,7 @@ void demo_tick_task(void* context) {
   while (true) {
     const auto now_ms = static_cast<std::uint64_t>(esp_timer_get_time()) /
                         1'000U;
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
     if (g_ui_bench_lean_until_ms != 0) {
       static std::uint32_t bench_attempts = 0;
       static std::uint32_t bench_applied = 0;
@@ -898,6 +928,7 @@ void demo_tick_task(void* context) {
       vTaskDelay(pdMS_TO_TICKS(25));
       continue;
     }
+#endif
     bridge->update_demo(now_ms);
     // Match the display and route interpolation at 40 Hz. Keeping all three
     // clocks phase-compatible avoids periodic long frame gaps.
@@ -1011,7 +1042,9 @@ extern "C" void app_main(void) {
 
   ESP_LOGI(kTag, "starting %dx%d RGB565 firmware target",
            MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
   moto_nav_ui_debug_set_clock(ui_debug_clock_us);
+#endif
 
   // Read the stored settings before the first frame: the boot screen belongs
   // to the same paper system as the instrument, and booting it green (or in
@@ -1042,7 +1075,9 @@ extern "C" void app_main(void) {
   }
 
   HEAPPROBE("before_board");  // HEAPPROBE
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE  // HEAPPROBE
   heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE
+#endif  // HEAPPROBE
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
     ESP_LOGE(kTag, "board initialization stopped before shared UI startup: %s",
@@ -1247,11 +1282,11 @@ extern "C" void app_main(void) {
              esp_err_to_name(motion_result));
   } else {
     if (xTaskCreate(serial_command_task, "moto_cmd", 4'096, &motion_sensor, 1,
-                    &g_task_cmd) != pdPASS) {
+                    BENCH_TASK_HANDLE(g_task_cmd)) != pdPASS) {
       ESP_LOGW(kTag, "serial command task could not start");
     }
     if (xTaskCreate(ui_flags_task, "moto_ui_flags", 3'072, nullptr, 1,
-                    &g_task_ui_flags) != pdPASS) {
+                    BENCH_TASK_HANDLE(g_task_ui_flags)) != pdPASS) {
       ESP_LOGW(kTag, "UI flag task could not start");
     }
   }
@@ -1260,17 +1295,19 @@ extern "C" void app_main(void) {
   // Demo generation fills the retained snapshot in place, but geometry and
   // LVGL projection still use deeper C++ call frames than a trivial task.
   if (xTaskCreate(demo_tick_task, "moto_demo", 6'144, &phone_bridge, 2,
-                  &g_task_demo) != pdPASS) {
+                  BENCH_TASK_HANDLE(g_task_demo)) != pdPASS) {
     ESP_LOGW(kTag, "navigation demo task could not start");
   }
   if (xTaskCreate(power_button_task, "moto_power", 3'072, nullptr, 3,
-                  &g_task_power) != pdPASS) {
+                  BENCH_TASK_HANDLE(g_task_power)) != pdPASS) {
     ESP_LOGW(kTag, "PWR long-hold task could not start");
   }
   burn_in_start();
   HEAPPROBE("after_tasks");  // HEAPPROBE
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE  // HEAPPROBE
   ESP_LOGW("heapprobe", "main stack free %u B", (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));  // HEAPPROBE
   heap_caps_print_heap_info(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // HEAPPROBE
+#endif  // HEAPPROBE
 
   ESP_LOGI(kTag,
            "iPhone BLE + QMI heading -> NavPresenter -> shared LVGL running");

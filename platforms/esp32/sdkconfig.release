@@ -1,7 +1,7 @@
 # Release overlay, applied on top of sdkconfig.defaults. This is the image
 # scripts/publish_firmware.mjs publishes for OTA; the bench build in build/
-# keeps the recorder. A saved sdkconfig wins over the defaults files, so
-# remove it before configuring:
+# keeps the recorder and the bench tools. A saved sdkconfig wins over the
+# defaults files, so remove it before configuring:
 #   rm -f platforms/esp32/build-release/sdkconfig
 #   idf.py -C platforms/esp32 -B platforms/esp32/build-release \
 #     -DSDKCONFIG=build-release/sdkconfig \
@@ -11,3 +11,6 @@
 
 # No telemetry recorder: the tlog partition is left untouched.
 CONFIG_MOTO_TLOG_DISABLE=y
+# No bench tools: the serial console answers only `ota status`, `tlog status`
+# and `wifi status`; no heap probes, display timing log or `ui dbg` timers.
+CONFIG_MOTO_BENCH_TOOLS_DISABLE=y

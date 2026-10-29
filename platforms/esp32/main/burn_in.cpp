@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
 namespace {
 constexpr char kTag[] = "burn_in";
@@ -31,6 +32,7 @@ std::uint64_t now_ms() {
   return static_cast<std::uint64_t>(esp_timer_get_time()) / 1'000U;
 }
 
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
 moto::device::BurnInConfig bench_fast_config() {
   moto::device::BurnInConfig config;
   config.orbit_period_ms = 2'000;
@@ -38,6 +40,7 @@ moto::device::BurnInConfig bench_fast_config() {
   config.off_after_ms = 15'000;
   return config;
 }
+#endif
 
 void log_status(const char* reason) {
   const std::uint64_t now = now_ms();
@@ -189,6 +192,7 @@ void burn_in_note_navigation(bool route_active) {
   g_policy.note_navigation(route_active, now);
 }
 
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
 void burn_in_command(const char* args) {
   while (*args == ' ') ++args;
   const std::uint64_t now = now_ms();
@@ -227,3 +231,4 @@ void burn_in_command(const char* args) {
   }
   log_status(args);
 }
+#endif  // CONFIG_MOTO_BENCH_TOOLS_DISABLE

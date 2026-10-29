@@ -15,4 +15,20 @@ config MOTO_TLOG_DISABLE
         this option existed has no macro at all, and that must mean the
         recorder stays on.
 
+config MOTO_BENCH_TOOLS_DISABLE
+    bool "Leave out the bench debug tools (release builds)"
+    default n
+    help
+        The serial console's bench commands (`imu ...`, `sys tasks`,
+        `ui page|theme|battery|bench|dbg|perf`, `burnin`, `wifi up|down|forget`,
+        `ota confirm`, `tlog clear`), the boot heap probes, the display
+        frame-time window that logs every 5 s, and the shared UI's `ui dbg`
+        per-layer timers. Release builds set this (see sdkconfig.release): the
+        console keeps only `ota status`, `tlog status` and `wifi status`.
+        `ota confirm` in particular marks an image valid without the phone's
+        handshake, which defeats the rollback guard.
+
+        Phrased as "disable" on purpose, like MOTO_TLOG_DISABLE: a build
+        directory configured before this option existed keeps its tools.
+
 endmenu
