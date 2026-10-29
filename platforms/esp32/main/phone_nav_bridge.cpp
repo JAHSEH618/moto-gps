@@ -186,6 +186,7 @@ void add_demo_road_context(moto::nav::NavSnapshot& output) {
   output.has_area_context = false;
   output.area_context_point_count = 0;
   output.area_context_count = 0;
+  output.parking_context_count = 0;
   output.map_scene_revision = 0;
 }
 
@@ -205,6 +206,7 @@ void clear_area_context(moto::nav::NavSnapshot& output) {
   output.has_area_context = false;
   output.area_context_point_count = 0;
   output.area_context_count = 0;
+  output.parking_context_count = 0;
 }
 
 void clear_map_context(moto::nav::NavSnapshot& output) {
@@ -484,7 +486,8 @@ void PhoneNavBridge::on_link_state(bool active) {
 void PhoneNavBridge::on_imu_sample(
     float heading_rate_dps,
     const moto::motion::AttitudeEstimate& attitude,
-    std::uint64_t sample_ms) {
+    std::uint64_t sample_ms,
+    const moto::motion::SpeedSample& speed) {
   bool should_present = false;
   bool should_send_attitude = false;
   {
@@ -511,6 +514,13 @@ void PhoneNavBridge::on_imu_sample(
       snapshot_.lateral_g = 0.0F;
     }
 
+    // The 0-100 clock's speed: dated on this clock even when there is none,
+    // so a live run can tell how long it has been missing.
+    snapshot_.has_measured_speed = speed.valid;
+    snapshot_.measured_speed_mps = speed.valid ? speed.mps : 0.0F;
+    snapshot_.measured_speed_ms =
+        sample_ms == 0 ? 1U : static_cast<std::uint32_t>(sample_ms);
+
     if (!demo_active_ &&
         heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
       snapshot_.heading_deg = heading_fusion_.heading_deg();
@@ -527,6 +537,7 @@ void PhoneNavBridge::on_imu_sample(
     if (sample_ms - last_motion_present_ms_ >= 25 &&
         (snapshot_.has_route_view ||
          snapshot_.display_page == moto::nav::DisplayPage::Compass ||
+         snapshot_.display_page == moto::nav::DisplayPage::Performance ||
          snapshot_.has_attitude)) {
       // Preserve the 25 ms phase. Setting this to sample_ms quantizes every
       // interval to four 8 ms samples (32 ms), silently reducing 40 to 31 Hz.
@@ -1186,7 +1197,8 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
           moto::nav::kBuildingContextFootprintCapacity ||
       building_point_count > moto::nav::kBuildingContextPointCapacity ||
       input.areas.size() > moto::nav::kAreaContextCapacity ||
-      area_point_count > moto::nav::kAreaContextPointCapacity) {
+      area_point_count > moto::nav::kAreaContextPointCapacity ||
+      input.pois.size() > moto::nav::kParkingContextCapacity) {
     return moto::ble::AckStatus::Unsupported;
   }
 
@@ -1257,6 +1269,16 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
       };
     }
 
+    // Parking is the only point class today; anything else is not drawn.
+    std::size_t next_parking = 0;
+    for (const auto& poi : input.pois) {
+      if (poi.poi_class != moto::ble::MapPoiClass::Parking) continue;
+      target.parking_context_points[next_parking++] = {
+          static_cast<double>(poi.point.latitude_e6) / 1'000'000.0,
+          static_cast<double>(poi.point.longitude_e6) / 1'000'000.0,
+      };
+    }
+
     target.road_context_point_count =
         static_cast<std::uint8_t>(next_road_point);
     target.road_context_polyline_count =
@@ -1271,6 +1293,7 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
         static_cast<std::uint8_t>(next_area_point);
     target.area_context_count = static_cast<std::uint8_t>(next_area);
     target.has_area_context = next_area > 0;
+    target.parking_context_count = static_cast<std::uint8_t>(next_parking);
     target.map_origin = {
         static_cast<double>(input.view_origin.latitude_e6) / 1'000'000.0,
         static_cast<double>(input.view_origin.longitude_e6) / 1'000'000.0,
@@ -1280,14 +1303,15 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
   }
   ESP_LOGI(kTag,
            "map scene committed: revision=%lu roads=%u/%u buildings=%u/%u "
-           "areas=%u/%u",
+           "areas=%u/%u parking=%u",
            static_cast<unsigned long>(input.scene_revision),
            static_cast<unsigned>(input.roads.size()),
            static_cast<unsigned>(road_point_count),
            static_cast<unsigned>(input.buildings.size()),
            static_cast<unsigned>(building_point_count),
            static_cast<unsigned>(input.areas.size()),
-           static_cast<unsigned>(area_point_count));
+           static_cast<unsigned>(area_point_count),
+           static_cast<unsigned>(input.pois.size()));
   present_navigation();
   return moto::ble::AckStatus::Ok;
 }
@@ -1596,6 +1620,9 @@ void PhoneNavBridge::render_pending() {
       render_snapshot_.pitch_deg = snapshot_.pitch_deg;
       render_snapshot_.longitudinal_g = snapshot_.longitudinal_g;
       render_snapshot_.lateral_g = snapshot_.lateral_g;
+      render_snapshot_.has_measured_speed = snapshot_.has_measured_speed;
+      render_snapshot_.measured_speed_mps = snapshot_.measured_speed_mps;
+      render_snapshot_.measured_speed_ms = snapshot_.measured_speed_ms;
     }
     if (navigation) {
       render_phone_connection_ = ui_phone_connection_;

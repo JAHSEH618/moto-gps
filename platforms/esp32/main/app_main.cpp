@@ -764,8 +764,14 @@ void update_motion_heading(
     const moto::motion::AttitudeEstimate& attitude,
     const RawImuSample& raw, std::uint64_t sample_ms, void* context) {
   if (g_ui_bench_lean_until_ms == 0) {
+    // This callback runs on the sensor task that steps the speed fusion, so
+    // its state can be read here without a lock.
+    const moto::motion::SpeedSample speed =
+        g_sensor != nullptr
+            ? g_sensor->speed().sample(static_cast<std::uint32_t>(sample_ms))
+            : moto::motion::SpeedSample{};
     static_cast<PhoneNavBridge*>(context)->on_imu_sample(
-        heading_rate_dps, attitude, sample_ms);
+        heading_rate_dps, attitude, sample_ms, speed);
   }
   // Vehicle motion keeps the panel lit (DESIGN_V2 §2.6): the same stillness
   // gate the speed fusion calls parked. Four times a second is plenty for a

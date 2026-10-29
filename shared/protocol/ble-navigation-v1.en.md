@@ -230,7 +230,9 @@ device takes `0x1A` and reports `0x1B`; the phone shows `0x1B`), bit15 OTA (both
 phone offers an image and takes `0x1D`; the device takes `0x1C` and reports `0x1D`), bit16
 firmware info (both ends: the device reports `0x1E`; the phone reads it), bit17 map areas
 (advertised by the device: it draws the optional area section at the end of MapScene; the phone
-includes that section only for a device with this bit, see §6.8).
+includes that section only for a device with this bit, see §6.8), bit18 map POIs (advertised
+by the device: it draws the point section after the area section, today only a P for a car
+park; see §6.8).
 
 `0x16`, `0x17` and `0x18` are optional messages: the phone only sends them to a peer that
 advertises the matching capability. An older firmware does not know the types at all, rather
@@ -438,6 +440,14 @@ repeat area_count:
   repeat point_count:
     svarint lat_delta_e6     relative to view_origin
     svarint lon_delta_e6
+
+Optional point section (2026-10-29, only to a device that advertises bit18; it follows the area
+section, which is then written even with no areas, as area_count = 0):
+u8  poi_count               1..16; with no points the section is absent
+repeat poi_count:
+  u8 poi_class              0 parking (a car park the basemap has as a point, not an outline)
+  svarint lat_delta_e6      relative to view_origin
+  svarint lon_delta_e6
 ```
 
 The last point of a building or an area must not repeat the first point; the renderer adds the
@@ -446,8 +456,12 @@ trailing section after the buildings and does not bump the payload revision: a s
 areas is byte-for-byte the old layout (golden `map_scene.payload`), and a scene with areas only
 appends to it (`map_scene_areas.payload`). An older firmware rejects the section as
 `TrailingPayload` and drops the whole frame, so the phone includes it only when the device
-advertises bit17 and otherwise sends the same scene without areas. The decoder refuses an empty
-section (`area_count = 0`) so that a scene has exactly one encoding. All
+advertises bit17 and otherwise sends the same scene without areas. The decoder refuses an
+`area_count = 0` that no point section follows, and a `poi_count = 0`, so that a scene has
+exactly one encoding. The point section only appends too: `map_scene_pois.payload` starts with
+the bytes of `map_scene_areas.payload`, and `map_scene_pois_only.payload` is a scene with no
+areas whose area section counts zero. An older firmware that only advertises bit17 rejects the
+point section as `TrailingPayload`, so the phone includes it only for a device with bit18. All
 points must be inside the safety bound of `±100000 E6` in latitude and longitude from the
 origin; the app should still do the actual circular/rectangular clipping by `radius_m`. The
 complete payload should carry `ACK_REQUESTED` and is Acked only after validation, decoding and a
@@ -456,7 +470,7 @@ revision, a partial packet and a CRC error all leave the screen unchanged.
 
 This encoding is usually about 1.8–2.9 KiB for 255 road points + 192 building points; under a
 185-byte GATT value that is about 11–18 protocol fragments. With a full 12 areas / 128 points
-added and every coordinate at the `±100000 E6` bound (3 bytes per varint), the worst case still
+and 16 points of interest added and every coordinate at the `±100000 E6` bound (3 bytes per varint), the worst case still
 fits the 4 KiB message limit; `test_widest_map_scene_fits_one_message` holds that. It must not be sent at the
 positioning frame rate: refreshing once after about 100 m of travel, when approaching the window
 edge or when crossing a 500 m offline tile is enough. The current data path is connected:

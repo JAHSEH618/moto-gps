@@ -9,6 +9,7 @@
 #define MOTO_UI_BUILDING_FOOTPRINT_CAPACITY 24
 #define MOTO_UI_AREA_POINT_CAPACITY 128
 #define MOTO_UI_AREA_CAPACITY 12
+#define MOTO_UI_PARKING_CAPACITY 16
 #define MOTO_UI_CANVAS_WIDTH 466
 #define MOTO_UI_CANVAS_HEIGHT 466
 
@@ -197,6 +198,14 @@ typedef struct {
     uint32_t route_generation;
     uint32_t map_scene_revision;
     uint16_t speed_kph;
+    /* The 0-100 clock's speed sample: unrounded, and dated on a monotonic
+       millisecond clock (the board's own for the fused speed, the phone fix
+       time otherwise). run_speed_ms is set even when has_run_speed is 0, so
+       the clock can tell how long the speed has been missing; 0 means no
+       sample at all. */
+    uint8_t has_run_speed;
+    float run_speed_kph;
+    uint32_t run_speed_ms;
     uint16_t speed_limit_kph;
     uint16_t heading_deg;
     uint8_t route_point_count;
@@ -217,6 +226,10 @@ typedef struct {
     moto_ui_point_t area_points[MOTO_UI_AREA_POINT_CAPACITY];
     uint8_t area_count;
     moto_ui_area_span_t areas[MOTO_UI_AREA_CAPACITY];
+    /* Car parks the basemap has only as points, drawn as a P on the GTA map
+       whether or not buildings are shown. */
+    uint8_t parking_count;
+    moto_ui_point_t parking_points[MOTO_UI_PARKING_CAPACITY];
     const char *road_name;
     const char *next_road_name;
     /* Device-side attitude telemetry for the PERF / LEAN pages. */

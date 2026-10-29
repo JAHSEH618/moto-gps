@@ -11,6 +11,7 @@
 #include "moto_nav_ui_backends.h"
 #include "moto_nav_ui_memory.h"
 #include "moto_nav_ui_text.h"
+#include "moto_performance_clock.hpp"
 
 LV_FONT_DECLARE(moto_font_nav_16);
 // GB2312 level 1 (3,755 characters) plus Latin at two sizes. Track titles and
@@ -285,8 +286,10 @@ static_assert(sizeof(kPerfTargets) / sizeof(kPerfTargets[0]) ==
                   MOTO_UI_PERFORMANCE_TARGET_COUNT,
               "one best slot per 0-100 target");
 constexpr std::uint16_t kPerfDefaultTargetKph = 100;
-// perf_target_line value while the line reads STOP TO ARM.
+// perf_target_line values while the line reads STOP TO ARM, and while the
+// clock has no speed to time from (no phone fix, or one too old to trust).
 constexpr std::uint16_t kPerfHintLine = 0xFFFF;
+constexpr std::uint16_t kPerfNoSpeedLine = 0xFFFE;
 constexpr int kPerfSegmentCount = 12;
 // The speed slab under the compass and the friction circle: the chord at its
 // bottom edge (y +122 design, 30 tall) is the width that stays inside r 195.
@@ -297,20 +300,17 @@ constexpr std::uint32_t kHoldToClearMs = 2'000;
 // A finger that moved further than this between press and release was
 // dragging (a vertical drag makes no page gesture), not tapping.
 constexpr int32_t kTapSlopPx = 24;
-// A stop has to look deliberate: braking to 0 for a red light is not a new
-// run until the wheels have been still for a moment.
-constexpr std::uint32_t kPerfRearmStillMs = 1'500;
-// A run that is not going to reach the target has to end, not tick forever:
-// rolling off the throttle, stopping at a light, or a missed launch are all
-// ordinary ways for a 0-100 attempt to die. DESIGN_V2 §5 specifies the same
-// abort window (30 s, a >5 km/h fall from the peak).
-constexpr std::uint32_t kPerfTimeoutMs = 30'000;
-constexpr std::uint16_t kPerfAbortDropKph = 5;
+// The clock's own rules (rearm after a 1.5 s standstill, the 30 s / 5 km/h
+// abort window of DESIGN_V2 §5, interpolated crossings) live in
+// moto_performance_clock.cpp; this file only shows what it decided.
 // Home is only reachable while the bike is effectively stopped; see
 // home_shortcut_event().
 constexpr std::uint16_t kHomeShortcutMaxSpeedKph = 5;
 // Home blip geometry, in design pixels like every other HUD measurement.
 constexpr int kHomeBlipSizeDesign = 28;
+// A car park the basemap has only as a point: a black plate with a P, small
+// enough to sit on a block without hiding the street beside it.
+constexpr int kParkingPlateDesign = 17;
 // The panel is round: the ring sits just inside the glass, and a blip further
 // out is clamped to it rather than dropped.
 constexpr std::uint32_t kHomeHintMs = 3'000;
@@ -433,6 +433,16 @@ struct Ui {
     moto_ui_area_span_t nav_area_spans[MOTO_UI_AREA_CAPACITY]{};
     std::uint8_t nav_area_point_count = 0;
     std::uint8_t nav_area_count = 0;
+    // MapScene car parks: a P plate each, over the streets and under the
+    // route, moving with the rest of the map between fixes.
+    lv_obj_t *nav_parking_layer = nullptr;
+    float nav_parking_x[MOTO_UI_PARKING_CAPACITY]{};
+    float nav_parking_y[MOTO_UI_PARKING_CAPACITY]{};
+    float nav_parking_target_x[MOTO_UI_PARKING_CAPACITY]{};
+    float nav_parking_target_y[MOTO_UI_PARKING_CAPACITY]{};
+    lv_point_t nav_parking_points[MOTO_UI_PARKING_CAPACITY]{};
+    std::uint8_t nav_parking_count = 0;
+    std::uint32_t nav_parking_scene_revision = 0;
     std::uint32_t nav_area_scene_revision = 0;
     lv_obj_t *nav_roads[MOTO_UI_ROAD_POLYLINE_CAPACITY]{};
     // One layer under every road: the radar's dark casing. Drawn as a single
@@ -573,11 +583,9 @@ struct Ui {
     lv_obj_t *perf_segments[kPerfSegmentCount]{};
     lv_obj_t *perf_strip = nullptr;
     lv_timer_t *perf_timer_task = nullptr;
-    enum class PerfState : std::uint8_t { Armed, Running, Launched };
-    PerfState perf_state;
-    std::uint32_t perf_run_start_ms = 0;
-    std::uint32_t perf_still_since_ms = 0;
-    std::uint32_t perf_last_centis = 0;
+    // lv_tick when the clock took its newest sample: the stopwatch runs on
+    // from that sample's elapsed time between samples.
+    std::uint32_t perf_sample_tick = 0;
     // The target line's content: a target in km/h, kPerfHintLine for the
     // standstill hint, 0 before the first paint.
     std::uint16_t perf_target_line = 0;
@@ -585,14 +593,6 @@ struct Ui {
     bool perf_press_active = false;
     std::uint32_t perf_press_start_ms = 0;
     lv_point_t perf_press_point{};
-    // Highest speed seen since the clock started; the abort rule compares
-    // against this, not the target, so a run that never gets close still ends.
-    std::uint16_t perf_peak_kph = 0;
-    // An aborted attempt must not restart from a rolling 5 km/h: the rider
-    // stopped that run on purpose. Rearm needs a real 1.5 s standstill, and
-    // so does every arrival on the page: the clock only follows speed while
-    // the page is shown, so a page opened at 60 km/h is not a launch.
-    bool perf_require_still = false;
     lv_obj_t *perf_long_g = nullptr;
     lv_obj_t *perf_lat_g = nullptr;
     lv_obj_t *perf_gg_dot = nullptr;
@@ -655,7 +655,6 @@ struct Ui {
     void *lean_clear_context = nullptr;
     moto_ui_performance_callback_t perf_callback = nullptr;
     void *perf_context = nullptr;
-    std::uint32_t perf_run_id = 0;
     lv_obj_t *lean_status_plate = nullptr;
     lv_obj_t *lean_status_text = nullptr;
     lv_obj_t *lean_progress = nullptr;
@@ -697,6 +696,9 @@ MOTO_UI_EXT_RAM Ui ui;
 // restores the bests from NVS at boot.
 std::uint16_t g_perf_target_kph = kPerfDefaultTargetKph;
 std::uint32_t g_perf_best_ms[MOTO_UI_PERFORMANCE_TARGET_COUNT]{};
+// The clock outlives the tree too, so its run counter never repeats an id the
+// phone has already de-duplicated on (PerformanceRun, 0x19).
+moto::nav_ui::PerformanceClock g_perf_clock;
 
 std::uint32_t &perf_best_ms() {
     for(std::size_t i = 0; i < MOTO_UI_PERFORMANCE_TARGET_COUNT; ++i) {
@@ -1790,6 +1792,52 @@ void draw_area_fills(lv_event_t *event) {
     }
 }
 
+void draw_parking_plates(lv_event_t *event) {
+    if(lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
+    if(ui.nav_parking_count == 0) return;
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    const int32_t size = px(kParkingPlateDesign);
+    const int32_t half = size / 2;
+    // A plate reaching past r 195 would put ink outside the glass; one whose
+    // centre is that far out is about to leave the map anyway.
+    const float reach =
+        195.0F - static_cast<float>(half) * 1.415F;
+    const float centre = MOTO_UI_CANVAS_WIDTH / 2.0F;
+
+    lv_draw_rect_dsc_t plate;
+    lv_draw_rect_dsc_init(&plate);
+    plate.bg_color = ui.palette.route_shadow;
+    plate.bg_opa = LV_OPA_COVER;
+    plate.radius = 0;
+    plate.border_width = 0;
+    lv_draw_label_dsc_t letter;
+    lv_draw_label_dsc_init(&letter);
+    letter.font = &moto_font_display_24;
+    letter.color = ui.palette.road_class[1];
+    letter.align = LV_TEXT_ALIGN_CENTER;
+    letter.text = "P";
+    const int32_t line = lv_font_get_line_height(letter.font);
+
+    for(std::uint8_t i = 0; i < ui.nav_parking_count; ++i) {
+        const lv_point_t at = ui.nav_parking_points[i];
+        if(std::hypot(static_cast<float>(at.x) - centre,
+                      static_cast<float>(at.y) - centre) > reach) {
+            continue;
+        }
+        const int32_t x = area.x1 + at.x;
+        const int32_t y = area.y1 + at.y;
+        const lv_area_t box = {x - half, y - half, x - half + size - 1,
+                               y - half + size - 1};
+        lv_draw_rect(layer, &plate, &box);
+        const lv_area_t text = {box.x1, y - line / 2, box.x2,
+                                y - line / 2 + line - 1};
+        lv_draw_label(layer, &letter, &text);
+    }
+}
+
 void draw_building_fills(lv_event_t *event) {
     if(lv_event_get_code(event) != LV_EVENT_DRAW_MAIN) return;
     if(ui.nav_building_point_count < 3 ||
@@ -2082,6 +2130,21 @@ bool apply_area_geometry_frame() {
     return pixels_changed;
 }
 
+bool apply_parking_geometry_frame() {
+    bool pixels_changed = false;
+    for(std::uint8_t i = 0; i < ui.nav_parking_count; ++i) {
+        const lv_point_t point = {
+            static_cast<int32_t>(std::lround(ui.nav_parking_x[i])),
+            static_cast<int32_t>(std::lround(ui.nav_parking_y[i])),
+        };
+        pixels_changed = pixels_changed ||
+                         ui.nav_parking_points[i].x != point.x ||
+                         ui.nav_parking_points[i].y != point.y;
+        ui.nav_parking_points[i] = point;
+    }
+    return pixels_changed;
+}
+
 bool apply_building_geometry_frame(bool rebind_lines = true) {
     if(ui.nav_building_point_count < 3 ||
        ui.nav_building_footprint_count == 0) return false;
@@ -2260,6 +2323,23 @@ void route_motion_tick(lv_timer_t *) {
         }
     }
 
+    bool parking_moved = false;
+    for(std::uint8_t i = 0; i < ui.nav_parking_count; ++i) {
+        const float dx = ui.nav_parking_target_x[i] - ui.nav_parking_x[i];
+        const float dy = ui.nav_parking_target_y[i] - ui.nav_parking_y[i];
+        if(std::abs(dx) < 0.08F && std::abs(dy) < 0.08F) {
+            ui.nav_parking_x[i] = ui.nav_parking_target_x[i];
+            ui.nav_parking_y[i] = ui.nav_parking_target_y[i];
+            continue;
+        }
+        // The dirty padding below covers the plate around its centre.
+        include(ui.nav_parking_x[i], ui.nav_parking_y[i]);
+        ui.nav_parking_x[i] += dx * blend;
+        ui.nav_parking_y[i] += dy * blend;
+        include(ui.nav_parking_x[i], ui.nav_parking_y[i]);
+        parking_moved = true;
+    }
+
     bool buildings_moved = false;
     for(std::uint8_t footprint = 0;
         footprint < ui.nav_building_footprint_count; ++footprint) {
@@ -2295,6 +2375,9 @@ void route_motion_tick(lv_timer_t *) {
     bool pixels_changed = false;
     if(areas_moved) {
         pixels_changed = apply_area_geometry_frame() || pixels_changed;
+    }
+    if(parking_moved) {
+        pixels_changed = apply_parking_geometry_frame() || pixels_changed;
     }
     if(buildings_moved) {
         pixels_changed = apply_building_geometry_frame(false) || pixels_changed;
@@ -2489,6 +2572,36 @@ void update_area_geometry(const moto_ui_state_t *state) {
     }
     if(snap) {
         apply_area_geometry_frame();
+        invalidate_map();
+    }
+}
+
+void update_parking_geometry(const moto_ui_state_t *state) {
+    const std::uint8_t count = std::min<std::uint8_t>(
+        state->parking_count, MOTO_UI_PARKING_CAPACITY);
+    if(count == 0) {
+        const bool had_parking = ui.nav_parking_count != 0;
+        ui.nav_parking_count = 0;
+        ui.nav_parking_scene_revision = state->map_scene_revision;
+        if(had_parking) invalidate_map();
+        return;
+    }
+    const bool snap =
+        ui.reduce_motion ||
+        ui.nav_parking_scene_revision != state->map_scene_revision ||
+        ui.nav_parking_count != count;
+    for(std::uint8_t i = 0; i < count; ++i) {
+        ui.nav_parking_target_x[i] = state->parking_points[i].x;
+        ui.nav_parking_target_y[i] = state->parking_points[i].y;
+    }
+    ui.nav_parking_count = count;
+    ui.nav_parking_scene_revision = state->map_scene_revision;
+    if(snap) {
+        for(std::uint8_t i = 0; i < count; ++i) {
+            ui.nav_parking_x[i] = ui.nav_parking_target_x[i];
+            ui.nav_parking_y[i] = ui.nav_parking_target_y[i];
+        }
+        apply_parking_geometry_frame();
         invalidate_map();
     }
 }
@@ -3135,6 +3248,7 @@ void update_radar_ring(const moto_ui_state_t *state);
 
 void update_navigation(const moto_ui_state_t *state) {
     update_area_geometry(state);
+    update_parking_geometry(state);
     update_building_geometry(state);
     update_road_geometry(state);
     update_route_geometry(state);
@@ -3206,16 +3320,19 @@ void update_compass(const moto_ui_state_t *state) {
 
 }
 
+using PerfClock = moto::nav_ui::PerformanceClock;
+
 bool perf_waiting_for_still() {
-    return ui.perf_state == Ui::PerfState::Armed && ui.perf_require_still;
+    return g_perf_clock.state() == PerfClock::State::Armed &&
+           g_perf_clock.waiting_for_standstill();
 }
 
 const char *perf_state_word() {
-    switch(ui.perf_state) {
-        case Ui::PerfState::Running: return "LAUNCH";
-        case Ui::PerfState::Launched: return "DONE";
-        case Ui::PerfState::Armed:
-        default: return ui.perf_require_still ? "WAIT" : "ARMED";
+    switch(g_perf_clock.state()) {
+        case PerfClock::State::Running: return "LAUNCH";
+        case PerfClock::State::Finished: return "DONE";
+        case PerfClock::State::Armed:
+        default: return perf_waiting_for_still() ? "WAIT" : "ARMED";
     }
 }
 
@@ -3232,10 +3349,19 @@ void perf_set_elapsed(std::uint32_t centis) {
 // see ARMED-like furniture and a clock that never starts.
 void perf_apply_target_line() {
     if(ui.perf_target == nullptr) return;
-    const std::uint16_t line =
-        perf_waiting_for_still() ? kPerfHintLine : g_perf_target_kph;
+    const bool armed = g_perf_clock.state() == PerfClock::State::Armed;
+    std::uint16_t line = g_perf_target_kph;
+    if(armed && !g_perf_clock.has_speed()) {
+        line = kPerfNoSpeedLine;
+    } else if(perf_waiting_for_still()) {
+        line = kPerfHintLine;
+    }
     if(line == ui.perf_target_line) return;
     ui.perf_target_line = line;
+    if(line == kPerfNoSpeedLine) {
+        lv_label_set_text(ui.perf_target, "NO SPEED");
+        return;
+    }
     if(line == kPerfHintLine) {
         lv_label_set_text(ui.perf_target, "STOP TO ARM");
         return;
@@ -3266,8 +3392,9 @@ void perf_fill_strip(std::uint16_t speed_kph) {
                                 on ? LV_OPA_COVER : LV_OPA_20, 0);
         lv_obj_set_style_bg_color(
             ui.perf_segments[i],
-            (on && ui.perf_state == Ui::PerfState::Launched) ? ui.palette.accent
-                                                             : ui.palette.ink,
+            (on && g_perf_clock.state() == PerfClock::State::Finished)
+                ? ui.palette.accent
+                : ui.palette.ink,
             0);
     }
 }
@@ -3292,210 +3419,154 @@ void perf_publish_best() {
 void perf_report(std::uint32_t elapsed_ms) {
     if(ui.perf_callback == nullptr) return;
     moto_ui_performance_run_t run{};
-    switch(ui.perf_state) {
-        case Ui::PerfState::Armed: run.state = MOTO_UI_RUN_ARMED; break;
-        case Ui::PerfState::Running: run.state = MOTO_UI_RUN_RUNNING; break;
-        case Ui::PerfState::Launched: run.state = MOTO_UI_RUN_FINISHED; break;
+    switch(g_perf_clock.state()) {
+        case PerfClock::State::Armed: run.state = MOTO_UI_RUN_ARMED; break;
+        case PerfClock::State::Running: run.state = MOTO_UI_RUN_RUNNING; break;
+        case PerfClock::State::Finished: run.state = MOTO_UI_RUN_FINISHED; break;
     }
     run.target_kph = g_perf_target_kph;
-    run.run_id = ui.perf_run_id;
+    run.run_id = g_perf_clock.run_id();
     run.elapsed_ms = run.state == MOTO_UI_RUN_ARMED ? 0 : elapsed_ms;
     run.best_ms = perf_best_ms();
     ui.perf_callback(&run, ui.perf_context);
 }
 
-// Ends a live run without a result. The phone sees the same Armed transition
+// A live run ended without a result. The phone sees the same Armed transition
 // it gets after a completed run, so its race log does not keep a timer open.
-void perf_abort(const char *reason) {
-    ui.perf_state = Ui::PerfState::Armed;
-    ui.perf_still_since_ms = 0;
-    ui.perf_peak_kph = 0;
-    ui.perf_require_still = true;
+void perf_show_abort(const char *reason) {
     if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, reason);
     if(ui.perf_timer != nullptr) lv_label_set_text(ui.perf_timer, "-.-");
     perf_report(0);
     perf_apply_chip();
 }
 
-// Clears a finished run's time from the glass. The next attempt still waits
-// for a standstill, as after an abort.
-void perf_dismiss() {
-    ui.perf_state = Ui::PerfState::Armed;
-    ui.perf_still_since_ms = 0;
-    ui.perf_peak_kph = 0;
-    ui.perf_require_still = true;
+// A finished run's time left the glass: dismissed by a tap, or cleared by
+// the standstill that rearms the clock.
+void perf_show_cleared() {
     if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "");
     if(ui.perf_timer != nullptr) lv_label_set_text(ui.perf_timer, "-.-");
     perf_report(0);
     perf_apply_chip();
 }
 
-// A short tap: the rider's own cancel. There is deliberately no pause: a
-// clock frozen while the bike keeps moving no longer times a 0-100.
-void perf_cancel() {
-    if(ui.perf_state == Ui::PerfState::Running) {
-        perf_abort("CANCEL");
-    } else if(ui.perf_state == Ui::PerfState::Launched) {
-        perf_dismiss();
+const char *perf_abort_word(PerfClock::AbortReason reason) {
+    switch(reason) {
+        case PerfClock::AbortReason::Timeout: return "TIME";
+        case PerfClock::AbortReason::SpeedLost: return "NO SPEED";
+        case PerfClock::AbortReason::Cancel: return "CANCEL";
+        case PerfClock::AbortReason::SpeedDrop:
+        case PerfClock::AbortReason::Stopped:
+        case PerfClock::AbortReason::None:
+        default: return "ABORT";
     }
 }
+
+void perf_show_finish() {
+    const std::uint32_t elapsed_ms = g_perf_clock.result_ms();
+    const std::uint32_t centis = elapsed_ms / 10U;
+    std::uint32_t &best_ms = perf_best_ms();
+    const std::uint32_t best_centis = best_ms / 10U;
+    perf_set_elapsed(centis);
+    if(best_ms == 0 || elapsed_ms < best_ms) {
+        best_ms = elapsed_ms;
+        perf_publish_best();
+        if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "PB");
+    } else if(ui.perf_delta != nullptr) {
+        char text[16];
+        const std::int32_t diff = static_cast<std::int32_t>(centis) -
+                                  static_cast<std::int32_t>(best_centis);
+        // The sign is written out: "%+d" of diff / 100 printed a run 0.50 s
+        // faster than BEST as +0.50.
+        const std::uint32_t magnitude =
+            static_cast<std::uint32_t>(std::abs(diff));
+        std::snprintf(text, sizeof(text), "%c%u.%02u", diff < 0 ? '-' : '+',
+                      static_cast<unsigned>(magnitude / 100U),
+                      static_cast<unsigned>(magnitude % 100U));
+        lv_label_set_text(ui.perf_delta, text);
+    }
+    perf_report(elapsed_ms);
+}
+
+void perf_show_event(PerfClock::Event event) {
+    switch(event) {
+        case PerfClock::Event::Started:
+            if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "");
+            perf_set_elapsed(g_perf_clock.elapsed_at_last_sample_ms() / 10U);
+            perf_report(g_perf_clock.elapsed_at_last_sample_ms());
+            break;
+        case PerfClock::Event::Finished: perf_show_finish(); break;
+        case PerfClock::Event::Aborted:
+            perf_show_abort(perf_abort_word(g_perf_clock.last_abort()));
+            break;
+        case PerfClock::Event::Rearmed: perf_show_cleared(); break;
+        case PerfClock::Event::None: break;
+    }
+}
+
+// A short tap: the rider's own cancel. There is deliberately no pause: a
+// clock frozen while the bike keeps moving no longer times a 0-100.
+void perf_cancel() { perf_show_event(g_perf_clock.cancel()); }
 
 // A two-second hold: forget the best for the current target. The report
 // carries best_ms = 0, which is what the device persists.
 void perf_clear_best() {
     perf_best_ms() = 0;
     perf_publish_best();
-    if(ui.perf_state == Ui::PerfState::Running) {
-        perf_abort("CANCEL");
-    } else if(ui.perf_state == Ui::PerfState::Launched) {
-        perf_dismiss();
-    } else {
+    const PerfClock::Event event = g_perf_clock.cancel();
+    if(event == PerfClock::Event::None) {
         if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "");
         perf_report(0);
+    } else {
+        perf_show_event(event);
     }
 }
 
 void perf_page_changed(moto_ui_page_t from, moto_ui_page_t to) {
     if(ui.perf_timer == nullptr || from == to) return;
     if(from == MOTO_UI_PAGE_PERFORMANCE &&
-       ui.perf_state == Ui::PerfState::Running) {
+       g_perf_clock.state() == PerfClock::State::Running) {
         // Off the page the clock no longer follows speed; a run left behind
         // used to finish later with the time spent away counted in.
-        perf_abort("CANCEL");
+        perf_show_event(g_perf_clock.cancel());
     } else if(to == MOTO_UI_PAGE_PERFORMANCE &&
-              ui.perf_state == Ui::PerfState::Armed) {
-        ui.perf_require_still = true;
-        ui.perf_still_since_ms = 0;
+              g_perf_clock.state() == PerfClock::State::Armed) {
+        g_perf_clock.require_standstill();
         perf_apply_chip();
     }
 }
 
+// Between samples the stopwatch runs on from the newest one. If the samples
+// stop altogether (the page is shown but nothing feeds it), the clock is told
+// so at the time it would have been, and gives the run up.
 void perf_tick(lv_timer_t *) {
     if(ui.perf_timer == nullptr || !ui.live) return;
-    if(ui.perf_state != Ui::PerfState::Running) return;
-    const std::uint32_t elapsed = lv_tick_elaps(ui.perf_run_start_ms);
-    perf_set_elapsed(elapsed / 10U);
+    if(g_perf_clock.state() != PerfClock::State::Running) return;
+    const std::uint32_t since = lv_tick_elaps(ui.perf_sample_tick);
+    if(since > PerfClock::kMaxSampleGapMs) {
+        perf_show_event(g_perf_clock.add_sample(
+            0.0F, g_perf_clock.last_sample_ms() + since, false));
+        return;
+    }
+    perf_set_elapsed((g_perf_clock.elapsed_at_last_sample_ms() + since) / 10U);
 }
 
 void update_performance(const moto_ui_state_t *state) {
     if(ui.perf_timer == nullptr) return;
 
-    const std::uint16_t speed = state->speed_kph;
-    const std::uint32_t now = lv_tick_get();
-    switch(ui.perf_state) {
-        case Ui::PerfState::Armed:
-            if(ui.perf_require_still) {
-                // The aborted run's speed is not a launch. Wait for the bike
-                // to be still before arming the next attempt.
-                if(speed == 0) {
-                    if(ui.perf_still_since_ms == 0) {
-                        ui.perf_still_since_ms = now;
-                    } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
-                              kPerfRearmStillMs) {
-                        ui.perf_require_still = false;
-                        ui.perf_still_since_ms = 0;
-                    }
-                } else {
-                    ui.perf_still_since_ms = 0;
-                }
-                break;
-            }
-            // Rolling away from a standstill starts the clock; the strip is
-            // the only thing that moves until then.
-            if(speed >= 1) {
-                ui.perf_state = Ui::PerfState::Running;
-                ui.perf_run_start_ms = now;
-                ui.perf_peak_kph = speed;
-                ui.perf_still_since_ms = 0;
-                ui.perf_require_still = false;
-                ++ui.perf_run_id;
-                if(ui.perf_delta != nullptr) lv_label_set_text(ui.perf_delta, "");
-                perf_set_elapsed(0);
-                perf_report(0);
-            }
-            break;
-        case Ui::PerfState::Running:
-            if(speed > ui.perf_peak_kph) ui.perf_peak_kph = speed;
-            if(speed >= g_perf_target_kph) {
-                const std::uint32_t elapsed_ms =
-                    lv_tick_elaps(ui.perf_run_start_ms);
-                const std::uint32_t centis = elapsed_ms / 10U;
-                std::uint32_t &best_ms = perf_best_ms();
-                const std::uint32_t best_centis = best_ms / 10U;
-                ui.perf_last_centis = centis;
-                if(best_ms == 0 || elapsed_ms < best_ms) {
-                    best_ms = elapsed_ms;
-                    perf_publish_best();
-                    if(ui.perf_delta != nullptr) {
-                        lv_label_set_text(ui.perf_delta, "PB");
-                    }
-                } else {
-                    char text[16];
-                    const std::int32_t diff =
-                        static_cast<std::int32_t>(centis) -
-                        static_cast<std::int32_t>(best_centis);
-                    // The sign is written out: "%+d" of diff / 100 printed
-                    // a run 0.50 s faster than BEST as +0.50.
-                    const std::uint32_t magnitude =
-                        static_cast<std::uint32_t>(std::abs(diff));
-                    std::snprintf(
-                        text, sizeof(text), "%c%u.%02u", diff < 0 ? '-' : '+',
-                        static_cast<unsigned>(magnitude / 100U),
-                        static_cast<unsigned>(magnitude % 100U));
-                    if(ui.perf_delta != nullptr) {
-                        lv_label_set_text(ui.perf_delta, text);
-                    }
-                }
-                ui.perf_state = Ui::PerfState::Launched;
-                ui.perf_peak_kph = 0;
-                ui.perf_still_since_ms = 0;
-                perf_report(elapsed_ms);
-            } else if(lv_tick_elaps(ui.perf_run_start_ms) >= kPerfTimeoutMs) {
-                perf_abort("TIME");
-            } else if(static_cast<int>(ui.perf_peak_kph) -
-                          static_cast<int>(speed) >
-                      static_cast<int>(kPerfAbortDropKph)) {
-                // Lifting off or braking means this attempt is over. Waiting
-                // for the bike to reach 0 would keep a dead clock on screen.
-                perf_abort("ABORT");
-            } else if(speed == 0) {
-                if(ui.perf_still_since_ms == 0) {
-                    ui.perf_still_since_ms = now;
-                } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
-                          kPerfRearmStillMs) {
-                    perf_abort("ABORT");
-                }
-            } else {
-                ui.perf_still_since_ms = 0;
-                perf_set_elapsed(lv_tick_elaps(ui.perf_run_start_ms) / 10U);
-            }
-            break;
-        case Ui::PerfState::Launched:
-            // Rearm only after the bike has actually stopped and stayed
-            // stopped, so coasting through a junction does not wipe the run.
-            if(speed == 0) {
-                if(ui.perf_still_since_ms == 0) {
-                    ui.perf_still_since_ms = now;
-                } else if(lv_tick_elaps(ui.perf_still_since_ms) >=
-                          kPerfRearmStillMs) {
-                    ui.perf_state = Ui::PerfState::Armed;
-                    ui.perf_still_since_ms = 0;
-                    ui.perf_peak_kph = 0;
-                    ui.perf_require_still = false;
-                    perf_report(0);
-                    if(ui.perf_delta != nullptr) {
-                        lv_label_set_text(ui.perf_delta, "");
-                    }
-                    lv_label_set_text(ui.perf_timer, "-.-");
-                }
-            } else {
-                ui.perf_still_since_ms = 0;
-            }
-            break;
+    if(state->run_speed_ms != 0) {
+        const PerfClock::Event event = g_perf_clock.add_sample(
+            state->run_speed_kph, state->run_speed_ms,
+            state->has_run_speed != 0);
+        if(g_perf_clock.last_sample_ms() == state->run_speed_ms) {
+            ui.perf_sample_tick = lv_tick_get();
+        }
+        perf_show_event(event);
     }
     perf_apply_chip();
-    perf_fill_strip(speed);
-
+    perf_fill_strip(state->has_run_speed != 0
+                        ? static_cast<std::uint16_t>(
+                              std::lround(std::max(state->run_speed_kph, 0.0F)))
+                        : state->speed_kph);
 }
 
 // The Lean page is a race graphic, not a flight instrument: the bike leans
@@ -4041,6 +4112,17 @@ void create_navigation_page() {
         lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
     }
 
+    // Car-park plates sit on the streets and under the route.
+    ui.nav_parking_layer = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_parking_layer);
+    lv_obj_remove_flag(ui.nav_parking_layer, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(ui.nav_parking_layer, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ui.nav_parking_layer, MOTO_UI_CANVAS_WIDTH,
+                    MOTO_UI_CANVAS_HEIGHT);
+    lv_obj_set_pos(ui.nav_parking_layer, 0, 0);
+    lv_obj_add_event_cb(ui.nav_parking_layer, draw_parking_plates,
+                        LV_EVENT_DRAW_MAIN, nullptr);
+
     // The route is the loudest thing on the plate: a health-orange ribbon a
     // step wider than an arterial, on a casing that swallows the street under
     // it, so it reads as the GPS line laid over the city rather than a road.
@@ -4527,8 +4609,10 @@ void create_performance_page() {
                         nullptr);
 
     // The first arrival waits for a standstill like every later one, and
-    // the restored best for the current target is on the glass at once.
-    ui.perf_require_still = true;
+    // the restored best for the current target is on the glass at once. A
+    // rebuilt tree (a theme switch) starts with no run on the glass, so the
+    // clock starts over too.
+    g_perf_clock.reset();
     perf_publish_best();
     perf_apply_chip();
 }
@@ -5829,6 +5913,7 @@ void moto_ui_gta::set_motion_state(const moto_ui_state_t *state) {
     if(ui.page == MOTO_UI_PAGE_NAVIGATION) {
         ui.nav_heading_presmoothed = state->heading_presmoothed != 0;
         update_area_geometry(state);
+    update_parking_geometry(state);
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);
@@ -5983,12 +6068,15 @@ void moto_ui_gta::set_performance_target(uint16_t target_kph) {
     }
     if(snapped == g_perf_target_kph) return;
     g_perf_target_kph = snapped;
+    // A run timed against the old target means nothing against the new one;
+    // the clock drops it.
+    const PerfClock::State before = g_perf_clock.state();
+    g_perf_clock.set_target_kph(snapped);
     if(!ui.live || ui.perf_timer == nullptr) return;
-    // A run timed against the old target means nothing against the new one.
-    if(ui.perf_state == Ui::PerfState::Running) {
-        perf_abort("");
-    } else if(ui.perf_state == Ui::PerfState::Launched) {
-        perf_dismiss();
+    if(before == PerfClock::State::Running) {
+        perf_show_abort("");
+    } else if(before == PerfClock::State::Finished) {
+        perf_show_cleared();
     }
     perf_publish_best();
     perf_apply_chip();

@@ -368,6 +368,20 @@ void project_area_context(const NavSnapshot& snapshot,
   output.area_count = static_cast<std::uint8_t>(accepted_areas);
 }
 
+void project_parking_context(const NavSnapshot& snapshot,
+                             const MapTransform& transform,
+                             moto_ui_state_t& output) {
+  output.parking_count = 0;
+  if (!snapshot.has_route_view) return;
+  const std::size_t count = std::min<std::size_t>(
+      snapshot.parking_context_count, MOTO_UI_PARKING_CAPACITY);
+  for (std::size_t index = 0; index < count; ++index) {
+    output.parking_points[index] =
+        project_map_point(snapshot.parking_context_points[index], transform);
+  }
+  output.parking_count = static_cast<std::uint8_t>(count);
+}
+
 void map_attitude(const NavSnapshot& snapshot, moto_ui_state_t& output) {
   const bool attitude_valid =
       snapshot.has_attitude && std::isfinite(snapshot.lean_deg) &&
@@ -390,6 +404,28 @@ void map_attitude(const NavSnapshot& snapshot, moto_ui_state_t& output) {
                      : 0.0F;
   output.lateral_g =
       attitude_valid ? std::clamp(snapshot.lateral_g, -4.0F, 4.0F) : 0.0F;
+}
+
+// The 0-100 clock's sample. The board's fused speed when it has one;
+// otherwise the phone's speed, dated by the fix it came from, so a repeated
+// snapshot of the same fix is the same sample and not a new one.
+void map_run_speed(const NavSnapshot& snapshot, moto_ui_state_t& output) {
+  if (snapshot.measured_speed_ms != 0) {
+    const bool valid = snapshot.has_measured_speed &&
+                       std::isfinite(snapshot.measured_speed_mps);
+    output.has_run_speed = valid ? 1 : 0;
+    output.run_speed_kph = valid ? snapshot.measured_speed_mps * 3.6F : 0.0F;
+    output.run_speed_ms = snapshot.measured_speed_ms;
+    return;
+  }
+  const bool valid = snapshot.has_usable_fix && !snapshot.gnss_stale &&
+                     std::isfinite(snapshot.speed_mps);
+  output.has_run_speed = valid ? 1 : 0;
+  output.run_speed_kph = valid ? snapshot.speed_mps * 3.6F : 0.0F;
+  // A missing speed is dated now, so the clock can tell how long it has
+  // been gone.
+  const TimestampMs at = valid ? snapshot.last_fix_ms : snapshot.now_ms;
+  output.run_speed_ms = static_cast<std::uint32_t>(at);
 }
 
 }  // namespace
@@ -448,6 +484,7 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
   ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
   map_attitude(snapshot, ui_state_);
+  map_run_speed(snapshot, ui_state_);
   project_map(snapshot);
   ui_state_.road_name = road_name_.empty() ? nullptr : road_name_.c_str();
   ui_state_.next_road_name =
@@ -458,6 +495,7 @@ void NavPresenter::update_motion(const NavSnapshot& snapshot) {
   ui_state_.heading_deg = normalized_heading(snapshot.heading_deg);
   ui_state_.heading_presmoothed = snapshot.heading_presmoothed ? 1 : 0;
   map_attitude(snapshot, ui_state_);
+  map_run_speed(snapshot, ui_state_);
   // Parked, or riding straight inside the gyro deadband with the origin
   // held, the projected map is already the right one: skip the hundreds of
   // points a 40 Hz motion frame would otherwise re-project unchanged. A
@@ -483,6 +521,7 @@ void NavPresenter::project_map(const NavSnapshot& snapshot) {
   project_road_context(snapshot, transform, ui_state_);
   project_building_context(snapshot, transform, ui_state_);
   project_area_context(snapshot, transform, ui_state_);
+  project_parking_context(snapshot, transform, ui_state_);
   project_home(snapshot, transform, ui_state_);
 }
 

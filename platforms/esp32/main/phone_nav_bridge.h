@@ -8,6 +8,7 @@
 #include "attitude_estimator.hpp"
 #include "device_settings.hpp"
 #include "gnss_input.hpp"
+#include "lean_estimator.hpp"
 #include "moto/ble_protocol/ble_protocol.hpp"
 #include "moto_nav_presenter.hpp"
 #include "motion_heading_fusion.hpp"
@@ -92,10 +93,13 @@ class PhoneNavBridge {
   // Echoes the applied settings with the revision that was applied. Public so
   // the host tests can assert the echo without a second bridge instance.
   void send_settings_state();
+  // speed is the fused speed (SpeedFusion) at this sample; it times the
+  // 0-100 page and leaves navigation alone.
   void on_imu_sample(
       float heading_rate_dps,
       const moto::motion::AttitudeEstimate& attitude,
-      std::uint64_t sample_ms);
+      std::uint64_t sample_ms,
+      const moto::motion::SpeedSample& speed = {});
   void update_demo(std::uint64_t now_ms);
   moto::ble::AckStatus on_message(
       const moto::ble::ReassembledMessage& message);

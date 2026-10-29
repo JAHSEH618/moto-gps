@@ -55,11 +55,14 @@ struct MapTileDocument: Codable, Sendable {
     /// Absent from tiles cached before the gateway sent areas; those are
     /// replaced by the daily refresh.
     var areas: [OfflineMapArea] = []
+    /// Car parks the basemap has only as points. Absent from tiles cached
+    /// before the gateway sent them.
+    var pois: [OfflineMapPoi] = []
     let source: OfflineMapSource
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version", coordinateSystem = "coordinate_system"
-        case tile, roads, buildings, areas, source
+        case tile, roads, buildings, areas, pois, source
     }
 
     static let maximumBytes = 8 * 1_024 * 1_024
@@ -69,7 +72,7 @@ struct MapTileDocument: Codable, Sendable {
         let value = try JSONDecoder().decode(Self.self, from: data)
         guard expectedTile.isValid, value.tile == expectedTile,
               value.schemaVersion == 1, value.coordinateSystem == "GCJ-02",
-              value.roads.count + value.buildings.count + value.areas.count <= 12_000,
+              value.roads.count + value.buildings.count + value.areas.count + value.pois.count <= 12_000,
               value.source.provider.count <= 1_024,
               value.source.licence.count <= 1_024,
               value.source.attributionURL.count <= 2_048,
@@ -95,6 +98,11 @@ struct MapTileDocument: Codable, Sendable {
               value.areas.allSatisfy({
                   OfflineMapArea.classes.contains($0.areaClass) &&
                   validPoints($0.points, minimum: 3) && $0.points.first != $0.points.last
+              }),
+              value.pois.allSatisfy({
+                  OfflineMapPoi.classes.contains($0.poiClass) &&
+                  (-90_000_000 ... 90_000_000).contains($0.point.latitudeE6) &&
+                  (-180_000_000 ... 180_000_000).contains($0.point.longitudeE6)
               })
         else { throw SurroundingMapError.invalidResponse }
         return value
@@ -111,6 +119,7 @@ extension MapTileDocument {
         roads = try values.decode([OfflineMapRoad].self, forKey: .roads)
         buildings = try values.decode([OfflineMapBuilding].self, forKey: .buildings)
         areas = try values.decodeIfPresent([OfflineMapArea].self, forKey: .areas) ?? []
+        pois = try values.decodeIfPresent([OfflineMapPoi].self, forKey: .pois) ?? []
         source = try values.decode(OfflineMapSource.self, forKey: .source)
     }
 }
@@ -409,6 +418,10 @@ final class SurroundingMapStore: ObservableObject {
     /// Newest window handed to the terminal, retained so the phone's radar can
     /// draw the same real streets instead of a decorative grid.
     private(set) var latestWindow: OfflineMapSceneWindow?
+    /// Everything the loaded tiles hold around the newest origin, for the
+    /// phone's own map: the round screen's wire budget does not bind it, so a
+    /// rectangle's corners have streets too. GCJ-02, like the window.
+    @Published private(set) var phoneScene: OfflineMapSceneDocument?
 
     private let cache: MapTileCache
     private var sceneTask: Task<Void, Never>?
@@ -629,6 +642,8 @@ final class SurroundingMapStore: ObservableObject {
         var roadKeys: Set<RoadKey> = []
         var buildingKeys: Set<RoadKey> = []
         var areaKeys: Set<RoadKey> = []
+        var pois: [OfflineMapPoi] = []
+        var poiKeys: Set<OfflineMapPoi> = []
         for road in documents.flatMap(\.roads) {
             if roadKeys.insert(RoadKey(id: road.osmWayID, kind: road.roadClass, points: road.points)).inserted {
                 roads.append(road)
@@ -646,16 +661,22 @@ final class SurroundingMapStore: ObservableObject {
                 areas.append(area)
             }
         }
+        // A car park on a tile seam is in both tiles' buffers.
+        for poi in documents.flatMap(\.pois) where poiKeys.insert(poi).inserted {
+            pois.append(poi)
+        }
         revision &+= 1
         if revision == 0 { revision = 1 }
         let document = OfflineMapSceneDocument(schemaVersion: 1, coordinateSystem: "GCJ-02",
                                               sceneRevision: revision, viewOrigin: origin, radiusM: 500,
                                               roads: roads, buildings: buildings, areas: areas,
+                                              pois: pois,
                                               source: OfflineMapSource(provider: "map-tiles", licence: "ODbL-1.0",
                                                                        attributionURL: "https://www.openstreetmap.org/copyright",
                                                                        retrievedAt: "", bboxWGS84: nil))
         let window = InMemoryOfflineMapSceneIndex(document: document).query(around: origin, radiusM: 500, revision: revision)
         latestWindow = window
+        phoneScene = document
         onScene?(window)
         return !window.roads.isEmpty || !window.buildings.isEmpty || !window.areas.isEmpty
     }

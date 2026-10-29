@@ -30,6 +30,8 @@ inline constexpr std::uint32_t kDeviceCapabilities =
     // screen uses it to tell an installed release from a new one.
     moto::ble::CapabilityFirmwareInfo |
     // The GTA map fills MapScene areas under the streets.
-    moto::ble::CapabilityMapAreas;
+    moto::ble::CapabilityMapAreas |
+    // ... and draws a P for each car park point after them.
+    moto::ble::CapabilityMapPois;
 
 }  // namespace moto::esp32

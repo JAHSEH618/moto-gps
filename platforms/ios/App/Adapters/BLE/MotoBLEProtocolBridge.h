@@ -77,6 +77,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<MotoBLEMapPointInput *> *points;
 @end
 
+/// A car park the basemap only has as a point: drawn as a P.
+@interface MotoBLEMapPoiInput : NSObject
+@property(nonatomic, copy) NSString *className;
+@property(nonatomic) int32_t latitudeE6;
+@property(nonatomic) int32_t longitudeE6;
+@end
+
 @interface MotoBLEMapSceneInput : NSObject
 @property(nonatomic) uint32_t sceneRevision;
 @property(nonatomic) int32_t originLatitudeE6;
@@ -86,6 +93,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<MotoBLEMapBuildingInput *> *buildings;
 /// Empty unless the device advertises CapabilityMapAreas.
 @property(nonatomic, copy) NSArray<MotoBLEMapAreaInput *> *areas;
+/// Empty unless the device advertises CapabilityMapPois.
+@property(nonatomic, copy) NSArray<MotoBLEMapPoiInput *> *pois;
 @end
 
 /// Saved home address (message 0x16). Latitude and longitude must already be

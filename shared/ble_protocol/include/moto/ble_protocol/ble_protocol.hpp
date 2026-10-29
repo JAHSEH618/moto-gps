@@ -60,6 +60,9 @@ constexpr std::size_t kMaxMapSceneBuildingPoints = 192;
 // the whole disc costs a handful of points, not its OSM outline.
 constexpr std::size_t kMaxMapSceneAreas = 12;
 constexpr std::size_t kMaxMapSceneAreaPoints = 128;
+// Point features drawn as a glyph: surface car parks, which the basemap only
+// has as points. The nearest ones to the rider; a city block can hold a dozen.
+constexpr std::size_t kMaxMapScenePois = 16;
 
 struct ByteView {
   const std::uint8_t* data = nullptr;
@@ -327,6 +330,10 @@ enum Capability : std::uint32_t {
   // phone sends areas only to a device with this bit and an empty list to any
   // other; the scene without areas is byte-for-byte the old layout.
   CapabilityMapAreas = 1U << 17U,
+  // The device draws MapScene points of interest (a P for a car park). They
+  // follow the area section, which may then be empty; the phone sends them
+  // only to a device with this bit.
+  CapabilityMapPois = 1U << 18U,
 };
 
 struct ConnectionStatus {
@@ -593,6 +600,19 @@ struct MapArea {
   bool operator==(const MapArea& rhs) const noexcept;
 };
 
+// A point feature. Parking is a car park the basemap has as a point, not a
+// polygon; a lot with an outline is a MapArea, a garage a building.
+enum class MapPoiClass : std::uint8_t {
+  Parking = 0,
+};
+
+struct MapPoi {
+  MapPoiClass poi_class = MapPoiClass::Parking;
+  GeoPointE6 point;
+
+  bool operator==(const MapPoi& rhs) const noexcept;
+};
+
 struct MapScene {
   CoordinateSystem coordinate_system = CoordinateSystem::Gcj02;
   std::uint32_t scene_revision = 0;
@@ -603,6 +623,9 @@ struct MapScene {
   // Empty unless the device advertises CapabilityMapAreas. An empty list is
   // not written at all, which keeps the pre-area layout for older firmware.
   std::vector<MapArea> areas;
+  // Empty unless the device advertises CapabilityMapPois. When there are
+  // points, the area section is written first, with a zero count if need be.
+  std::vector<MapPoi> pois;
 
   bool operator==(const MapScene& rhs) const noexcept;
 };

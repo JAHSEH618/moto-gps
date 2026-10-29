@@ -23,6 +23,8 @@ constexpr std::size_t kBuildingContextFootprintCapacity = 24;
 // streets, already clipped to the window and simplified by the phone.
 constexpr std::size_t kAreaContextPointCapacity = 128;
 constexpr std::size_t kAreaContextCapacity = 12;
+// Matches kMaxMapScenePois: car parks the basemap has only as points.
+constexpr std::size_t kParkingContextCapacity = 16;
 
 enum class RoadContextClass : std::uint8_t {
   Motorway = 0,
@@ -158,6 +160,10 @@ struct NavSnapshot {
   std::array<AreaContextSpan, kAreaContextCapacity> area_context_spans{};
   std::uint8_t area_context_point_count = 0;
   std::uint8_t area_context_count = 0;
+
+  // MapScene car parks (points of interest), on the same transform.
+  std::array<Gcj02Point, kParkingContextCapacity> parking_context_points{};
+  std::uint8_t parking_context_count = 0;
   std::uint32_t map_scene_revision = 0;
 
   std::string route_id;
@@ -181,6 +187,14 @@ struct NavSnapshot {
   // heading_deg already glides on its own (the parked compass slew), so the
   // UI should land it instead of smoothing it a second time.
   bool heading_presmoothed = false;
+  // The handlebar's own speed for the 0-100 clock: the IMU-fused speed
+  // (SpeedFusion) at measured_speed_ms on the device clock. A non-zero
+  // measured_speed_ms with has_measured_speed false is "the device has no
+  // speed right now". Without a device sample the clock times from speed_mps
+  // at last_fix_ms.
+  bool has_measured_speed = false;
+  float measured_speed_mps = 0.0F;
+  std::uint32_t measured_speed_ms = 0;
 
   TimestampMs now_ms = 0;
   TimestampMs last_fix_ms = 0;

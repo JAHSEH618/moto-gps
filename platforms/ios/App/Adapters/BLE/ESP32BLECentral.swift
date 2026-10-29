@@ -262,6 +262,8 @@ final class ESP32BLECentral: NSObject {
     /// The device draws MapScene areas (protocol bit 17). An older firmware
     /// refuses a scene that carries them, so it gets the scene without.
     private static let mapAreasCapability: UInt32 = 1 << 17
+    /// The device draws car-park points after the areas (protocol bit 18).
+    private static let mapPoisCapability: UInt32 = 1 << 18
     /// The device understands NavigationHeadingCompass (protocol bit 11).
     private static let compassHeadingCapability: UInt32 = 1 << 11
     /// The device takes GnssInput, fixes stamped with when they were taken
@@ -1152,7 +1154,8 @@ final class ESP32BLECentral: NSObject {
 
         guard let frames = encodeDroppingFailure("map scene", {
             try codec.encodeMapScene(scene.makeBLEInput(
-                includeAreas: peerCapabilities & Self.mapAreasCapability != 0
+                includeAreas: peerCapabilities & Self.mapAreasCapability != 0,
+                includePois: peerCapabilities & Self.mapPoisCapability != 0
             ))
         })
         else { return }

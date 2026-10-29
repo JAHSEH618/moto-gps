@@ -68,6 +68,20 @@ struct OfflineMapArea: Codable, Equatable, Sendable {
     }
 }
 
+/// A car park the basemap only has as a point (its pois layer); drawn as a P.
+/// A lot with an outline is an `OfflineMapArea`, a garage a building.
+struct OfflineMapPoi: Codable, Equatable, Hashable, Sendable {
+    static let classes: Set<String> = ["parking"]
+
+    let poiClass: String
+    let point: OfflineMapPointE6
+
+    private enum CodingKeys: String, CodingKey {
+        case poiClass = "class"
+        case point = "point_e6"
+    }
+}
+
 struct OfflineMapSource: Codable, Equatable, Sendable {
     let provider: String
     let licence: String
@@ -95,6 +109,7 @@ enum OfflineMapSceneLimits {
     static let buildingPoints = 192
     static let areas = 12
     static let areaPoints = 128
+    static let pois = 16
 }
 
 struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
@@ -107,6 +122,8 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
     let buildings: [OfflineMapBuilding]
     /// Absent from documents written before areas existed.
     var areas: [OfflineMapArea] = []
+    /// Absent from documents written before car-park points existed.
+    var pois: [OfflineMapPoi] = []
     let source: OfflineMapSource
 
     fileprivate enum CodingKeys: String, CodingKey {
@@ -118,6 +135,7 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
         case roads
         case buildings
         case areas
+        case pois
         case source
     }
 
@@ -151,6 +169,7 @@ extension OfflineMapSceneDocument {
         roads = try values.decode([OfflineMapRoad].self, forKey: .roads)
         buildings = try values.decode([OfflineMapBuilding].self, forKey: .buildings)
         areas = try values.decodeIfPresent([OfflineMapArea].self, forKey: .areas) ?? []
+        pois = try values.decodeIfPresent([OfflineMapPoi].self, forKey: .pois) ?? []
         source = try values.decode(OfflineMapSource.self, forKey: .source)
     }
 }
@@ -169,6 +188,8 @@ struct OfflineMapSceneWindow: Equatable, Sendable {
     let buildings: [OfflineMapBuilding]
     /// Already clipped to the window and simplified, within the wire budget.
     var areas: [OfflineMapArea] = []
+    /// The nearest car parks inside the window's square, within the budget.
+    var pois: [OfflineMapPoi] = []
 }
 
 protocol OfflineMapSceneQuerying: Sendable {
@@ -227,6 +248,7 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
     private let roads: [IndexedRoad]
     private let buildings: [IndexedBuilding]
     private let areas: [IndexedArea]
+    private let pois: [OfflineMapPoi]
 
     init(document: OfflineMapSceneDocument) {
         roads = document.roads.map { IndexedRoad(value: $0, bounds: Bounds(points: $0.points)) }
@@ -234,6 +256,7 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             IndexedBuilding(value: $0, bounds: Bounds(points: $0.points))
         }
         areas = document.areas.map { IndexedArea(value: $0, bounds: Bounds(points: $0.points)) }
+        pois = document.pois
     }
 
     func query(
@@ -330,8 +353,30 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             radiusM: UInt16(radius),
             roads: selectedRoads,
             buildings: selectedBuildings,
-            areas: selectedAreas(around: origin, radiusM: radius)
+            areas: selectedAreas(around: origin, radiusM: radius),
+            pois: selectedPois(around: origin, radiusM: radius)
         )
+    }
+
+    /// The nearest car parks inside the window's square (the same clip as the
+    /// areas), at most the wire budget.
+    private func selectedPois(
+        around origin: OfflineMapPointE6,
+        radiusM: Double
+    ) -> [OfflineMapPoi] {
+        let metresPerLatitudeE6 = 111_195.0 / 1_000_000
+        let metresPerLongitudeE6 =
+            metresPerLatitudeE6 * cos(Double(origin.latitudeE6) / 1_000_000 * .pi / 180)
+        return pois
+            .compactMap { poi -> (poi: OfflineMapPoi, distanceM: Double)? in
+                let northM = Double(poi.point.latitudeE6 - origin.latitudeE6) * metresPerLatitudeE6
+                let eastM = Double(poi.point.longitudeE6 - origin.longitudeE6) * metresPerLongitudeE6
+                guard abs(northM) <= radiusM, abs(eastM) <= radiusM else { return nil }
+                return (poi, hypot(northM, eastM))
+            }
+            .sorted { $0.distanceM < $1.distanceM }
+            .prefix(OfflineMapSceneLimits.pois)
+            .map(\.poi)
     }
 
     /// A park or a lake is usually far larger than the window, and its OSM
@@ -743,9 +788,10 @@ final class OfflineMapSceneCoordinator {
 }
 
 extension OfflineMapSceneWindow {
-    /// `includeAreas` is the device's CapabilityMapAreas: an older firmware
-    /// refuses a MapScene that carries them, so it is sent the scene without.
-    func makeBLEInput(includeAreas: Bool = true) -> MotoBLEMapSceneInput {
+    /// `includeAreas` is the device's CapabilityMapAreas and `includePois` its
+    /// CapabilityMapPois: an older firmware refuses a MapScene that carries
+    /// either section, so it is sent the scene without.
+    func makeBLEInput(includeAreas: Bool = true, includePois: Bool = true) -> MotoBLEMapSceneInput {
         let input = MotoBLEMapSceneInput()
         input.sceneRevision = revision
         input.originLatitudeE6 = origin.latitudeE6
@@ -782,6 +828,13 @@ extension OfflineMapSceneWindow {
                 value.longitudeE6 = point.longitudeE6
                 return value
             }
+            return value
+        } : []
+        input.pois = includePois ? pois.map { poi in
+            let value = MotoBLEMapPoiInput()
+            value.className = poi.poiClass
+            value.latitudeE6 = poi.point.latitudeE6
+            value.longitudeE6 = poi.point.longitudeE6
             return value
         } : []
         return input

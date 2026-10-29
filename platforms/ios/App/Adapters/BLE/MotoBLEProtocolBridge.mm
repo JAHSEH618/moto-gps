@@ -197,6 +197,14 @@ bool MapAreaClassFromName(NSString *name, moto::ble::MapAreaClass *area_class) {
   return true;
 }
 
+bool MapPoiClassFromName(NSString *name, moto::ble::MapPoiClass *poi_class) {
+  if ([name isEqualToString:@"parking"]) {
+    *poi_class = moto::ble::MapPoiClass::Parking;
+    return true;
+  }
+  return false;
+}
+
 moto::ble::MapScene MapSceneFromInput(MotoBLEMapSceneInput *input) {
   moto::ble::MapScene scene;
   scene.scene_revision = input.sceneRevision;
@@ -231,6 +239,13 @@ moto::ble::MapScene MapSceneFromInput(MotoBLEMapSceneInput *input) {
       area.points.push_back({point.latitudeE6, point.longitudeE6});
     }
     scene.areas.push_back(std::move(area));
+  }
+  scene.pois.reserve(input.pois.count);
+  for (MotoBLEMapPoiInput *source in input.pois) {
+    moto::ble::MapPoi poi;
+    if (!MapPoiClassFromName(source.className, &poi.poi_class)) continue;
+    poi.point = {source.latitudeE6, source.longitudeE6};
+    scene.pois.push_back(poi);
   }
   return scene;
 }
@@ -446,6 +461,16 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 }
 @end
 
+@implementation MotoBLEMapPoiInput
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    _className = @"parking";
+  }
+  return self;
+}
+@end
+
 @implementation MotoBLEMapSceneInput
 - (instancetype)init {
   self = [super init];
@@ -453,6 +478,7 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
     _roads = @[];
     _buildings = @[];
     _areas = @[];
+    _pois = @[];
   }
   return self;
 }

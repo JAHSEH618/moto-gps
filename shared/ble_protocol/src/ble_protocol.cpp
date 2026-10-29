@@ -253,6 +253,10 @@ bool valid_map_area_class(MapAreaClass area_class) {
   return enum_at_most(area_class, MapAreaClass::Parking);
 }
 
+bool valid_map_poi_class(MapPoiClass poi_class) {
+  return enum_at_most(poi_class, MapPoiClass::Parking);
+}
+
 bool valid_command_kind(DeviceCommandKind kind) {
   switch (kind) {
     case DeviceCommandKind::PageSelected:
@@ -421,7 +425,8 @@ Error validate(const MapScene& value) {
   }
   if (value.roads.size() > kMaxMapSceneRoads ||
       value.buildings.size() > kMaxMapSceneBuildings ||
-      value.areas.size() > kMaxMapSceneAreas) {
+      value.areas.size() > kMaxMapSceneAreas ||
+      value.pois.size() > kMaxMapScenePois) {
     return Error::TooManyItems;
   }
 
@@ -494,6 +499,14 @@ Error validate(const MapScene& value) {
       if (!validate_point(point)) {
         return Error::OutOfRange;
       }
+    }
+  }
+  for (const MapPoi& poi : value.pois) {
+    if (!valid_map_poi_class(poi.poi_class)) {
+      return Error::InvalidEnum;
+    }
+    if (!validate_point(poi.point)) {
+      return Error::OutOfRange;
     }
   }
   return Error::None;
@@ -887,13 +900,25 @@ BytesResult encode_payload(const T& value) {
       writer.u8(static_cast<std::uint8_t>(building.building_class));
       write_points(building.points);
     }
-    // Optional trailing section: absent, not a zero count, when there are no
-    // areas, so a scene for an older device keeps its old bytes.
-    if (!value.areas.empty()) {
+    // Optional trailing sections: absent, not a zero count, when there are
+    // no areas and no points, so a scene for an older device keeps its old
+    // bytes. Points need the area section in front of them, so only then
+    // may it count zero.
+    if (!value.areas.empty() || !value.pois.empty()) {
       writer.u8(static_cast<std::uint8_t>(value.areas.size()));
       for (const MapArea& area : value.areas) {
         writer.u8(static_cast<std::uint8_t>(area.area_class));
         write_points(area.points);
+      }
+    }
+    if (!value.pois.empty()) {
+      writer.u8(static_cast<std::uint8_t>(value.pois.size()));
+      for (const MapPoi& poi : value.pois) {
+        writer.u8(static_cast<std::uint8_t>(poi.poi_class));
+        writer.signed_varint(poi.point.latitude_e6 -
+                             value.view_origin.latitude_e6);
+        writer.signed_varint(poi.point.longitude_e6 -
+                             value.view_origin.longitude_e6);
       }
     }
   } else if constexpr (std::is_same_v<T, HomeLocation>) {
@@ -1230,11 +1255,13 @@ MessageResult decode_map_scene(ByteView payload) {
         value.buildings.push_back(std::move(building));
       }
       if (reader.ok() && reader.remaining() > 0) {
-        // The area section. A present section with no areas has a second
-        // encoding of the same scene, so a zero count is refused.
+        // The area section. A present section with no areas and nothing
+        // after it is a second encoding of the same scene, so a zero count is
+        // refused unless the point section follows.
         const std::size_t area_count = reader.u8();
         if (reader.ok() &&
-            (area_count == 0 || area_count > kMaxMapSceneAreas)) {
+            ((area_count == 0 && reader.remaining() == 0) ||
+             area_count > kMaxMapSceneAreas)) {
           reader.fail(area_count == 0 ? Error::OutOfRange
                                       : Error::TooManyItems);
         }
@@ -1254,6 +1281,29 @@ MessageResult decode_map_scene(ByteView payload) {
           }
           read_points(point_count, area.points);
           value.areas.push_back(std::move(area));
+        }
+      }
+      if (reader.ok() && reader.remaining() > 0) {
+        // The point section; present only with at least one point.
+        const std::size_t poi_count = reader.u8();
+        if (reader.ok() && (poi_count == 0 || poi_count > kMaxMapScenePois)) {
+          reader.fail(poi_count == 0 ? Error::OutOfRange
+                                     : Error::TooManyItems);
+        }
+        std::vector<GeoPointE6> points;
+        std::vector<MapPoiClass> classes;
+        points.reserve(reader.ok() ? poi_count : 0);
+        classes.reserve(reader.ok() ? poi_count : 0);
+        for (std::size_t i = 0; i < poi_count && reader.ok(); ++i) {
+          classes.push_back(static_cast<MapPoiClass>(reader.u8()));
+          // One point each, decoded like every other scene point.
+          read_points(1, points);
+        }
+        if (reader.ok() && points.size() == classes.size()) {
+          value.pois.reserve(points.size());
+          for (std::size_t i = 0; i < points.size(); ++i) {
+            value.pois.push_back(MapPoi{classes[i], points[i]});
+          }
         }
       }
       reader.require_end();
@@ -1818,12 +1868,16 @@ bool MapArea::operator==(const MapArea& rhs) const noexcept {
   return area_class == rhs.area_class && points == rhs.points;
 }
 
+bool MapPoi::operator==(const MapPoi& rhs) const noexcept {
+  return poi_class == rhs.poi_class && point == rhs.point;
+}
+
 bool MapScene::operator==(const MapScene& rhs) const noexcept {
   return std::tie(coordinate_system, scene_revision, view_origin, radius_m,
-                  roads, buildings, areas) ==
+                  roads, buildings, areas, pois) ==
          std::tie(rhs.coordinate_system, rhs.scene_revision,
                   rhs.view_origin, rhs.radius_m, rhs.roads, rhs.buildings,
-                  rhs.areas);
+                  rhs.areas, rhs.pois);
 }
 
 bool AttitudeSample::operator==(const AttitudeSample& rhs) const noexcept {

@@ -84,6 +84,30 @@ test("water and landuse polygons become GCJ area rings; lines, fountains and pit
   assert.equal(await cache.get("map-v1-0123456789abcdef-15-27044-12791.json", { z: 15, x: 27044, y: 12791 }), null);
 });
 
+test("car parks in the pois layer become GCJ parking points; entrances and other pois do not", async (t) => {
+  const expected = { jinan: [27044, 12791, 7], shanghai: [27440, 13389, 3] };
+  for (const [city, [x, y, count]] of Object.entries(expected)) {
+    const data = await readFile(new URL(`../fixtures/protomaps-${city}-15-${x}-${y}.mvt`, import.meta.url));
+    const value = transformVectorTile(data, { z: 15, x, y, revision: "20260915" });
+    const [west, south, east, north] = tileBoundsWgs84(15, x, y);
+    assert.equal(value.pois.length, count, city);
+    for (const poi of value.pois) {
+      assert.equal(poi.class, "parking");
+      const [lat, lon] = poi.point_e6;
+      assert.ok(Number.isInteger(lat) && Number.isInteger(lon));
+      assert.ok(lat / 1e6 > south - 0.02 && lat / 1e6 < north + 0.02);
+      assert.ok(lon / 1e6 > west - 0.02 && lon / 1e6 < east + 0.02);
+    }
+  }
+  // A cached tile from before car-park points is a miss too.
+  const fresh = transformVectorTile(fixture, { z: 15, x: 27044, y: 12791, revision: "20260915" });
+  const { pois, ...stale } = fresh;
+  assert.ok(pois.length > 0);
+  const cache = new MapDiskCache(await directory(t), 64 * 1024 ** 2);
+  await cache.put("map-v1-0123456789abcdef-15-27044-12791.json", stale);
+  assert.equal(await cache.get("map-v1-0123456789abcdef-15-27044-12791.json", { z: 15, x: 27044, y: 12791 }), null);
+});
+
 test("invalid coordinates, corrupt MVT and oversized tiles never produce successful partial maps", () => {
   for (const point of [[14, 1, 1], [15, -1, 0], [15, 32768, 0], [15, 0.5, 1], [15, NaN, 0]]) {
     assert.throws(() => tileBoundsWgs84(...point), { code: "INVALID_REQUEST" });

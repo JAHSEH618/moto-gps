@@ -253,6 +253,28 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertFalse(try codec.encodeMapScene(window.makeBLEInput()).isEmpty)
     }
 
+    func testCarParksAreTheNearestInsideTheSquareWithinTheBudget() throws {
+        let origin = OfflineMapPointE6(latitudeE6: 36_674_804, longitudeE6: 117_122_449)
+        var document = makeDocument(origin: origin, roads: [], buildings: [])
+        // Twenty car parks 20 m apart going east, and one just outside the square.
+        document.pois = (1 ... 20).map { index in
+            OfflineMapPoi(poiClass: "parking", point: point(origin, northM: 0, eastM: Double(index) * 20))
+        } + [OfflineMapPoi(poiClass: "parking", point: point(origin, northM: 520, eastM: 0))]
+        let window = InMemoryOfflineMapSceneIndex(document: document).query(
+            around: origin, radiusM: 500, revision: 1
+        )
+        XCTAssertEqual(window.pois.count, OfflineMapSceneLimits.pois)
+        XCTAssertEqual(window.pois.first, document.pois.first)
+        XCTAssertFalse(window.pois.contains(document.pois.last!))
+
+        // Only a device with bit 18 gets them; the codec takes either scene.
+        XCTAssertEqual(window.makeBLEInput().pois.count, OfflineMapSceneLimits.pois)
+        XCTAssertTrue(window.makeBLEInput(includePois: false).pois.isEmpty)
+        let codec = MotoBLEProtocolCodec(maximumFrameSize: 182)
+        XCTAssertFalse(try codec.encodeMapScene(window.makeBLEInput()).isEmpty)
+        XCTAssertFalse(try codec.encodeMapScene(window.makeBLEInput(includeAreas: false)).isEmpty)
+    }
+
     func testSceneDocumentsWithoutAreasStillDecode() throws {
         let document = try loadDocument()
         XCTAssertTrue(document.areas.isEmpty)

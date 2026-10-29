@@ -80,6 +80,20 @@
         }
       }
     },
+    "pois": {
+      "description": "Optional. Point features drawn as a glyph: surface car parks the basemap has only as points.",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "point_e6"],
+        "properties": {
+          "class": { "enum": ["parking"] },
+          "point_e6": { "$ref": "#/$defs/point" }
+        }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,

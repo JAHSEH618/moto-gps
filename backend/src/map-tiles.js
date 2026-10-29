@@ -60,7 +60,9 @@ function roadClass(detail) {
 
 // The ground under the streets. Protomaps (basemap v4) has no surface car
 // parks: amenity=parking is neither a landuse nor a water polygon there, so
-// "parking" only appears from a source that has them.
+// the "parking" area only appears from a source that has them. The same
+// basemap does carry car parks as points in its pois layer; those become
+// `pois` and are drawn as a P.
 function areaClass(layerName, kind) {
   if (layerName === "water") return kind === "fountain" ? null : "water";
   if (GREEN_LANDUSE.has(kind)) return "green";
@@ -71,7 +73,7 @@ function areaClass(layerName, kind) {
 export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new Date().toISOString() }) {
   validateTileCoordinates(z, x, y);
   const result = {
-    schema_version: 1, coordinate_system: "GCJ-02", tile: { z, x, y }, roads: [], buildings: [], areas: [],
+    schema_version: 1, coordinate_system: "GCJ-02", tile: { z, x, y }, roads: [], buildings: [], areas: [], pois: [],
     source: { provider: "protomaps-openstreetmap", licence: "ODbL-1.0",
       attribution_url: "https://www.openstreetmap.org/copyright", retrieved_at: retrievedAt,
       source_revision: revision, bbox_wgs84: tileBoundsWgs84(z, x, y) },
@@ -97,14 +99,24 @@ export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new
   }
   try {
     const tile = new VectorTile(new PbfReader(data));
-    for (const layerName of ["roads", "buildings", "water", "landuse"]) {
+    for (const layerName of ["roads", "buildings", "water", "landuse", "pois"]) {
       const layer = tile.layers[layerName];
       if (!layer) continue;
       if (layer.length > 50_000) throw new MapTileError("MAP_TILE_TOO_LARGE", "map tile has too many source features");
       for (let i = 0; i < layer.length; i += 1) {
         const feature = layer.feature(i);
         const properties = feature.properties;
-        if (layerName === "roads") {
+        if (layerName === "pois") {
+          // Car parks only, and only the lot itself: a parking_entrance is
+          // the way into a garage that is already a building.
+          if (feature.type !== 1 || properties.kind !== "parking") continue;
+          const geometry = feature.toGeoJSON(x, y, z).geometry;
+          const spots = geometry.type === "Point" ? [geometry.coordinates] : geometry.coordinates;
+          for (const spot of spots) {
+            const [point] = points([spot]);
+            if (point) result.pois.push({ class: "parking", point_e6: point });
+          }
+        } else if (layerName === "roads") {
           const detail = String(properties.kind_detail ?? "");
           if (feature.type !== 2 || !MOTOR_ROADS.has(detail)) continue;
           const geometry = feature.toGeoJSON(x, y, z).geometry;
@@ -148,7 +160,7 @@ export function transformVectorTile(data, { z, x, y, revision, retrievedAt = new
     if (error instanceof MapTileError) throw error;
     throw new MapTileError("MAP_INVALID_TILE", "map source returned an invalid vector tile");
   }
-  if (result.roads.length + result.buildings.length + result.areas.length > 12_000) {
+  if (result.roads.length + result.buildings.length + result.areas.length + result.pois.length > 12_000) {
     throw new MapTileError("MAP_TILE_TOO_LARGE", "map tile has too many features");
   }
   if (Buffer.byteLength(JSON.stringify(result)) > MAXIMUM_TILE_BYTES) {
