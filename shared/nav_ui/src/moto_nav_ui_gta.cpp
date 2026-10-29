@@ -271,6 +271,9 @@ constexpr std::uint16_t kPerfDefaultTargetKph = 100;
 // perf_target_line value while the line reads STOP TO ARM.
 constexpr std::uint16_t kPerfHintLine = 0xFFFF;
 constexpr int kPerfSegmentCount = 12;
+// The speed slab under the compass and the friction circle: the chord at its
+// bottom edge (y +122 design, 30 tall) is the width that stays inside r 195.
+constexpr int kSpeedSlabWidth = 122;
 // Every page that clears something on a hold uses this one duration: the
 // Lean peaks, the Speed·G envelope and the 0-100 best.
 constexpr std::uint32_t kHoldToClearMs = 2'000;
@@ -3858,10 +3861,13 @@ void create_navigation_page() {
     lv_obj_add_event_cb(ui.nav_marker, draw_vehicle_marker,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
 
+    // The chord at the line's top edge, less the casing: a status that fills
+    // the box keeps its casing inside r 195. At 240 wide and y 44 the box
+    // ran out to r 235, past the glass.
     ui.nav_status = make_text(page, &moto_font_display_24, TextRole::MapInk, "");
-    lv_obj_set_width(ui.nav_status, px(240));
+    lv_obj_set_width(ui.nav_status, px(139));
     lv_obj_set_style_text_align(ui.nav_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(ui.nav_status, LV_ALIGN_TOP_MID, 0, px(44));
+    lv_obj_align(ui.nav_status, LV_ALIGN_TOP_MID, 0, px(50));
 
     // The next action is the navigation page's single visual hero. The short
     // road window above is deliberately quieter and contains no fake side
@@ -3928,7 +3934,8 @@ void create_navigation_page() {
     lv_obj_set_style_bg_opa(ui.nav_home_hint, LV_OPA_80, 0);
     lv_obj_set_style_pad_hor(ui.nav_home_hint, px(6), 0);
     lv_obj_set_style_pad_ver(ui.nav_home_hint, px(2), 0);
-    lv_obj_align(ui.nav_home_hint, LV_ALIGN_TOP_MID, 0, px(40));
+    // At y 40 the box's top corners reached r 196.
+    lv_obj_align(ui.nav_home_hint, LV_ALIGN_TOP_MID, 0, px(42));
     lv_obj_add_flag(ui.nav_home_hint, LV_OBJ_FLAG_HIDDEN);
     ui.nav_home_hint_timer = lv_timer_create(hide_home_hint, kHomeHintMs,
                                              nullptr);
@@ -4036,7 +4043,9 @@ void create_navigation_page() {
     constexpr int kPagerW = 284;
     constexpr int kPagerH = 60;
     constexpr int kPagerX = MOTO_UI_CANVAS_WIDTH / 2 - kPagerW / 2;
-    constexpr int kPagerY = 92;  // the first row where the body fits the glass
+    // The first row where the body's rounded corners stay inside r 195; at
+    // 92 they reached r 196.
+    constexpr int kPagerY = 94;
     lv_obj_t *pager = box(cover_layer, kPagerX, kPagerY, kPagerW, kPagerH,
                           kPagerBody);
     lv_obj_set_style_radius(pager, 10, 0);
@@ -4082,7 +4091,8 @@ void create_navigation_page() {
     // near zero. Two lines in every state.
     ui.nav_lifecycle_title = make_text(cover_layer, &moto_font_display_72,
                                        TextRole::Ink, "CONNECT\nPHONE");
-    lv_obj_set_width(ui.nav_lifecycle_title, px(300));
+    // The chord at the box's corners; the widest line, READY TO, is ~270.
+    lv_obj_set_width(ui.nav_lifecycle_title, px(282));
     lv_obj_set_style_text_align(ui.nav_lifecycle_title,
                                 LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_letter_space(ui.nav_lifecycle_title, 0, 0);
@@ -4195,7 +4205,7 @@ void create_compass_page() {
     lv_obj_set_style_text_letter_space(ui.compass_heading, px(2), 0);
     lv_obj_align(ui.compass_heading, LV_ALIGN_CENTER, 0, px(64));
 
-    lv_obj_t *speed = make_slab(page, "0 KM/H", 150, 30);
+    lv_obj_t *speed = make_slab(page, "0 KM/H", kSpeedSlabWidth, 30);
     lv_obj_align(speed, LV_ALIGN_CENTER, 0, px(122));
     ui.compass_speed = lv_obj_get_child(speed, 0);
 }
@@ -4258,14 +4268,17 @@ void create_performance_page() {
     ui.perf_strip = lv_obj_create(page);
     lv_obj_remove_style_all(ui.perf_strip);
     lv_obj_clear_flag(ui.perf_strip, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(ui.perf_strip, px(284), px(16));
+    // Twelve segments on a 22 px pitch: the strip's bottom corners stay
+    // inside r 195. On a 24 px pitch its end segments reached r 205 and
+    // printed on the casing.
+    lv_obj_set_size(ui.perf_strip, px(kPerfSegmentCount * 22 - 4), px(16));
     lv_obj_align(ui.perf_strip, LV_ALIGN_CENTER, 0, px(62));
     for(int i = 0; i < kPerfSegmentCount; ++i) {
         lv_obj_t *segment = lv_obj_create(ui.perf_strip);
         lv_obj_remove_style_all(segment);
         lv_obj_clear_flag(segment, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_size(segment, px(20), px(16));
-        lv_obj_set_pos(segment, px(i * 24), 0);
+        lv_obj_set_size(segment, px(18), px(16));
+        lv_obj_set_pos(segment, px(i * 22), 0);
         lv_obj_set_style_bg_color(segment, ui.palette.ink, 0);
         lv_obj_set_style_bg_opa(segment, LV_OPA_20, 0);
         ui.perf_segments[i] = segment;
@@ -4999,7 +5012,7 @@ void create_gg_page() {
     lv_obj_set_name_static(ui.gg_live, "moto-gg-live");
     lv_obj_align(ui.gg_live, LV_ALIGN_TOP_MID, 0, px(34));
 
-    lv_obj_t *speed = make_slab(page, "0 KM/H", 130, 30);
+    lv_obj_t *speed = make_slab(page, "0 KM/H", kSpeedSlabWidth, 30);
     lv_obj_align(speed, LV_ALIGN_CENTER, 0, px(122));
     ui.gg_speed = lv_obj_get_child(speed, 0);
 
@@ -5058,11 +5071,14 @@ void create_music_page() {
 
     ui.music_title = make_text(page, &moto_font_display_40_cjk,
                                TextRole::Display, "NIGHT RIDE");
-    lv_obj_set_width(ui.music_title, px(288));
+    // The chord at the title's top edge. At 288 wide and left-aligned the
+    // first character printed at x 48, half under the casing.
+    lv_obj_set_width(ui.music_title, px(264));
+    lv_obj_set_style_text_align(ui.music_title, LV_TEXT_ALIGN_CENTER, 0);
     // A long title runs across the plate like a station ident instead of
-    // stacking into the artist line. One line, always: the label grows to the
-    // rendered face's line height (the CJK fallback is the taller one), never
-    // to a second line.
+    // stacking into the artist line (LVGL drops the centring while it
+    // scrolls). One line, always: the label grows to the rendered face's line
+    // height (the CJK fallback is the taller one), never to a second line.
     lv_label_set_long_mode(ui.music_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_align(ui.music_title, LV_ALIGN_TOP_MID, 0, px(110));
 
@@ -5078,7 +5094,9 @@ void create_music_page() {
     lv_obj_t *deck = lv_obj_create(page);
     lv_obj_remove_style_all(deck);
     lv_obj_clear_flag(deck, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(deck, px(260), px(64));
+    // 248 wide keeps the block's bottom corners inside r 195; at 260 they
+    // reached r 200.
+    lv_obj_set_size(deck, px(248), px(64));
     lv_obj_align(deck, LV_ALIGN_CENTER, 0, px(52));
     lv_obj_set_style_bg_color(deck, ui.palette.slab, 0);
     lv_obj_set_style_bg_opa(deck, LV_OPA_COVER, 0);
@@ -5132,7 +5150,8 @@ void create_music_page() {
     // Like is a mode, not a transport key: it lives on the plate row.
     lv_obj_t *like = lv_button_create(page);
     ui.music_buttons[3] = like;
-    lv_obj_set_size(like, px(70), px(26));
+    // 68 wide: at 70 the key's top-right corner sat a pixel past r 195.
+    lv_obj_set_size(like, px(68), px(26));
     lv_obj_set_pos(like, px(212), px(68));
     lv_obj_set_style_radius(like, 0, 0);
     lv_obj_set_style_bg_color(like, ui.palette.accent, 0);
