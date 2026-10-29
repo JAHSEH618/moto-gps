@@ -13,6 +13,7 @@ namespace {
 
 constexpr double kEarthRadiusM = 6'371'000.0;
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kMetresPerLatitudeDeg = kEarthRadiusM * kPi / 180.0;
 // Once navigation has an accepted progress position, never let a nearby
 // parallel/returning leg pull the matcher arbitrarily far back through the
 // route.  A small backward window still tolerates ordinary GNSS jitter and a
@@ -206,6 +207,10 @@ NavCommands NavCore::handle(NavEvent event) {
 
 NavSnapshot NavCore::snapshot() const { return view_; }
 
+RouteMatchStats NavCore::route_match_stats() const {
+  return route_match_stats_;
+}
+
 void NavCore::reset_session(bool preserve_network) {
   const NetworkState network =
       preserve_network ? view_.network : NetworkState::Offline;
@@ -217,6 +222,7 @@ void NavCore::reset_session(bool preserve_network) {
   view_.gnss_stale = true;
   route_ = {};
   cumulative_distance_m_.clear();
+  route_segments_.clear();
   traffic_.clear();
   last_gnss_fix_wgs84_.reset();
   last_match_fix_gcj02_.reset();
@@ -360,12 +366,7 @@ void NavCore::accept_route(RouteReady event) {
               return lhs.route_offset_m < rhs.route_offset_m;
             });
 
-  cumulative_distance_m_.assign(route_.polyline.size(), 0.0);
-  for (std::size_t i = 1; i < route_.polyline.size(); ++i) {
-    cumulative_distance_m_[i] = cumulative_distance_m_[i - 1] +
-                                distance_m(route_.polyline[i - 1],
-                                           route_.polyline[i]);
-  }
+  build_route_geometry();
   if (route_.total_distance_m <= 0.0) {
     route_.total_distance_m = cumulative_distance_m_.back();
   }
@@ -679,6 +680,27 @@ void NavCore::update_derived_route_fields() {
   }
 }
 
+void NavCore::build_route_geometry() {
+  const std::size_t point_count = route_.polyline.size();
+  cumulative_distance_m_.assign(point_count, 0.0);
+  route_segments_.assign(point_count > 0 ? point_count - 1 : 0, {});
+  for (std::size_t i = 1; i < point_count; ++i) {
+    const Gcj02Point& a = route_.polyline[i - 1];
+    const Gcj02Point& b = route_.polyline[i];
+    cumulative_distance_m_[i] = cumulative_distance_m_[i - 1] +
+                                distance_m(a, b);
+    RouteSegment& segment = route_segments_[i - 1];
+    segment.metres_per_longitude_deg =
+        std::cos(radians((a.latitude_deg + b.latitude_deg) / 2.0)) *
+        kMetresPerLatitudeDeg;
+    segment.east_m = wrap_longitude_delta(b.longitude_deg - a.longitude_deg) *
+                     segment.metres_per_longitude_deg;
+    segment.north_m = (b.latitude_deg - a.latitude_deg) * kMetresPerLatitudeDeg;
+    segment.length_squared_m2 = segment.east_m * segment.east_m +
+                                segment.north_m * segment.north_m;
+  }
+}
+
 std::uint32_t NavCore::allocate_request_id() noexcept {
   const std::uint32_t request_id = next_request_id_;
   ++next_request_id_;
@@ -732,7 +754,8 @@ NavCore::Projection NavCore::project_onto_route(
     double maximum_route_progress_m) const {
   Projection best;
   if (route_.polyline.size() < 2 ||
-      cumulative_distance_m_.size() != route_.polyline.size()) {
+      cumulative_distance_m_.size() != route_.polyline.size() ||
+      route_segments_.size() + 1 != route_.polyline.size()) {
     return best;
   }
 
@@ -751,30 +774,47 @@ NavCore::Projection NavCore::project_onto_route(
       std::clamp(maximum_route_progress_m, 0.0, route_total) /
       route_per_geometry;
 
+  // Progress only grows along the polyline, so the segments that overlap
+  // [minimum, maximum] are one contiguous run. Binary-search its ends rather
+  // than visiting the whole route to reject everything else. The bounds come
+  // from accept_fix's continuity envelope, which widens with the time since
+  // the last fix, so a tunnel exit far ahead stays inside the run; with no
+  // history the maximum is unbounded and the run is the rest of the route.
+  std::size_t first_segment = 0;
+  std::size_t end_segment = route_segments_.size();
+  if (!config_.route_match_full_scan) {
+    // The first segment that ends at or past the minimum...
+    first_segment = static_cast<std::size_t>(
+        std::lower_bound(cumulative_distance_m_.begin() + 1,
+                         cumulative_distance_m_.end(),
+                         minimum_geometry_progress_m) -
+        cumulative_distance_m_.begin() - 1);
+    // ...up to the last one that starts at or before the maximum.
+    end_segment = static_cast<std::size_t>(
+        std::upper_bound(cumulative_distance_m_.begin() + first_segment,
+                         cumulative_distance_m_.end() - 1,
+                         maximum_geometry_progress_m) -
+        cumulative_distance_m_.begin());
+  }
+  route_match_stats_.projections += 1;
+  route_match_stats_.segments_examined =
+      static_cast<std::uint32_t>(end_segment - first_segment);
+
   double best_distance = std::numeric_limits<double>::infinity();
-  for (std::size_t i = 0; i + 1 < route_.polyline.size(); ++i) {
-    const Gcj02Point& a = route_.polyline[i];
-    const Gcj02Point& b = route_.polyline[i + 1];
-    const double reference_lat =
-        radians((a.latitude_deg + b.latitude_deg + point.latitude_deg) /
-                3.0);
-    const double cos_lat = std::cos(reference_lat);
-    const double ax = radians(wrap_longitude_delta(
-                            a.longitude_deg - point.longitude_deg)) *
-                      cos_lat * kEarthRadiusM;
-    const double ay = radians(a.latitude_deg - point.latitude_deg) *
-                      kEarthRadiusM;
-    const double bx = radians(wrap_longitude_delta(
-                            b.longitude_deg - point.longitude_deg)) *
-                      cos_lat * kEarthRadiusM;
-    const double by = radians(b.latitude_deg - point.latitude_deg) *
-                      kEarthRadiusM;
-    const double dx = bx - ax;
-    const double dy = by - ay;
-    const double length_squared = dx * dx + dy * dy;
+  for (std::size_t i = first_segment; i < end_segment; ++i) {
+    const RouteSegment& segment = route_segments_[i];
+    const double dx = segment.east_m;
+    const double dy = segment.north_m;
+    const double length_squared = segment.length_squared_m2;
     if (length_squared <= 1e-6) {
       continue;
     }
+    const Gcj02Point& a = route_.polyline[i];
+    const double ax = wrap_longitude_delta(
+                          a.longitude_deg - point.longitude_deg) *
+                      segment.metres_per_longitude_deg;
+    const double ay = (a.latitude_deg - point.latitude_deg) *
+                      kMetresPerLatitudeDeg;
     const double segment_start_m = cumulative_distance_m_[i];
     const double segment_end_m = cumulative_distance_m_[i + 1];
     if (segment_end_m < minimum_geometry_progress_m ||

@@ -58,6 +58,19 @@ struct NavCoreConfig {
   TimestampMs route_retry_after_ms = 5'000;
   TimestampMs traffic_refresh_interval_ms = 60'000;
   TimestampMs traffic_retry_after_ms = 10'000;
+  // Route matching visits only the segments inside a fix's progress window.
+  // true visits every segment and lets the same progress filter reject them,
+  // as the matcher did before the window existed. The result is identical;
+  // the native tests run both and compare. The cost grows with route length.
+  bool route_match_full_scan = false;
+};
+
+// How much route geometry the matcher touched. A fix is projected onto the
+// segments inside its progress window only, so segments_examined follows how
+// far the rider could have moved since the previous fix, not route length.
+struct RouteMatchStats {
+  std::uint32_t projections = 0;        // since construction
+  std::uint32_t segments_examined = 0;  // by the latest projection
 };
 
 struct NavSnapshot {
@@ -158,6 +171,7 @@ class NavCore {
   NavCommands handle(NavEvent event);
 
   [[nodiscard]] NavSnapshot snapshot() const;
+  [[nodiscard]] RouteMatchStats route_match_stats() const;
 
  private:
   struct Projection {
@@ -165,6 +179,16 @@ class NavCore {
     double along_route_m = 0.0;
     double cross_track_m = 0.0;
     std::size_t segment_index = 0;
+  };
+
+  // Built once per route: the segment's end relative to its start, in metres
+  // of a local frame at the segment's mid-latitude. A fix then only has to
+  // place itself against the segment start, without any trigonometry.
+  struct RouteSegment {
+    double metres_per_longitude_deg = 0.0;
+    double east_m = 0.0;
+    double north_m = 0.0;
+    double length_squared_m2 = 0.0;
   };
 
   void reset_session(bool preserve_network);
@@ -182,6 +206,7 @@ class NavCore {
   void update_route_view(const Gcj02Point& position,
                          double route_progress_m);
   void update_derived_route_fields();
+  void build_route_geometry();
   [[nodiscard]] std::uint32_t allocate_request_id() noexcept;
 
   [[nodiscard]] bool valid_point(const Wgs84Point& point) const;
@@ -200,6 +225,9 @@ class NavCore {
   NavSnapshot view_;
   RouteBundle route_;
   std::vector<double> cumulative_distance_m_;
+  std::vector<RouteSegment> route_segments_;
+  // Instrumentation only; project_onto_route stays const.
+  mutable RouteMatchStats route_match_stats_;
   std::vector<TrafficSegment> traffic_;
   std::optional<GnssFix> last_gnss_fix_wgs84_;
   std::optional<Gcj02Point> last_match_fix_gcj02_;
