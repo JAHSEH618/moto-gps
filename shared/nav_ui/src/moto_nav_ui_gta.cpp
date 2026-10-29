@@ -1545,6 +1545,15 @@ void gesture_event(lv_event_t *) {
     lv_indev_wait_release(indev);
 }
 
+// Every street, casing and route segment goes through here, and LVGL already
+// antialiases the diagonals: with LV_DRAW_SW_COMPLEX (on for the board, the
+// Web build and the native suite) a skewed lv_draw_line is cut by two line
+// masks that give each crossing pixel its fractional coverage. So there is no
+// rasterizer of our own (map AA slice B, closed 2026-10-29). What LVGL does
+// not give is sub-pixel position: endpoints truncate to whole pixels, so a
+// slow street steps a pixel at a time. Reopen that only if the panel shows
+// the crawl, or a capacity map runs slow in `ui dbg`: the masks are the cost
+// there (host: ~0.7 ms a frame for a city, ~6.5 ms for 40 skewed streets).
 void draw_map_line(lv_layer_t *layer, const lv_draw_line_dsc_t &line) {
     const lv_area_t original_clip = layer->_clip_area;
     lv_area_t visible{
