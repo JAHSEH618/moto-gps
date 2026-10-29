@@ -87,6 +87,42 @@ inline std::uint32_t simplified_form(std::uint32_t codepoint) {
     return 0;
 }
 
+/// A half-width stand-in the faces carry for a mark they lack, or zero:
+/// full-width ASCII (ＡＢＣ, ～) and the CJK brackets the text face has no
+/// glyph for. 【Live】 reads [Live] rather than ?Live?.
+inline std::uint32_t half_width_form(std::uint32_t codepoint) {
+    if(codepoint >= 0xFF01U && codepoint <= 0xFF5EU) return codepoint - 0xFEE0U;
+    switch(codepoint) {
+        case 0x3010U: case 0x3014U: case 0x3016U: case 0x301AU: return '[';
+        case 0x3011U: case 0x3015U: case 0x3017U: case 0x301BU: return ']';
+        case 0x3008U: return '<';
+        case 0x3009U: return '>';
+        // Corner brackets quote, so they become the quotes the face has.
+        case 0x300CU: case 0x300EU: return 0x201CU;
+        case 0x300DU: case 0x300FU: return 0x201DU;
+        case 0x301CU: return '~';
+        case 0x30FBU: return 0x00B7U;
+        default: return 0;
+    }
+}
+
+/// UTF-8 for a BMP codepoint; returns the byte count.
+inline std::size_t encode_bmp(std::uint32_t codepoint, char (&bytes)[3]) {
+    if(codepoint < 0x80U) {
+        bytes[0] = static_cast<char>(codepoint);
+        return 1;
+    }
+    if(codepoint < 0x800U) {
+        bytes[0] = static_cast<char>(0xC0U | (codepoint >> 6U));
+        bytes[1] = static_cast<char>(0x80U | (codepoint & 0x3FU));
+        return 2;
+    }
+    bytes[0] = static_cast<char>(0xE0U | (codepoint >> 12U));
+    bytes[1] = static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU));
+    bytes[2] = static_cast<char>(0x80U | (codepoint & 0x3FU));
+    return 3;
+}
+
 /// Space of any width. An ideographic or no-break space has no glyph in these
 /// faces, but it still separates two words.
 inline bool is_space(std::uint32_t codepoint) {
@@ -185,6 +221,8 @@ inline bool emoji_modifier_at(const char *text, std::size_t size,
 /// order of preference:
 ///   - swapped for its Simplified form when that one has a glyph (張學友
 ///     reads 张学友); a character the face draws is never swapped;
+///   - swapped for a half-width stand-in when it is full-width ASCII or a
+///     CJK bracket the face lacks (【Live】 reads [Live]);
 ///   - dropped when it is an emoji, or invisible to begin with;
 ///   - otherwise shown as "?", once for a whole run of them, so the rider can
 ///     see that something is there that the screen cannot draw.
@@ -265,6 +303,19 @@ inline void copy_display_text(char *destination, std::size_t capacity,
             if(!append(bytes, sizeof(bytes))) break;
             marked = false;
             readable = true;
+            continue;
+        }
+        const std::uint32_t half = detail::half_width_form(codepoint);
+        if(half != 0 && detail::drawable(font, half)) {
+            char bytes[3];
+            if(!append(bytes, detail::encode_bmp(half, bytes))) break;
+            marked = false;
+            // A full-width letter or digit is something to read; a bracket
+            // or a quote on its own is not.
+            const bool letter = (half >= '0' && half <= '9') ||
+                                (half >= 'A' && half <= 'Z') ||
+                                (half >= 'a' && half <= 'z');
+            readable = readable || letter;
             continue;
         }
         if(codepoint != 0 &&
