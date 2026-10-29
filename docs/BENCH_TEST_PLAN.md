@@ -2,6 +2,8 @@
 
 按顺序执行。每一步给出：操作/命令、串口关键字、通过标准。串口为 USB-Serial/JTAG（115200）。命令从同一个口输入：固件同时读 UART0 和 USB-Serial/JTAG（后者在 sdkconfig 里只是输出用的副控制台，2026-10-26 之前的固件收不到从 USB 口输入的命令）。打开串口会让芯片复位，开机约 10 s 后再发命令。
 
+本清单的串口命令（`imu …`、`sys tasks`、`ui page|theme|battery|bench|dbg|perf`、`burnin`、`wifi up|down|forget`、`ota confirm`、`tlog clear`）只在台架构建里有：`idf.py -C platforms/esp32 build` 出的 `build/` 镜像。发布镜像（`sdkconfig.release`，`CONFIG_MOTO_BENCH_TOOLS_DISABLE=y`，也就是 OTA 推送的那一个）只回应 `ota status`、`tlog status`、`wifi status` 三个只读命令，开机不打 heapprobe，也没有每 5 s 一行的 `display perf`。上板测试前确认刷的是台架构建。
+
 前置：`cd` 到仓库根，已 `. ~/esp/esp-idf/export.sh`。分区表已换，**首次刷必须 USB**：
 
 ```bash

@@ -35,7 +35,7 @@ mv platforms/esp32/sdkconfig platforms/esp32/sdkconfig.old
 To keep a deliberate local override, configure with `-DMOTO_ALLOW_SDKCONFIG_DRIFT=ON`; the
 differences are then only a warning.
 
-That is the development build, which records IMU data to the `tlog` partition (the default; `CONFIG_MOTO_TLOG_DISABLE` unset). The release build adds the `sdkconfig.release` overlay, which sets `CONFIG_MOTO_TLOG_DISABLE=y` and turns tlog off with the same partition table; its output is in `platforms/esp32/build-release/`:
+That is the development build, which records IMU data to the `tlog` partition (the default; `CONFIG_MOTO_TLOG_DISABLE` unset). The release build adds the `sdkconfig.release` overlay, which sets `CONFIG_MOTO_TLOG_DISABLE=y` to turn tlog off and `CONFIG_MOTO_BENCH_TOOLS_DISABLE=y` to leave out the bench tools (the serial console keeps only `ota status` / `tlog status` / `wifi status`; no heap probes, periodic `display perf` log or `ui dbg` timers), with the same partition table; its output is in `platforms/esp32/build-release/`:
 
 ```sh
 rm -f platforms/esp32/build-release/sdkconfig

@@ -85,6 +85,12 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
     $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
 )
+# Release overlay (sdkconfig.release): the shared UI leaves out its `ui dbg`
+# profiling along with the firmware's bench commands. Host tests and Web keep
+# the default (MOTO_UI_DEBUG_TOOLS=1, moto_nav_ui_backends.h).
+if(CONFIG_MOTO_BENCH_TOOLS_DISABLE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE MOTO_UI_DEBUG_TOOLS=0)
+endif()
 
 # The commit this image is built from, for FirmwareInfo (0x1E): see
 # build_info.cmake. A target rather than a configure-time variable, so it runs

@@ -120,6 +120,9 @@ portMUX_TYPE te_sync_lock = portMUX_INITIALIZER_UNLOCKED;
 TeSyncState te_sync_state{};
 SemaphoreHandle_t te_active_edge_sem = nullptr;
 
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
+// Bench frame-time window (`ui perf`, `ui dbg`); a release image
+// (CONFIG_MOTO_BENCH_TOOLS_DISABLE) registers none of it and logs nothing.
 // All timing counters are owned by the LVGL worker, never touched in the TE
 // ISR. These measure frames actually rendered, not the configured timer rate.
 struct DisplayTiming {
@@ -227,6 +230,7 @@ void display_timing_event(lv_event_t* event) {
     }
   }
 }
+#endif  // CONFIG_MOTO_BENCH_TOOLS_DISABLE
 
 // Waveshare's public bsp_display_new() currently sends both 0x51=0xff and
 // DISPON as part of its private vendor sequence, then sends DISPON once more
@@ -704,9 +708,13 @@ void display_te_event(lv_event_t* event) {
     return;
   }
 
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
   const std::int64_t wait_start_us = esp_timer_get_time();
+#endif
   const bool synchronized = wait_for_fresh_te_active_edge();
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
   display_timing.te_wait_total_us += esp_timer_get_time() - wait_start_us;
+#endif
   std::uint8_t timeout_count = 0;
   bool gate_disabled = false;
   portENTER_CRITICAL(&te_sync_lock);
@@ -777,6 +785,7 @@ esp_err_t initialize_te_probe(lv_display_t* target_display) {
                           LV_EVENT_RENDER_START, nullptr);
   lv_display_add_event_cb(target_display, display_te_event,
                           LV_EVENT_FLUSH_START, nullptr);
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
   lv_display_add_event_cb(target_display, display_timing_event,
                           LV_EVENT_RENDER_START, nullptr);
   lv_display_add_event_cb(target_display, display_timing_event,
@@ -789,6 +798,7 @@ esp_err_t initialize_te_probe(lv_display_t* target_display) {
                           LV_EVENT_FLUSH_WAIT_START, nullptr);
   lv_display_add_event_cb(target_display, display_timing_event,
                           LV_EVENT_FLUSH_WAIT_FINISH, nullptr);
+#endif
   ESP_LOGI(kTag,
            "CO5300 TE probe armed on GPIO%d (ANYEDGE; starts after reveal)",
            static_cast<int>(kLcdTeGpio));
@@ -1177,6 +1187,7 @@ extern "C" void board_port_unlock(void) {
   }
 }
 
+#ifndef CONFIG_MOTO_BENCH_TOOLS_DISABLE
 extern "C" void board_port_reset_display_timing(void) {
   display_timing = {};
   display_timing.window_start_us = esp_timer_get_time();
@@ -1191,6 +1202,7 @@ extern "C" void board_port_display_totals(uint64_t *render_us,
   if (render_us != nullptr) *render_us = display_total_render_us;
   if (frames != nullptr) *frames = display_total_frames;
 }
+#endif  // CONFIG_MOTO_BENCH_TOOLS_DISABLE
 
 extern "C" bool board_port_power_button_pressed(void) {
   // Official schematic: PWRON -> R12/BSS138/R9 -> SYS_OUT -> GPIO3. The

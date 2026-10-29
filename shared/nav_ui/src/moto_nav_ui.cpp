@@ -411,6 +411,7 @@ extern "C" struct _lv_obj_t *moto_nav_ui_page_root(moto_ui_page_t page) {
                                     : moto_ui_classic::page_root(page);
 }
 
+#if MOTO_UI_DEBUG_TOOLS
 extern "C" void moto_nav_ui_debug_set_clock(moto_ui_debug_clock_t clock) {
     moto_ui_gta::debug_set_clock(clock);
 }
@@ -438,3 +439,16 @@ extern "C" void moto_nav_ui_debug_reset(void) {
 extern "C" void moto_nav_ui_debug_stats(moto_ui_debug_stats_t *out) {
     moto_ui_gta::debug_stats(out);
 }
+#else
+// Profiling compiled out (the firmware's release image): the entry points stay
+// so a caller still links, and they hide nothing and measure nothing.
+extern "C" void moto_nav_ui_debug_set_clock(moto_ui_debug_clock_t) {}
+extern "C" void moto_nav_ui_debug_set_enabled(uint8_t) {}
+extern "C" uint8_t moto_nav_ui_debug_enabled(void) { return 0; }
+extern "C" void moto_nav_ui_debug_set_hidden(uint32_t) {}
+extern "C" uint32_t moto_nav_ui_debug_hidden(void) { return 0; }
+extern "C" void moto_nav_ui_debug_reset(void) {}
+extern "C" void moto_nav_ui_debug_stats(moto_ui_debug_stats_t *out) {
+    if(out != nullptr) *out = {};
+}
+#endif

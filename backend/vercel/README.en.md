@@ -194,7 +194,10 @@ https://www.doupaw.site/firmware/latest.json   version, URL, SHA-256, size
 
 What gets published is the release build: `platforms/esp32/sdkconfig.release` on top of
 `sdkconfig.defaults`, which sets `CONFIG_MOTO_TLOG_DISABLE=y` so the round screen stops writing
-the tlog partition. The bench build in `build/` keeps recording and is for USB flashing only.
+the tlog partition, and `CONFIG_MOTO_BENCH_TOOLS_DISABLE=y` so the serial console answers only
+`ota status` / `tlog status` / `wifi status`: no heap probes, no periodic `display perf` log, no
+`ui dbg` timers, and no `ota confirm`, which would mark an image valid past the rollback guard.
+The bench build in `build/` keeps recording and the bench tools, and is for USB flashing only.
 Commit first and build from a clean tree, or the image and the manifest version both carry
 `-dirty`. From the repository root:
 
@@ -211,7 +214,7 @@ cd backend && npx vercel --prod
 
 The script reads `build-release/moto_gps_esp32.bin` by default and checks the
 `config/sdkconfig.h` the same build directory generated: a bench image without
-`CONFIG_MOTO_TLOG_DISABLE` is refused. It accepts only 1 MiB–7 MiB images (the OTA slot), computes the SHA-256, and writes
+`CONFIG_MOTO_TLOG_DISABLE` or `CONFIG_MOTO_BENCH_TOOLS_DISABLE` is refused. It accepts only 1 MiB–7 MiB images (the OTA slot), computes the SHA-256, and writes
 both `moto-gps.bin` and `latest.json` into `backend/public/firmware/`. The repository ignores
 `*.bin` by default; this directory carries an explicit exception so a Git deployment uploads
 the file. `--check` catches a manifest that is behind the image, in CI or before a release.

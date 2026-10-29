@@ -14,6 +14,15 @@
 
 #include "moto_nav_ui.h"
 
+// The lean page's `ui dbg` profiling (clock, per-layer timers, hide mask). On
+// unless a build says otherwise: the host tests and the Web build keep it, and
+// the firmware's release overlay (CONFIG_MOTO_BENCH_TOOLS_DISABLE) compiles
+// with MOTO_UI_DEBUG_TOOLS=0, which leaves the moto_nav_ui_debug_* calls as
+// no-ops.
+#ifndef MOTO_UI_DEBUG_TOOLS
+#define MOTO_UI_DEBUG_TOOLS 1
+#endif
+
 namespace moto_ui_gta {
 void set_boot_theme(moto_ui_theme_t theme);
 void show_boot_screen(void);
@@ -52,6 +61,7 @@ void set_lean_cal_state(moto_ui_lean_cal_state_t state, uint8_t value);
 void set_lean_flags(uint8_t cal_unverified, uint8_t imu_poll,
                     uint8_t log_full, uint8_t log_dirty);
 struct _lv_obj_t *page_root(moto_ui_page_t page);
+#if MOTO_UI_DEBUG_TOOLS
 void debug_set_clock(moto_ui_debug_clock_t clock);
 void debug_set_enabled(uint8_t enabled);
 uint8_t debug_enabled(void);
@@ -59,6 +69,7 @@ void debug_set_hidden(uint32_t mask);
 uint32_t debug_hidden(void);
 void debug_reset(void);
 void debug_stats(moto_ui_debug_stats_t *out);
+#endif
 void show_home_error(void);
 /** Delete the backend's timers and forget its tree without drawing anything,
     so the other backend can take the screen. */

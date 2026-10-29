@@ -5,8 +5,9 @@
 //
 // Only the release overlay (platforms/esp32/sdkconfig.release) is published:
 // a bench build from build/ keeps the tlog recorder writing flash on every
-// ride, so an image whose build directory lacks CONFIG_MOTO_TLOG_DISABLE is
-// refused.
+// ride and the bench serial commands (`ota confirm` among them, which skips
+// the rollback guard), so an image whose build directory lacks
+// CONFIG_MOTO_TLOG_DISABLE or CONFIG_MOTO_BENCH_TOOLS_DISABLE is refused.
 //
 //   node scripts/publish_firmware.mjs
 //   node scripts/publish_firmware.mjs --check
@@ -84,8 +85,13 @@ export function releaseConfigProblem(binPath) {
   if (!existsSync(header)) {
     return `no config/sdkconfig.h next to ${binPath}; publish the image from its build directory`;
   }
-  if (!/^#define CONFIG_MOTO_TLOG_DISABLE 1$/mu.test(readFileSync(header, "utf8"))) {
+  const config = readFileSync(header, "utf8");
+  if (!/^#define CONFIG_MOTO_TLOG_DISABLE 1$/mu.test(config)) {
     return `${binPath} is a bench build with the tlog recorder on; ` +
+      "build the release overlay into platforms/esp32/build-release and publish that";
+  }
+  if (!/^#define CONFIG_MOTO_BENCH_TOOLS_DISABLE 1$/mu.test(config)) {
+    return `${binPath} is a bench build with the bench tools in; ` +
       "build the release overlay into platforms/esp32/build-release and publish that";
   }
   return null;

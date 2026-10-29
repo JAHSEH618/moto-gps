@@ -41,7 +41,7 @@ test("the default image is the release build", () => {
   assert.match(readOptions([], {}).bin, /platforms\/esp32\/build-release\/moto_gps_esp32\.bin$/u);
 });
 
-test("only an image built with the recorder off can be published", (t) => {
+test("only an image built with the recorder off and no bench tools can be published", (t) => {
   const build = mkdtempSync(join(tmpdir(), "moto-publish-"));
   t.after(() => rmSync(build, { recursive: true, force: true }));
   const bin = join(build, "moto_gps_esp32.bin");
@@ -54,6 +54,11 @@ test("only an image built with the recorder off can be published", (t) => {
 
   writeFileSync(join(build, "config/sdkconfig.h"),
                 "#define CONFIG_MOTO_LCD_H_RES 466\n#define CONFIG_MOTO_TLOG_DISABLE 1\n");
+  assert.match(releaseConfigProblem(bin), /bench tools/u);
+
+  writeFileSync(join(build, "config/sdkconfig.h"),
+                "#define CONFIG_MOTO_LCD_H_RES 466\n#define CONFIG_MOTO_TLOG_DISABLE 1\n" +
+                "#define CONFIG_MOTO_BENCH_TOOLS_DISABLE 1\n");
   assert.equal(releaseConfigProblem(bin), null);
 });
 

@@ -259,10 +259,17 @@ moto_ui_theme_t g_boot_theme = MOTO_UI_THEME_GTA_NIGHT;
 // Lean-page profiling. Off by default; the platform supplies the clock only in
 // the firmware, so the Web/shared build carries the branches but no esp_timer
 // dependency.
+#if MOTO_UI_DEBUG_TOOLS
 moto_ui_debug_clock_t g_debug_clock = nullptr;
 bool g_debug_enabled = false;
 std::uint32_t g_debug_hidden = 0;
 moto_ui_debug_stats_t g_debug_stats{};
+#else
+// Compiled out (the firmware's release image): no timers, and a mask that is
+// always empty, so every hide test folds to the rider's path. The mask-0 work
+// in apply_debug_hidden() (the Lean disc stays hidden) still runs.
+constexpr std::uint32_t g_debug_hidden = 0;
+#endif
 void apply_debug_hidden();
 
 constexpr double kPi = 3.14159265358979323846;
@@ -4802,14 +4809,18 @@ void draw_lean_scene(lv_event_t *event) {
         return box.x1 <= clip.x2 && box.x2 >= clip.x1 && box.y1 <= clip.y2 &&
                box.y2 >= clip.y1;
     };
+#if MOTO_UI_DEBUG_TOOLS
     // Profiling buckets (`ui dbg`): sun = arc, hero = numeral.
     const auto clock_now = [] {
         return (g_debug_enabled && g_debug_clock != nullptr) ? g_debug_clock()
                                                               : 0;
     };
+#endif
 
     if((g_debug_hidden & MOTO_UI_DBG_HIDE_SUN) == 0) {
+#if MOTO_UI_DEBUG_TOOLS
         const std::uint64_t started = clock_now();
+#endif
         const LeanArcState arc =
             lean_arc_state(lean, ui.lean_peak_left, ui.lean_peak_right);
         lv_draw_arc_dsc_t dsc;
@@ -4855,11 +4866,15 @@ void draw_lean_scene(lv_event_t *event) {
                 }
             }
         }
+#if MOTO_UI_DEBUG_TOOLS
         if(started != 0 && drew) {
             g_debug_stats.sun_us +=
                 static_cast<std::uint32_t>(clock_now() - started);
             ++g_debug_stats.sun_draws;
         }
+#else
+        (void)drew;
+#endif
     }
 
     const lv_area_t hero_area = ui.lean_text[0] != '\0'
@@ -4867,7 +4882,9 @@ void draw_lean_scene(lv_event_t *event) {
                                     : lv_area_t{0, 0, -1, -1};
     if(ui.lean_has && ui.lean_text[0] != '\0' &&
        (g_debug_hidden & MOTO_UI_DBG_HIDE_HERO) == 0 && touches(hero_area)) {
+#if MOTO_UI_DEBUG_TOOLS
         const std::uint64_t started = clock_now();
+#endif
         lv_draw_label_dsc_t label;
         lv_draw_label_dsc_init(&label);
         label.text = ui.lean_text;
@@ -4876,11 +4893,13 @@ void draw_lean_scene(lv_event_t *event) {
         label.align = LV_TEXT_ALIGN_LEFT;
         label.opa = LV_OPA_COVER;
         lv_draw_label(layer, &label, &hero_area);
+#if MOTO_UI_DEBUG_TOOLS
         if(started != 0) {
             g_debug_stats.hero_us +=
                 static_cast<std::uint32_t>(clock_now() - started);
             ++g_debug_stats.hero_draws;
         }
+#endif
     }
 }
 
@@ -6017,6 +6036,7 @@ void moto_ui_gta::set_lean_cal_state(
     ui.lean_countdown_ms = 0;
 }
 
+#if MOTO_UI_DEBUG_TOOLS
 void moto_ui_gta::debug_set_clock(moto_ui_debug_clock_t clock) {
     g_debug_clock = clock;
 }
@@ -6045,6 +6065,7 @@ void moto_ui_gta::debug_reset(void) {
 void moto_ui_gta::debug_stats(moto_ui_debug_stats_t *out) {
     if(out != nullptr) *out = g_debug_stats;
 }
+#endif
 
 struct _lv_obj_t *moto_ui_gta::page_root(moto_ui_page_t page) {
     if(page < MOTO_UI_PAGE_NAVIGATION || page >= MOTO_UI_PAGE_COUNT) {

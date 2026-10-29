@@ -198,8 +198,10 @@ https://www.doupaw.site/firmware/latest.json   版本、URL、SHA-256、字节�
 ```
 
 发布的是 release 构建：`platforms/esp32/sdkconfig.release` 叠在 `sdkconfig.defaults` 上，
-设置 `CONFIG_MOTO_TLOG_DISABLE=y`，圆屏不再往 tlog 分区写数据。`build/` 里的台架构建保留录制，
-只用于 USB 烧录。先提交，在干净的工作区里构建，否则镜像和清单里的版本都会带 `-dirty`。
+设置 `CONFIG_MOTO_TLOG_DISABLE=y`（圆屏不再往 tlog 分区写数据）和
+`CONFIG_MOTO_BENCH_TOOLS_DISABLE=y`（串口只剩 `ota status` / `tlog status` / `wifi status`，
+没有 heapprobe、`display perf` 周期日志和 `ui dbg` 计时；`ota confirm` 这种绕过回滚保护的命令不进镜像）。
+`build/` 里的台架构建保留录制和台架工具，只用于 USB 烧录。先提交，在干净的工作区里构建，否则镜像和清单里的版本都会带 `-dirty`。
 在仓库根目录：
 
 ```sh
@@ -214,7 +216,7 @@ cd backend && npx vercel --prod
 ```
 
 脚本默认读取 `build-release/moto_gps_esp32.bin`，并检查同一构建目录生成的
-`config/sdkconfig.h`：没有 `CONFIG_MOTO_TLOG_DISABLE` 的台架镜像会被拒绝。
+`config/sdkconfig.h`：缺 `CONFIG_MOTO_TLOG_DISABLE` 或 `CONFIG_MOTO_BENCH_TOOLS_DISABLE` 的台架镜像会被拒绝。
 它只接受 1 MiB–7 MiB 的镜像（与 OTA 分区一致），计算 SHA-256，并把同一个
 `moto-gps.bin` 与 `latest.json` 写进 `backend/public/firmware/`。仓库的 `.gitignore`
 默认忽略 `*.bin`，这个目录有显式例外，所以 Vercel 从 Git 部署时拿得到文件。
