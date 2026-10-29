@@ -452,6 +452,9 @@ final class SurroundingMapStore: ObservableObject {
     }
 
     func update(latitudeDeg: Double, longitudeDeg: Double) {
+        #if DEBUG
+        if fixtureShown { return }
+        #endif
         guard latitudeDeg.isFinite, longitudeDeg.isFinite,
               (-85.0 ... 85.0).contains(latitudeDeg), (-180.0 ... 180.0).contains(longitudeDeg)
         else { return }
@@ -523,6 +526,21 @@ final class SurroundingMapStore: ObservableObject {
         }
     }
 
+    #if DEBUG
+    /// Set by `showFixture`: the harness's scene stays, and no fetch replaces it.
+    private var fixtureShown = false
+
+    /// Screenshot harness only: tiles from disk, through the same dedupe and
+    /// window selection as fetched ones.
+    func showFixture(_ documents: [MapTileDocument], latitudeDeg: Double, longitudeDeg: Double) {
+        fixtureShown = true
+        let origin = OfflineMapPointE6(latitudeE6: Int32((latitudeDeg * 1_000_000).rounded()),
+                                       longitudeE6: Int32((longitudeDeg * 1_000_000).rounded()))
+        emit(documents: documents, origin: origin)
+        statusText = "截图用地图样本"
+    }
+    #endif
+
     func changeGateway(to baseURL: URL) async {
         reset()
         cancelDownload()
@@ -530,6 +548,9 @@ final class SurroundingMapStore: ObservableObject {
     }
 
     func reset() {
+        #if DEBUG
+        if fixtureShown { return }
+        #endif
         generation &+= 1
         sceneTask?.cancel()
         sceneTask = nil

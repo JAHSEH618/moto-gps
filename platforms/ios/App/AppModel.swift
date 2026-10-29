@@ -317,6 +317,9 @@ final class AppModel: ObservableObject {
                 self?.startDemoNavigation()
             }
         }
+        if ProcessInfo.processInfo.arguments.contains("--moto-map-fixture") {
+            showMapFixture()
+        }
         #endif
     }
 
@@ -847,6 +850,32 @@ final class AppModel: ObservableObject {
         liveLocation.stop()
     }
 
+    #if DEBUG
+    /// Screenshot harness only (`--moto-map-fixture`): the gateway tiles saved
+    /// as `map-fixture.json` (an array of tile documents) in the app's
+    /// Documents, shown as if fetched, so the live map can be reviewed in the
+    /// simulator without an HTTPS gateway. Real tiles, never invented ones.
+    private var mapFixtureShown = false
+
+    private func showMapFixture() {
+        guard let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("map-fixture.json"),
+              let data = try? Data(contentsOf: url),
+              let documents = try? JSONDecoder().decode([MapTileDocument].self, from: data),
+              let first = documents.first
+        else { return }
+        // Before the first fix (a ride started at launch), the middle of the
+        // first tile stands in for the rider.
+        let rider = riderPoint ?? searchLocation.latestPoint ?? first.source.bboxWGS84.map {
+            WGS84Point(longitudeDeg: ($0[0] + $0[2]) / 2, latitudeDeg: ($0[1] + $0[3]) / 2)
+        }
+        guard let rider else { return }
+        let gcj = ChinaCoordinateTransform.wgs84ToGCJ02(rider)
+        surroundingMap.showFixture(documents, latitudeDeg: gcj.latitudeDeg, longitudeDeg: gcj.longitudeDeg)
+        mapFixtureShown = true
+    }
+    #endif
+
     private func acceptIdleFix(_ fix: NavigationFix) {
         bluetooth.sendGnssFix(fix)
         if riderPoint != fix.coordinate { riderPoint = fix.coordinate }
@@ -854,6 +883,12 @@ final class AppModel: ObservableObject {
         let course = (fix.speedMps ?? 0) >= 1 ? fix.courseDeg : nil
         if riderCourseDeg != course { riderCourseDeg = course }
         updateAmbientNight(at: fix.coordinate)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--moto-map-fixture") {
+            if !mapFixtureShown { showMapFixture() }
+            return
+        }
+        #endif
         let gcj = ChinaCoordinateTransform.wgs84ToGCJ02(fix.coordinate)
         surroundingMap.update(latitudeDeg: gcj.latitudeDeg, longitudeDeg: gcj.longitudeDeg)
     }

@@ -693,6 +693,13 @@ private struct HomeLiveMap: View {
         return MotoMapPoint(latitudeDeg: point.latitudeDeg, longitudeDeg: point.longitudeDeg)
     }
 
+    /// A failed fetch still publishes a scene, an empty one; say why the
+    /// panel is bare instead of leaving plain land.
+    private var hasGround: Bool {
+        guard let scene = store.phoneScene else { return false }
+        return !scene.roads.isEmpty || !scene.areas.isEmpty || !scene.buildings.isEmpty
+    }
+
     @ViewBuilder
     private var status: some View {
         if !model.isLocationAllowed {
@@ -714,7 +721,7 @@ private struct HomeLiveMap: View {
             .buttonStyle(.plain)
             .padding(MotoMetrics.s2)
             .accessibilityIdentifier("home-map-location-button")
-        } else if center == nil || store.phoneScene == nil {
+        } else if center == nil || !hasGround {
             Text(center == nil ? "正在定位" : store.statusText)
                 .font(.system(.caption2, weight: .semibold))
                 .foregroundStyle(palette.onSlab)
