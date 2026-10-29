@@ -463,6 +463,27 @@ struct MotoPosterPage<Content: View>: View {
         .background(palette.bg)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .background(MotoEdgeSwipeBack().frame(width: 0, height: 0))
+    }
+}
+
+/// Hiding the system back button also switches off the left-edge swipe that
+/// goes with it, and that swipe is muscle memory. A poster page draws its own
+/// chevron, so it hands the swipe back to the navigation controller: the
+/// recogniser gets a delegate that allows it whenever there is a page to pop.
+private struct MotoEdgeSwipeBack: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {}
+
+    final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            navigationController?.interactivePopGestureRecognizer?.delegate = self
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
     }
 }
 
