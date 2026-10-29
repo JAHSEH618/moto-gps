@@ -197,8 +197,9 @@ What gets published is the release build: `platforms/esp32/sdkconfig.release` on
 the tlog partition, and `CONFIG_MOTO_BENCH_TOOLS_DISABLE=y` so the serial console answers only
 `ota status` / `tlog status` / `wifi status`: no heap probes, no periodic `display perf` log, no
 `ui dbg` timers, and no `ota confirm`, which would mark an image valid past the rollback guard.
-The bench build in `build/` keeps recording and the bench tools, and is for USB flashing only.
-Commit first and build from a clean tree, or the image and the manifest version both carry
+The bench build in `build/` keeps the bench tools and is for USB flashing only; it no longer
+records either, since `sdkconfig.defaults` turns the tlog recorder off for every build. Commit
+first and build from a clean tree, or the image and the manifest version both carry
 `-dirty`. From the repository root:
 
 ```sh

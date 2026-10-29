@@ -201,7 +201,8 @@ https://www.doupaw.site/firmware/latest.json   版本、URL、SHA-256、字节�
 设置 `CONFIG_MOTO_TLOG_DISABLE=y`（圆屏不再往 tlog 分区写数据）和
 `CONFIG_MOTO_BENCH_TOOLS_DISABLE=y`（串口只剩 `ota status` / `tlog status` / `wifi status`，
 没有 heapprobe、`display perf` 周期日志和 `ui dbg` 计时；`ota confirm` 这种绕过回滚保护的命令不进镜像）。
-`build/` 里的台架构建保留录制和台架工具，只用于 USB 烧录。先提交，在干净的工作区里构建，否则镜像和清单里的版本都会带 `-dirty`。
+`build/` 里的台架构建保留台架工具，只用于 USB 烧录；录制也已默认关闭，因为 `sdkconfig.defaults`
+对所有构建都设了 `CONFIG_MOTO_TLOG_DISABLE=y`。先提交，在干净的工作区里构建，否则镜像和清单里的版本都会带 `-dirty`。
 在仓库根目录：
 
 ```sh

@@ -1,19 +1,24 @@
 menu "Moto GPS"
 
 config MOTO_TLOG_DISABLE
-    bool "Turn off the tlog telemetry recorder (release builds)"
-    default n
+    bool "Turn off the tlog telemetry recorder (on by default)"
+    default y
     help
         The tlog recorder is a development tool: raw IMU samples, attitude,
         acquisition stats and phone GNSS fixes go to the `tlog` flash
-        partition for `moto_replay`. Release builds set this (see
-        sdkconfig.release): the partition table stays the same, but nothing
-        reads, writes or erases the partition, and the sensor task loses its
-        4 KiB page writes.
+        partition for `moto_replay`. It is off by default (see
+        sdkconfig.defaults) so a build nobody asked about cannot wear the
+        flash or fill the partition on a ride: the partition table keeps the
+        slot, but nothing reads, writes or erases it, and the sensor task
+        loses its 4 KiB page writes.
+
+        A bench session that needs the captures turns it back on in its own
+        saved sdkconfig (`# CONFIG_MOTO_TLOG_DISABLE is not set`) and
+        configures with -DMOTO_ALLOW_SDKCONFIG_DRIFT=ON.
 
         Phrased as "disable" on purpose: a build directory configured before
-        this option existed has no macro at all, and that must mean the
-        recorder stays on.
+        this option existed has no macro at all, and check_sdkconfig.cmake
+        then refuses it instead of guessing.
 
 config MOTO_BENCH_TOOLS_DISABLE
     bool "Leave out the bench debug tools (release builds)"

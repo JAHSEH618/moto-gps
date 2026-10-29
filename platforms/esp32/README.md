@@ -30,7 +30,13 @@ mv platforms/esp32/sdkconfig platforms/esp32/sdkconfig.old
 
 确实要保留本地改动时，配置时加 `-DMOTO_ALLOW_SDKCONFIG_DRIFT=ON`，差异只作警告。
 
-上面是开发版，会把 IMU 数据录进 `tlog` 分区（默认，`CONFIG_MOTO_TLOG_DISABLE` 未设）。发布版叠加 `sdkconfig.release`，设 `CONFIG_MOTO_TLOG_DISABLE=y` 关掉 tlog，再设 `CONFIG_MOTO_BENCH_TOOLS_DISABLE=y` 去掉台架工具（串口只剩 `ota status` / `tlog status` / `wifi status`，没有 heapprobe、`display perf` 周期日志和 `ui dbg` 计时），分区表不变，产物在 `platforms/esp32/build-release/`：
+上面是开发版。tlog 录制器（IMU 原始采样、姿态、GNSS 速度写进 `tlog` 分区供 `moto_replay`）
+默认关闭：`sdkconfig.defaults` 里设了 `CONFIG_MOTO_TLOG_DISABLE=y`，所以任何一次构建都不会录，
+也不会把 14 MB 分区写满。要采数据的台架会话在自己的 sdkconfig 里清掉这一行，并加
+`-DMOTO_ALLOW_SDKCONFIG_DRIFT=ON` 配置，`check_sdkconfig.cmake` 会把差异列出来。
+发布版叠加 `sdkconfig.release`，显式再设一次 `CONFIG_MOTO_TLOG_DISABLE=y`，并设
+`CONFIG_MOTO_BENCH_TOOLS_DISABLE=y` 去掉台架工具（串口只剩 `ota status` / `tlog status` / `wifi status`，
+没有 heapprobe、`display perf` 周期日志和 `ui dbg` 计时），分区表不变，产物在 `platforms/esp32/build-release/`：
 
 ```sh
 rm -f platforms/esp32/build-release/sdkconfig

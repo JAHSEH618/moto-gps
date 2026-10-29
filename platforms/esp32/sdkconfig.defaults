@@ -21,6 +21,14 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 # replay buffers) is tagged EXT_RAM_BSS_ATTR so it does not eat internal RAM.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
+# The tlog recorder (raw IMU samples, attitude, GNSS fixes, written 4 KiB at a
+# time for `moto_replay`) is a development tool, and it stays off unless a
+# build asks for it: a partition that fills on a ride is not something a build
+# nobody looked at should be able to do. A bench session that needs the
+# captures clears this line in its own saved sdkconfig and configures with
+# -DMOTO_ALLOW_SDKCONFIG_DRIFT=ON; check_sdkconfig.cmake lists the difference.
+CONFIG_MOTO_TLOG_DISABLE=y
+
 # The board port supplies its own PSRAM draw buffers and explicitly opts into
 # direct PSRAM DMA. Keep a single outstanding QSPI transaction so old display
 # frames cannot accumulate; the original BSP's default bounce buffers are not

@@ -9,7 +9,8 @@
 #     reconfigure build
 # The partition table is shared with the development build.
 
-# No telemetry recorder: the tlog partition is left untouched.
+# No telemetry recorder. sdkconfig.defaults already turns it off, so this line
+# only keeps the release pair explicit: the tlog partition is left untouched.
 CONFIG_MOTO_TLOG_DISABLE=y
 # No bench tools: the serial console answers only `ota status`, `tlog status`
 # and `wifi status`; no heap probes, display timing log or `ui dbg` timers.
