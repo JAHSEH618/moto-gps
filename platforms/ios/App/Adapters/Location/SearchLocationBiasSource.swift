@@ -2,6 +2,8 @@ import CoreLocation
 import MotoNavigationCore
 
 enum SearchLocationBiasStatus: Equatable {
+    /// Nothing the rider did has needed a position yet, so nobody has asked.
+    case notRequested
     case preparing
     case available
     case permissionDenied
@@ -18,7 +20,7 @@ final class SearchLocationBiasSource: NSObject {
 
     private let manager = CLLocationManager()
     private(set) var latestPoint: WGS84Point?
-    private(set) var status: SearchLocationBiasStatus = .preparing
+    private(set) var status: SearchLocationBiasStatus = .notRequested
 
     override init() {
         super.init()
@@ -27,6 +29,16 @@ final class SearchLocationBiasSource: NSObject {
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
+    /// Launch: picks up a choice the rider already made, and never asks. A
+    /// fresh install stays `.notRequested` until something the rider does
+    /// needs a position and calls `prepare()`.
+    func resume() {
+        guard manager.authorizationStatus != .notDetermined else { return }
+        prepare()
+    }
+
+    /// Asks the first time, otherwise takes a one-shot fix. Only an action
+    /// that needs a position calls this, so the alert has a reason on screen.
     func prepare() {
         guard CLLocationManager.locationServicesEnabled() else {
             publish(nil, status: .unavailable)
@@ -60,13 +72,21 @@ final class SearchLocationBiasSource: NSObject {
     /// one-shot search bias captured when the app originally opened.
     @discardableResult
     func refreshForRoutePlanning() -> Bool {
-        guard manager.authorizationStatus == .authorizedAlways ||
-                manager.authorizationStatus == .authorizedWhenInUse
+        let authorization = manager.authorizationStatus
+        guard authorization == .authorizedAlways ||
+                authorization == .authorizedWhenInUse ||
+                authorization == .notDetermined
         else { return false }
         latestPoint = nil
         manager.desiredAccuracy = kCLLocationAccuracyBest
         setStatus(.preparing)
-        manager.requestLocation()
+        if authorization == .notDetermined {
+            // A fresh install's first route asks here. Allow lands in the
+            // authorization callback, which requests the fix this waits for.
+            manager.requestWhenInUseAuthorization()
+        } else {
+            manager.requestLocation()
+        }
         return true
     }
 

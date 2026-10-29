@@ -107,6 +107,7 @@ struct HomeScreen: View {
     private var fixText: String {
         switch model.searchLocationStatus {
         case .available: return "fix"
+        case .notRequested: return "no fix"
         case .preparing: return "fix…"
         case .permissionDenied: return "no fix"
         case .unavailable: return "no fix"
@@ -306,6 +307,9 @@ struct HomeScreen: View {
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .focused($searchFocused)
+                .onChange(of: searchFocused) { _, focused in
+                    if focused { model.destinationSearchDidFocus() }
+                }
                 .onSubmit {
                     model.submitDestinationSearch()
                     searchFocused = false
