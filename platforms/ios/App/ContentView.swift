@@ -117,225 +117,6 @@ struct ContentView: View {
         )
     }
 
-    // MARK: - Destination search
-
-    private var homeScreen: some View {
-        List {
-            if !model.isGatewayConfigured {
-                Section {
-                    Button { showsGatewaySettings = true } label: {
-                        Label("设置导航网关", systemImage: "network")
-                    }
-                    .accessibilityIdentifier("gateway-setup-button")
-                } footer: {
-                    Text("填写你部署的网关地址后，就可以搜索地点和规划路线。")
-                }
-            }
-            Section { searchField }
-            if !model.destinationQuery.isEmpty {
-                searchResultsSection
-            } else {
-                if model.recentPlaces.isEmpty {
-                    Section {
-                        ContentUnavailableView {
-                            Label {
-                                Text("选择目的地")
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } icon: { Image(systemName: "map") }
-                        } description: {
-                            Text("搜索地点或地址，选好路线就出发。")
-                        }
-                        .padding(.vertical, 12)
-                    }
-                    .listRowBackground(Color.clear)
-                } else {
-                    recentPlacesSection
-                }
-                Section {
-                    deviceSummaryButton
-                    mapDownloadsButton
-                    demoButton
-                } footer: {
-                    Text("连接圆屏后，导航指引会自动同步。")
-                }
-                Section {
-                    Button { showsGatewaySettings = true } label: {
-                        Label("网关设置", systemImage: "network")
-                            .foregroundStyle(Color.primary)
-                    }
-                    .accessibilityIdentifier("gateway-settings-button")
-                    Button { showsDataUse = true } label: {
-                        Label("隐私与数据", systemImage: "hand.raised")
-                            .foregroundStyle(Color.primary)
-                    }
-                    .accessibilityIdentifier("privacy-data-button")
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollDismissesKeyboard(.interactively)
-        .navigationTitle("出发")
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { showsGatewaySettings = true } label: { Image(systemName: "gearshape") }
-                    .accessibilityLabel("网关设置")
-                    .accessibilityIdentifier("gateway-settings-toolbar")
-            }
-            ToolbarItem(placement: .topBarTrailing) { deviceToolbarButton }
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("完成") { searchFocused = false }
-            }
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(Color.secondary)
-                .accessibilityHidden(true)
-            TextField("搜索地点或地址", text: $model.destinationQuery)
-                .font(.body)
-                .accessibilityIdentifier("destination-search-field")
-                .accessibilityLabel("搜索目的地")
-                .focused($searchFocused)
-                .submitLabel(.search)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onSubmit {
-                    model.submitDestinationSearch()
-                    searchFocused = false
-                }
-            if !model.destinationQuery.isEmpty {
-                Button {
-                    model.clearDestination()
-                    searchFocused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(Color.secondary)
-                        .frame(minWidth: 28, minHeight: 44)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("清空搜索")
-            }
-        }
-        .frame(minHeight: 44)
-    }
-
-    private var searchResultsSection: some View {
-        Section {
-            if model.isSearchingPlaces {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("正在搜索…").foregroundStyle(Color.secondary)
-                }
-                .frame(minHeight: 56)
-                .accessibilityElement(children: .combine)
-            } else if !model.placeResults.isEmpty {
-                ForEach(Array(model.placeResults.enumerated()), id: \.offset) { index, place in
-                    Button { select(place) } label: {
-                        placeRow(place, symbol: "mappin.circle.fill")
-                    }
-                    .accessibilityIdentifier("place-result-\(index)")
-                }
-            } else {
-                ContentUnavailableView {
-                    Label {
-                        Text(model.placeSearchFailure == nil ? "输入地点名称" : "暂无结果")
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } icon: { Image(systemName: "magnifyingglass") }
-                } description: {
-                    Text(model.placeSearchFailure ?? "至少输入两个字，例如“奥体中心”。")
-                } actions: {
-                    if model.placeSearchFailure != nil {
-                        Button("重新搜索", action: model.submitDestinationSearch)
-                    }
-                }
-            }
-        } header: {
-            Text("搜索结果")
-        } footer: {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(model.searchScopeText)
-                if model.searchLocationStatus == .permissionDenied {
-                    Button("前往设置开启定位", action: openSystemSettings)
-                }
-            }
-        }
-    }
-
-    private var recentPlacesSection: some View {
-        Section {
-            ForEach(Array(model.recentPlaces.enumerated()), id: \.offset) { index, place in
-                Button { select(place) } label: { placeRow(place, symbol: "clock") }
-                    .accessibilityIdentifier("recent-place-\(index)")
-            }
-        } header: {
-            HStack {
-                Text("最近搜索")
-                Spacer()
-                Button("清空", action: model.clearRecentPlaces)
-                    .textCase(nil)
-                    .accessibilityLabel("清空最近搜索")
-            }
-        }
-    }
-
-    private func placeRow(_ place: PlaceSearchResult, symbol: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(symbol == "clock" ? Color.secondary : .blue)
-                .frame(width: 28)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(place.name)
-                    .font(.body)
-                    .foregroundStyle(Color.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(placeSubtitle(place))
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color(uiColor: .tertiaryLabel))
-                .accessibilityHidden(true)
-        }
-        .padding(.vertical, 7)
-        .frame(minHeight: 48)
-        .contentShape(Rectangle())
-    }
-
-    private func select(_ place: PlaceSearchResult) {
-        searchFocused = false
-        model.selectPlace(place)
-    }
-
-    private var demoButton: some View {
-        Button {
-            searchFocused = false
-            model.startDemoNavigation()
-        } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("演示导航").foregroundStyle(Color.primary)
-                    Text("先体验一次导航流程")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                }
-            } icon: {
-                Image(systemName: "play.circle").foregroundStyle(.blue)
-            }
-            .padding(.vertical, 5)
-        }
-        .accessibilityIdentifier("demo-navigation-button")
-    }
-
     // MARK: - Route selection
 
     private var mapDownloadsButton: some View {
@@ -490,21 +271,6 @@ struct ContentView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func routeDuration(_ candidate: RoutePreviewCandidate) -> some View {
-        Text(candidate.durationText)
-            .font(.title2.weight(.semibold))
-            .monospacedDigit()
-            .foregroundStyle(Color.primary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func routeDistance(_ candidate: RoutePreviewCandidate) -> some View {
-        Text(candidate.distanceText)
-            .font(.subheadline)
-            .monospacedDigit()
-            .foregroundStyle(Color.secondary)
-    }
-
     // MARK: - Ride in progress
 
     private var activeNavigationScreen: some View {
@@ -646,20 +412,6 @@ struct ContentView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func rideMetric(_ title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(value)
-                .font(.title.weight(.semibold))
-                .monospacedDigit()
-                .fixedSize(horizontal: false, vertical: true)
-            Text(title).font(.subheadline).foregroundStyle(Color.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 10)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title)，\(value)")
-    }
-
     private var navigationActionBar: some View {
         Button(action: model.toggleNavigation) {
             HStack(spacing: MotoMetrics.s2) {
@@ -700,48 +452,6 @@ struct ContentView: View {
             get: { model.showBuildings },
             set: { model.setShowBuildings($0) }
         )
-    }
-
-    private var deviceToolbarButton: some View {
-        Button {
-            searchFocused = false
-            showsDeviceDetails = true
-        } label: { Image(systemName: "circle.circle") }
-        .accessibilityLabel("我的圆屏")
-        .accessibilityValue(deviceStatus)
-        .accessibilityIdentifier("device-details-button")
-    }
-
-    private var deviceSummaryButton: some View {
-        Button {
-            searchFocused = false
-            showsDeviceDetails = true
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "circle.circle")
-                    .font(.title3)
-                    .foregroundStyle(.blue)
-                    .frame(width: 24)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("我的圆屏").foregroundStyle(Color.primary)
-                    Text(deviceStatus).font(.subheadline).foregroundStyle(Color.secondary)
-                }
-                Spacer(minLength: 4)
-                if model.deviceReady {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .accessibilityHidden(true)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
-                    .accessibilityHidden(true)
-            }
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-        }
-        .accessibilityIdentifier("device-summary-button")
     }
 
     private var deviceDetails: some View {
@@ -960,44 +670,12 @@ struct ContentView: View {
         }
     }
 
-    private func statusRow(_ title: String, symbol: String, value: String, color: Color) -> some View {
-        LabeledContent {
-            Text(value).foregroundStyle(color).multilineTextAlignment(.trailing)
-        } label: {
-            Label(title, systemImage: symbol).foregroundStyle(Color.primary)
-        }
-        .font(.body)
-        .padding(.vertical, 4)
-    }
-
-    private func failureMessage(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle")
-            .font(.subheadline)
-            .foregroundStyle(Color.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 6)
-    }
-
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         openURL(url)
     }
 
     // MARK: - User-facing state
-
-    private func placeSubtitle(_ place: PlaceSearchResult) -> String {
-        let area = place.displayArea.isEmpty
-            ? [place.city, place.district].filter { !$0.isEmpty }.joined(separator: " · ")
-            : place.displayArea
-        var parts = [area, place.address].filter { !$0.isEmpty }
-        if let distance = place.distanceM, distance >= 0 {
-            let distanceText = distance >= 1_000
-                ? String(format: "%.1f km", distance / 1_000)
-                : "\(Int(distance.rounded())) m"
-            parts.append("距你 \(distanceText)")
-        }
-        return parts.isEmpty ? "查看路线" : parts.joined(separator: " · ")
-    }
 
     private var deviceStatus: String {
         switch model.device.connection {
@@ -1163,14 +841,6 @@ struct ContentView: View {
             }
         }
         return map
-    }
-
-    private var remainingDuration: String {
-        hasNavigationEstimate ? model.remainingDurationText : "—"
-    }
-
-    private var remainingDistance: String {
-        hasNavigationEstimate ? model.remainingDistanceText : "—"
     }
 
     private var remainingDistanceValue: String {
