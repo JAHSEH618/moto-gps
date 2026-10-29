@@ -29,11 +29,11 @@ struct FirmwareUpdateView: View {
 
     var body: some View {
         MotoPosterSheet(
-            kicker: "OTA 05",
+            plate: .symbol("cpu"),
             title: "固件更新",
             sheetIdentifier: "firmware-sheet",
             actions: {
-                MotoHeaderButton(title: "完成", identifier: "firmware-done-button") {
+                MotoBandButton("完成", identifier: "firmware-done-button") {
                     model.stopFirmwareServer()
                     dismiss()
                 }
@@ -101,7 +101,6 @@ struct FirmwareUpdateView: View {
             }
             .buttonStyle(MotoPrimaryButtonStyle())
             .disabled(isLoadingRelease)
-            .opacity(isLoadingRelease ? 0.5 : 1)
             .accessibilityIdentifier("firmware-check-button")
             if let releaseMessage {
                 MotoProse(text: releaseMessage, tone: .muted)
@@ -149,7 +148,6 @@ struct FirmwareUpdateView: View {
             }
             .buttonStyle(MotoPrimaryButtonStyle())
             .disabled(!canUpdate)
-            .opacity(canUpdate ? 1 : 0.5)
             .accessibilityIdentifier("firmware-update-button")
             if let message = model.firmwareUpdate?.message
                 ?? model.firmwareProblem?.message ?? formError {

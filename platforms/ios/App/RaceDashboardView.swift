@@ -19,7 +19,7 @@ struct RaceDashboardView: View {
         let _ = model.raceLogRevision
         let summary = model.raceLog.summary(scope, now: Date())
         MotoPosterSheet(
-            kicker: "RACE LOG",
+            plate: .number("08"),
             title: "赛道看板",
             sheetIdentifier: "race-dashboard-sheet",
             dismissTitle: "完成",
@@ -87,8 +87,9 @@ struct RaceDashboardView: View {
 
 // MARK: - Shared pieces
 
-/// A counter slab: ink plate, label and figure in `onSlab`, the way the round
-/// screen parks BEST and KM/H.
+/// A counter plate: an ink block with the label and figure in the paper
+/// colour, the way the round screen parks BEST and KM/H. Ink, not the slab:
+/// the slab is black in every theme and vanished on the night paper.
 private struct RaceSlab: View {
     let label: String
     let value: String
@@ -97,21 +98,38 @@ private struct RaceSlab: View {
     @Environment(\.motoType) private var type
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s2) {
-            MotoLabel(text: label, tone: .onSlab, token: .micro, uppercased: false)
-            Text(value)
-                .font(type.display(.displayMD))
-                .monospacedDigit()
-                .foregroundStyle(palette.onSlab)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        // Side by side when it fits; at accessibility sizes the label goes
+        // above the figure instead of truncating either.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s2) {
+                caption
+                figure
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                caption
+                figure
+            }
         }
         .padding(.horizontal, MotoMetrics.s3)
         .padding(.vertical, MotoMetrics.s1)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(palette.slab)
+        .background(palette.ink)
         .accessibilityElement(children: .combine)
+    }
+
+    private var caption: some View {
+        MotoLabel(text: label, tone: .paper, token: .micro, uppercased: false)
+            .fixedSize()
+    }
+
+    private var figure: some View {
+        Text(value)
+            .font(type.display(.displayMD))
+            .monospacedDigit()
+            .foregroundStyle(palette.bg)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 }
 
@@ -134,6 +152,8 @@ private struct RaceFigure: View {
                 .foregroundStyle(palette.hud ?? palette.ink)
                 .motoHudShadow(theme.hudShadow)
                 .lineLimit(1)
+                // A recorded time is never cut to "4…": it shrinks first.
+                .minimumScaleFactor(0.5)
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
             MotoLabel(text: unit, tone: .muted, token: .label, uppercased: false)
         }

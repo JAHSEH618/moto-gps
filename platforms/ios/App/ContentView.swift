@@ -24,6 +24,7 @@ struct ContentView: View {
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
     /// so an environment lookup here would resolve to the default palette.
     private var palette: MotoPalette { theme.palette }
+    private var type: MotoTypography { MotoTypography(theme: theme) }
 
     /// The rider's theme, worn by the phone and the round screen alike.
     private var theme: MotoThemeName { model.phoneTheme }
@@ -146,7 +147,7 @@ struct ContentView: View {
 
     private var routePreviewScreen: some View {
         MotoPosterPage(
-            kicker: "ROUTE 05",
+            plate: .symbol("arrow.triangle.turn.up.right.diamond.fill"),
             title: "路线",
             backIdentifier: "destination-change-button",
             onBack: {
@@ -206,9 +207,8 @@ struct ContentView: View {
                 MotoHeroWord(word: "—", detail: "无法规划路线")
                 MotoProse(text: failure)
                 if model.searchLocationStatus == .permissionDenied {
-                    Button("前往设置", action: openSystemSettings)
-                        .font(.system(.body, weight: .semibold))
-                        .foregroundStyle(palette.ink)
+                    Button("前往设置开启定位", action: openSystemSettings)
+                        .buttonStyle(MotoSecondaryButtonStyle())
                 }
             }
 
@@ -230,39 +230,47 @@ struct ContentView: View {
     private func routeOptionRow(_ candidate: RoutePreviewCandidate, index: Int) -> some View {
         let selected = candidate.id == model.selectedRoutePreviewID
         return Button {
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+            withAnimation(reduceMotion ? nil : MotoMotion.interface) {
                 model.selectRoutePreview(candidate.id)
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
-                Text(String(format: "%02d", index))
-                    .font(.system(.footnote, design: .monospaced).weight(.bold))
-                    .foregroundStyle(selected ? MotoPalette.band : palette.inkMuted)
+            HStack(alignment: .center, spacing: MotoMetrics.s3) {
+                // The chosen route's number sits on an ink plate; the others
+                // are open numerals. Shape and the word 已选 carry the state,
+                // not colour alone.
+                if selected {
+                    MotoCounterPlate(mark: .number(String(format: "%02d", index)))
+                } else {
+                    Text(String(format: "%02d", index))
+                        .font(type.display(.displayMD))
+                        .monospacedDigit()
+                        .foregroundStyle(palette.inkMuted)
+                        .frame(minWidth: MotoMetrics.minTapTarget)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                }
                 VStack(alignment: .leading, spacing: MotoMetrics.s1) {
                     Text(candidate.durationText)
-                        .font(.system(.title2, weight: .bold))
+                        .font(.system(.title2, weight: .heavy))
                         .monospacedDigit()
                         .foregroundStyle(palette.ink)
                     Text("\(candidate.title) · \(candidate.distanceText)")
-                        .font(.system(.footnote))
+                        .font(.system(.subheadline))
                         .foregroundStyle(palette.inkMuted)
                     Text(candidate.trafficSummary)
-                        .font(.system(.caption, weight: .semibold))
+                        .font(.system(.subheadline, weight: .bold))
                         .foregroundStyle(trafficTint(candidate))
                 }
                 Spacer(minLength: MotoMetrics.s2)
                 if selected {
                     Text("已选")
-                        .font(.system(.caption, weight: .bold))
-                        .foregroundStyle(MotoPalette.onBand)
-                        .padding(.horizontal, MotoMetrics.s2)
-                        .padding(.vertical, 3)
-                        .background(MotoPalette.band)
+                        .font(.system(.subheadline, weight: .heavy))
+                        .foregroundStyle(palette.ink)
                 }
             }
-            .padding(.horizontal, MotoMetrics.s4)
+            .padding(.horizontal, MotoMetrics.s3)
             .padding(.vertical, MotoMetrics.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? palette.surface2 : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -294,7 +302,7 @@ struct ContentView: View {
                         HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s2) {
                             MotoNumeral(
                                 value: remainingDistanceValue,
-                                token: .displayXL,
+                                token: .displayHero,
                                 tone: .ink
                             )
                             MotoLabel(
@@ -371,22 +379,25 @@ struct ContentView: View {
             MotoStatusBand(
                 linkText: model.deviceReady ? "link" : "no link",
                 linkTone: model.deviceReady ? .ok : .abort,
-                fixText: model.navigation.hasUsableFix ? "fix" : "no fix"
+                fixText: model.navigation.hasUsableFix ? "fix" : "no fix",
+                clock: rideClockText
             ) {
                 Button { showsDeviceDetails = true } label: {
+                    // The slab is black in every theme, so the glyph is the
+                    // slab's ink: muted ink by day was dark brown on black.
                     Image(systemName: "circle.circle")
-                        .font(.system(.footnote, weight: .medium))
-                        .foregroundStyle(palette.inkMuted)
-                        .frame(width: MotoMetrics.minTapTarget, height: MotoMetrics.minTapTarget - 10)
+                        .font(.system(.body, weight: .semibold))
+                        .foregroundStyle(palette.onSlab)
+                        .frame(width: MotoMetrics.minTapTarget, height: MotoMetrics.minTapTarget)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityShowsLargeContentViewer {
+                    Label("我的圆屏", systemImage: "circle.circle")
+                }
                 .accessibilityLabel("我的圆屏")
                 .accessibilityValue(deviceStatus)
                 .accessibilityIdentifier("device-details-button")
-                MotoLabel(text: rideClockText, tone: .onSlab, token: .micro)
-                    .fixedSize()
-                    .layoutPriority(-1)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -456,34 +467,19 @@ struct ContentView: View {
 
     private var deviceDetails: some View {
         MotoPosterSheet(
-            kicker: "DEVICE 01",
+            plate: .number("01"),
             title: "我的圆屏",
             sheetIdentifier: "device-details-sheet",
             dismissTitle: "完成",
             dismissIdentifier: "device-details-done",
             onDismiss: { showsDeviceDetails = false }
         ) {
-            VStack(alignment: .leading, spacing: MotoMetrics.s4) {
-                HStack(alignment: .top) {
-                    Image(systemName: "location.north.circle")
-                        .font(.system(size: 40, weight: .light))
-                        .foregroundStyle(palette.ink)
-                        .accessibilityHidden(true)
-                    Spacer(minLength: MotoMetrics.s2)
-                    MotoLabel(
-                        text: deviceName,
-                        tone: .muted,
-                        uppercased: false
-                    )
-                }
-                // The one enormous thing on this sheet: whether the bar is
-                // talking to the phone. Everything else is a setting.
-                MotoHeroWord(
-                    word: model.deviceReady ? "ONLINE" : "OFFLINE",
-                    detail: deviceDetail
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // The one enormous thing on this sheet: whether the bar is talking
+            // to the phone. Everything else is a setting.
+            MotoHeroWord(
+                word: model.deviceReady ? "ONLINE" : "OFFLINE",
+                detail: deviceDetail
+            )
 
             VStack(spacing: MotoMetrics.s3) {
                 MotoSectionTitle(index: "01", text: "连接")
@@ -495,6 +491,12 @@ struct ContentView: View {
                                 tone: model.deviceReady ? .ok : .muted,
                                 uppercased: false
                             )
+                        }
+                        if let deviceName {
+                            MotoRule()
+                            MotoRow(title: "圆屏") {
+                                MotoLabel(text: deviceName, tone: .ink, uppercased: false)
+                            }
                         }
                         MotoRule()
                         Button(connectionActionTitle, action: model.toggleDeviceConnection)
@@ -610,7 +612,7 @@ struct ContentView: View {
     /// family switch with a second segment inside it: the rider taps once.
     private var themeSettings: some View {
         MotoPosterSheet(
-            kicker: "THEME",
+            plate: .number("02"),
             title: "主题",
             sheetIdentifier: "theme-settings-sheet",
             dismissTitle: "完成",
@@ -622,6 +624,7 @@ struct ContentView: View {
                     themeOption(number: index + 1, option: option)
                 }
             }
+            .padding(.horizontal, -MotoMenuRow.inset)
             Text("手机和圆屏使用同一个主题；圆屏未连接时，会在下次连接后同步。")
                 .font(.system(.footnote))
                 .foregroundStyle(palette.inkMuted)
@@ -637,36 +640,19 @@ struct ContentView: View {
         let selected = model.displayTheme == option
         return VStack(spacing: 0) {
             Button { model.setDisplayTheme(option) } label: {
-                HStack(spacing: MotoMetrics.s3) {
-                    MotoNumeral(
-                        value: String(format: "%02d", number),
-                        token: .displayMD,
-                        tone: selected ? .accent : .muted
-                    )
-                    .frame(width: 44, alignment: .leading)
-                    VStack(alignment: .leading, spacing: MotoMetrics.s1) {
-                        Text(option.menuTitle)
-                            .font(.system(.title3, weight: .semibold))
-                            .foregroundStyle(palette.ink)
-                        Text(option.menuDetail)
-                            .font(.system(.subheadline))
-                            .foregroundStyle(palette.inkMuted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: selected ? "checkmark.square.fill" : "square")
-                        .font(.system(.title3, weight: .semibold))
-                        .foregroundStyle(selected ? palette.accent : palette.inkMuted)
-                        .accessibilityHidden(true)
-                }
-                .padding(.vertical, MotoMetrics.s3)
-                .frame(minHeight: 76)
-                .contentShape(Rectangle())
+                MotoMenuRow(
+                    number: String(format: "%02d", number),
+                    title: option.menuTitle,
+                    detail: option.menuDetail,
+                    symbol: selected ? "checkmark.square.fill" : "square",
+                    symbolTint: selected ? palette.accent : nil,
+                    selected: selected
+                )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MotoMenuRowStyle())
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityIdentifier("theme-option-\(option.rawValue)")
-            MotoRule()
+            MotoRule().padding(.horizontal, MotoMenuRow.inset)
         }
     }
 
@@ -688,10 +674,11 @@ struct ContentView: View {
         }
     }
 
-    private var deviceName: String {
+    /// The advertised name, once there is a device to name.
+    private var deviceName: String? {
         switch model.device.connection {
         case let .connected(name), let .connecting(name): return name
-        default: return "MOTO GPS"
+        default: return nil
         }
     }
 
@@ -895,10 +882,10 @@ struct ContentView: View {
 
     private func trafficTint(_ candidate: RoutePreviewCandidate) -> Color {
         switch candidate.trafficSummary {
-        case "拥堵较多": return .red
-        case "部分路段缓行": return .orange
-        case "路况顺畅": return .green
-        default: return .secondary
+        case "拥堵较多": return palette.abort
+        case "部分路段缓行": return palette.route
+        case "路况顺畅": return palette.ok
+        default: return palette.inkMuted
         }
     }
 }

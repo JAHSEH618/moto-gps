@@ -21,7 +21,7 @@ struct GatewaySettingsView: View {
 
     var body: some View {
         MotoPosterSheet(
-            kicker: "GATEWAY 03",
+            plate: .number("05"),
             title: "网关设置",
             sheetIdentifier: "gateway-settings-sheet",
             actions: {
@@ -34,7 +34,6 @@ struct GatewaySettingsView: View {
                         save()
                     }
                     .disabled(model.isNavigationActive || model.isUpdatingGateway || address.isEmpty)
-                    .opacity(model.isNavigationActive || model.isUpdatingGateway || address.isEmpty ? 0.5 : 1)
                 }
             }
         ) {
@@ -61,28 +60,21 @@ struct GatewaySettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: MotoMetrics.s3) {
-                MotoPanel(padding: 0) {
-                    Button {
-                        checkConnection()
-                    } label: {
-                        HStack(spacing: MotoMetrics.s3) {
-                            Text("测试连接")
-                                .font(.system(.body, weight: .semibold))
-                                .foregroundStyle(palette.ink)
-                            Spacer(minLength: MotoMetrics.s2)
-                            if isChecking {
-                                ProgressView().tint(MotoPalette.band)
-                            }
+                // An outlined button, not a row in a panel: inside a panel, a
+                // disabled "测试连接" read as a second text field.
+                Button {
+                    checkConnection()
+                } label: {
+                    HStack(spacing: MotoMetrics.s3) {
+                        if isChecking {
+                            ProgressView().tint(palette.ink)
                         }
-                        .padding(.horizontal, MotoMetrics.s4)
-                        .frame(minHeight: 52)
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
+                        Text(isChecking ? "正在测试…" : "测试连接")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isChecking || model.isUpdatingGateway || address.isEmpty)
-                    .accessibilityIdentifier("gateway-check-button")
                 }
+                .buttonStyle(MotoSecondaryButtonStyle())
+                .disabled(isChecking || model.isUpdatingGateway || address.isEmpty)
+                .accessibilityIdentifier("gateway-check-button")
                 if let message {
                     MotoProse(text: message, tone: .muted)
                         .accessibilityIdentifier("gateway-status-message")

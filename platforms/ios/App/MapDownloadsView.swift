@@ -133,7 +133,7 @@ struct MapDownloadsView: View {
 
     private var sheet: some View {
         MotoPosterSheet(
-            kicker: "MAPS 02",
+            plate: .number("03"),
             title: "地图",
             sheetIdentifier: "map-downloads-sheet",
             dismissTitle: "完成",
@@ -399,7 +399,7 @@ private struct MapCitySearchPage: View {
 
     private var page: some View {
         MotoPosterPage(
-            kicker: "MAPS 02",
+            plate: .number("03"),
             title: "下载城市",
             backIdentifier: "map-city-back",
             onBack: { dismiss() }
@@ -494,7 +494,7 @@ private struct MapCityDownloadPage: View {
 
     var body: some View {
         MotoPosterPage(
-            kicker: "MAPS 02",
+            plate: .number("03"),
             title: city.name,
             backIdentifier: "map-city-download-back",
             onBack: { dismiss() }
