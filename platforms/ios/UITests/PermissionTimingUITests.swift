@@ -67,7 +67,7 @@ final class PermissionTimingUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["需要当前位置才能规划路线，请在系统设置中允许定位"]
             .waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["前往设置"].exists)
+        XCTAssertTrue(app.buttons["前往设置开启定位"].exists)
         keepScreenshot(named: "Location refused — route preview")
     }
 
