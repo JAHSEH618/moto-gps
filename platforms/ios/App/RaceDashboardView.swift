@@ -90,7 +90,7 @@ struct RaceDashboardView: View {
 /// A counter plate: an ink block with the label and figure in the paper
 /// colour, the way the round screen parks BEST and KM/H. Ink, not the slab:
 /// the slab is black in every theme and vanished on the night paper.
-private struct RaceSlab: View {
+struct RaceSlab: View {
     let label: String
     let value: String
 
@@ -134,7 +134,7 @@ private struct RaceSlab: View {
 }
 
 /// The section's one figure, at a size below the page's poster.
-private struct RaceFigure: View {
+struct RaceFigure: View {
     let value: String
     let unit: String
     var token: MotoText = .displayLG
@@ -160,7 +160,7 @@ private struct RaceFigure: View {
     }
 }
 
-private extension View {
+extension View {
     /// The value axis in the system's mono caps, on its rules: no plot
     /// background, no system blue. Each chart owns its own x axis, because the
     /// modifier nearest the chart wins.

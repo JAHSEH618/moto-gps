@@ -88,9 +88,6 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         }
     }
 
-    /// GTA III's radar is flat: no scanlines in either theme.
-    var radarTexture: RadarTexture { .none }
-
     /// The "on" fill of a switch. Its thumb is always white, so the fill must
     /// not be: the band is cream by night and white in Original, which made
     /// an on switch read as an empty white pill. Pink is the colour of an
@@ -106,11 +103,6 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
         case .day: return 15
         }
     }
-}
-
-enum RadarTexture {
-    case scanlines(pitch: CGFloat, opacity: Double)
-    case none
 }
 
 // MARK: - Palette
@@ -145,14 +137,8 @@ struct MotoPalette {
     /// white; here that colour is the handlebar band's neon pink. By day the
     /// paper needs black ink instead.
     var hud: Color? = nil
-    /// Radar map. Land is the road colour: streets are the gaps between
-    /// blocks, which is how GTA III's radar draws a city. Two block tones split
-    /// lots; water and park are the only hues inside the circle.
-    var mapLand = Color(hex: 0x3A3A3A)
-    var mapBlock = Color(hex: 0x222222)
-    var mapBlock2 = Color(hex: 0x1B1B1B)
-    var mapWater = Color(hex: 0x14202E)
-    var mapPark = Color(hex: 0x28311F)
+    // The map's ground is not here: it is the round screen's, in
+    // `MotoMapStyle` (MotoLiveMap.swift), so the two maps cannot drift.
 
     /// Liberty Night — GTA III's HUD on true black. Ink is the box-art white;
     /// the accent is neon pink, the round screen's band (`#F34DAA`), so the
@@ -204,13 +190,7 @@ struct MotoPalette {
         abort: Color(hex: 0xA8281C),
         // Black bands on white: the inverse gutter, the logo panel's colour.
         band: Color(hex: 0x111111),
-        onBand: Color(hex: 0xEFECE4),
-        // The radar stays a grey city by day, lifted so it reads on paper.
-        mapLand: Color(hex: 0xC9C5BB),
-        mapBlock: Color(hex: 0x8F8B83),
-        mapBlock2: Color(hex: 0x9C988F),
-        mapWater: Color(hex: 0x6E879F),
-        mapPark: Color(hex: 0x7D8A5B)
+        onBand: Color(hex: 0xEFECE4)
     )
 
     /// Original — the round screen's upstream colours on the phone: true black,
@@ -233,12 +213,7 @@ struct MotoPalette {
         ok: Color(hex: 0x69D494),
         abort: Color(hex: 0xFF4B43),
         band: Color(hex: 0xF3F4EF),
-        onBand: Color(hex: 0x050607),
-        mapLand: Color(hex: 0x2A2D30),
-        mapBlock: Color(hex: 0x16191C),
-        mapBlock2: Color(hex: 0x121416),
-        mapWater: Color(hex: 0x101418),
-        mapPark: Color(hex: 0x16191C)
+        onBand: Color(hex: 0x050607)
     )
 
 }
@@ -372,13 +347,9 @@ enum MotoMetrics {
     /// HIG minimum hit target. Any control smaller than this is a defect.
     static let minTapTarget: CGFloat = 44
 
-    enum RadarSize {
-        /// The circle is the product: on a 393pt phone it takes two thirds of
-        /// the width instead of reading as a badge.
-        static let hero: CGFloat = 300
-        static let ride: CGFloat = 176
-        static let band: CGFloat = 44
-    }
+    /// The ride map's least height: the stat column beside it usually sets
+    /// a taller one.
+    static let rideMapMinHeight: CGFloat = 176
 }
 
 // MARK: - Motion

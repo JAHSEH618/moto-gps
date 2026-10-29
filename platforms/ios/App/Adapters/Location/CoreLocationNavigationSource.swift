@@ -22,6 +22,17 @@ final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
     /// Called for every calibrated compass reading. A parked handlebar's
     /// heading is this reading, so it should not wait for the next fix.
     var onCompassHeading: (@MainActor () -> Void)?
+    /// Called when the rider grants or withdraws location in Settings, so a
+    /// feed that only runs with permission can start or stop.
+    var onAuthorizationChange: (@MainActor () -> Void)?
+
+    /// Whether location is already allowed; asking is someone else's job.
+    var isAuthorized: Bool {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse: return true
+        default: return false
+        }
+    }
 
     /// The phone's compass heading in degrees from true north (magnetic
     /// north when the true heading is unavailable), if a calibrated reading
@@ -81,6 +92,20 @@ final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
         }
     }
 
+    /// Starts updates only if location is already allowed, and never asks for
+    /// it or for an upgrade to Always. False when it did not start.
+    func startIfAuthorized(
+        onFix: @escaping @MainActor (NavigationFix) -> Void,
+        onFailure: @escaping @MainActor (String) -> Void
+    ) -> Bool {
+        guard isAuthorized else { return false }
+        self.onFix = onFix
+        self.onFailure = onFailure
+        wantsUpdates = true
+        startUpdates()
+        return true
+    }
+
     func stop() {
         wantsUpdates = false
         manager.stopUpdatingLocation()
@@ -102,6 +127,7 @@ final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
 
 extension CoreLocationNavigationSource: @preconcurrency CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        onAuthorizationChange?()
         guard wantsUpdates else { return }
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:

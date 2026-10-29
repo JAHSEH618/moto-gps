@@ -1,3 +1,4 @@
+import MotoNavigationCore
 import SwiftUI
 
 /// Home. One job: set a destination. The radar is the hero, the command bar is
@@ -12,6 +13,7 @@ struct HomeScreen: View {
     @Binding var showsMapDownloads: Bool
     @Binding var showsDataUse: Bool
     @Binding var showsRaceTelemetry: Bool
+    @Binding var showsRideLog: Bool
     let openSystemSettings: () -> Void
 
     @Environment(\.motoPalette) private var palette
@@ -150,13 +152,13 @@ struct HomeScreen: View {
         VStack(spacing: coverGutter) {
             HStack(spacing: coverGutter) {
                 coverPanel(palette.surface2) {
-                    MotoRadar(
-                        size: radarSize,
-                        route: [],
-                        showsHome: homeStore.isSet,
-                        homeOffset: homeRadarOffset
+                    HomeLiveMap(
+                        model: model,
+                        store: model.surroundingMap,
+                        homeStore: homeStore,
+                        height: radarSize + MotoMetrics.s3 * 2,
+                        openSystemSettings: openSystemSettings
                     )
-                    .padding(MotoMetrics.s3)
                 }
                 VStack(spacing: coverGutter) {
                     coverPanel(palette.slab) { logoBlock }
@@ -212,20 +214,6 @@ struct HomeScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, MotoMetrics.s3)
         .accessibilityAddTraits(.isHeader)
-    }
-
-    /// Home relative to the rider, north-up, 1.5 km to the rim. Equirectangular
-    /// is exact enough at radar scale.
-    private var homeRadarOffset: CGPoint? {
-        guard let home = homeStore.place?.location, let rider = model.riderPoint else {
-            return nil
-        }
-        let metresPerDegree = 111_320.0
-        let east = (home.longitudeDeg - rider.longitudeDeg) * metresPerDegree
-            * cos(rider.latitudeDeg * .pi / 180)
-        let north = (home.latitudeDeg - rider.latitudeDeg) * metresPerDegree
-        let range = 1_500.0
-        return CGPoint(x: east / range, y: -north / range)
     }
 
     /// Poster line: one huge word with the Chinese verb beside it and the
@@ -514,6 +502,11 @@ struct HomeScreen: View {
                     symbol: "gauge.with.dots.needle.67percent", tint: palette.accent,
                     identifier: "race-telemetry-button"
                 ) { showsRaceTelemetry = true }
+                menuItem(
+                    "09", title: "骑行记录", detail: rideDetail,
+                    symbol: "road.lanes", tint: palette.ink,
+                    identifier: "ride-log-button"
+                ) { showsRideLog = true }
             }
         }
     }
@@ -527,6 +520,12 @@ struct HomeScreen: View {
             return String(format: "0-%d 最佳 %.2f 秒 · 共 %d 次", best.targetKph, best.seconds, summary.runs.count)
         }
         return "累积 0-100、倾角与 G 值记录"
+    }
+
+    /// The newest ride when there is one; otherwise what gets recorded.
+    private var rideDetail: String {
+        guard let latest = model.rideLog.rides.first else { return "每次导航自动记下距离、车速与倾角" }
+        return "最近 \(RideFormat.kilometres(latest.distanceM)) km · 共 \(model.rideLog.rides.count) 次"
     }
 
     // MARK: - Pieces
@@ -647,6 +646,82 @@ struct HomeScreen: View {
             model.clearDestination()
         } else {
             model.selectPlace(place)
+        }
+    }
+}
+
+/// The cover's map panel: real streets around the rider, north-up, edge to
+/// edge in its panel. Without a position it is bare ground and the one
+/// control that asks for one; it never draws a city that is not there.
+private struct HomeLiveMap: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var store: SurroundingMapStore
+    @ObservedObject var homeStore: HomeLocationStore
+    var height: CGFloat
+    let openSystemSettings: () -> Void
+
+    @Environment(\.motoPalette) private var palette
+
+    /// 350 m to the nearer edge: inside the 500 m the tiles are fetched for,
+    /// so the corners are never empty for want of data.
+    private static let halfSpanM = 350.0
+
+    var body: some View {
+        MotoLiveMap(
+            scene: store.phoneScene,
+            center: center,
+            halfSpanM: Self.halfSpanM,
+            home: home,
+            riderCourseDeg: model.riderCourseDeg,
+            showBuildings: model.showBuildings
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .overlay(alignment: .bottomLeading) { status }
+        .accessibilityIdentifier("home-live-map")
+    }
+
+    private var center: MotoMapPoint? {
+        guard let rider = model.riderPoint else { return nil }
+        let point = ChinaCoordinateTransform.wgs84ToGCJ02(rider)
+        return MotoMapPoint(latitudeDeg: point.latitudeDeg, longitudeDeg: point.longitudeDeg)
+    }
+
+    private var home: MotoMapPoint? {
+        guard model.riderPoint != nil, let saved = homeStore.place?.location else { return nil }
+        let point = ChinaCoordinateTransform.wgs84ToGCJ02(saved)
+        return MotoMapPoint(latitudeDeg: point.latitudeDeg, longitudeDeg: point.longitudeDeg)
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if !model.isLocationAllowed {
+            Button {
+                // Asked once; after a refusal only Settings can change it.
+                if model.searchLocationStatus == .permissionDenied {
+                    openSystemSettings()
+                } else {
+                    model.requestLocationForMap()
+                }
+            } label: {
+                Text("开启定位，显示附近道路")
+                    .font(.system(.footnote, weight: .semibold))
+                    .foregroundStyle(palette.onSlab)
+                    .padding(.horizontal, MotoMetrics.s3)
+                    .frame(minHeight: MotoMetrics.minTapTarget)
+                    .background(palette.slab)
+            }
+            .buttonStyle(.plain)
+            .padding(MotoMetrics.s2)
+            .accessibilityIdentifier("home-map-location-button")
+        } else if center == nil || store.phoneScene == nil {
+            Text(center == nil ? "正在定位" : store.statusText)
+                .font(.system(.caption2, weight: .semibold))
+                .foregroundStyle(palette.onSlab)
+                .padding(.horizontal, MotoMetrics.s2)
+                .padding(.vertical, MotoMetrics.s1)
+                .background(palette.slab)
+                .padding(MotoMetrics.s2)
         }
     }
 }

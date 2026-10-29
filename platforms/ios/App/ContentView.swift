@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var showsDataUse = false
     @State private var showsGatewaySettings = false
     @State private var showsRaceTelemetry = false
+    @State private var showsRideLog = false
     @State private var showsWifiHotspot = false
     @State private var showsFirmwareUpdate = false
     /// Read straight off the theme: this view sits *above* `.motoTheme(...)`,
@@ -40,6 +41,7 @@ struct ContentView: View {
                 showsMapDownloads: $showsMapDownloads,
                 showsDataUse: $showsDataUse,
                 showsRaceTelemetry: $showsRaceTelemetry,
+                showsRideLog: $showsRideLog,
                 openSystemSettings: openSystemSettings
             )
             .navigationDestination(for: MotoScreen.self) { screen in
@@ -72,6 +74,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsDataUse) { DataUseView() }
         .sheet(isPresented: $showsGatewaySettings) { GatewaySettingsView(model: model) }
+        .sheet(isPresented: $showsRideLog) {
+            RideLogView(model: model) { showsRideLog = false }
+                .motoTheme(theme)
+        }
         .sheet(isPresented: $showsRaceTelemetry) {
             RaceDashboardView(model: model) { showsRaceTelemetry = false }
                 .motoTheme(theme)
@@ -317,18 +323,16 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                    // The map takes the width the stat column leaves and the
+                    // column's height: a rectangle of the same ground the
+                    // handlebar's disc shows, turning with the heading.
                     HStack(alignment: .top, spacing: MotoMetrics.s4) {
-                        MotoRadar(
-                            size: MotoMetrics.RadarSize.ride,
-                            route: rideMap.route,
-                            roads: rideMap.roads,
-                            buildings: rideMap.buildings,
-                            areas: rideMap.areas,
-                            progress: rideMap.progress,
-                            showsSweep: false,
-                            showsHome: rideMap.home != nil,
-                            homeOffset: rideMap.home
+                        RideLiveMap(
+                            model: model,
+                            store: model.surroundingMap,
+                            homeStore: model.homeStore
                         )
+                        .frame(maxWidth: .infinity, minHeight: MotoMetrics.rideMapMinHeight, maxHeight: .infinity)
                         VStack(alignment: .leading, spacing: 0) {
                             MotoStatCell(
                                 label: "eta",
@@ -344,9 +348,12 @@ struct ContentView: View {
                                 token: .displayMD,
                                 tone: .accent
                             )
+                            RideLeanCell(model: model)
                         }
                         .padding(.top, MotoMetrics.s2)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack(spacing: 0) {
@@ -757,91 +764,6 @@ struct ContentView: View {
         ["navigating", "rerouting", "arrived"].contains(model.navigation.stateName)
     }
 
-    private struct RideMap {
-        var route: [CGPoint] = []
-        var roads: [[CGPoint]] = []
-        var buildings: [[CGPoint]] = []
-        var areas: [MotoRadarArea] = []
-        var progress: Double?
-        /// Home in radar units (1 = rim), in the same projection as the route.
-        var home: CGPoint?
-    }
-
-    /// Route, streets and footprints share one rider-centred, north-up
-    /// projection, so the phone radar is the same picture as the handlebar
-    /// instead of a decorative grid with a route dropped on top.
-    private var rideMap: RideMap {
-        let snapshot = model.navigation
-        var map = RideMap()
-        if snapshot.totalDistanceM > 0 {
-            map.progress = min(max(snapshot.routeProgressM / snapshot.totalDistanceM, 0), 1)
-        }
-        guard snapshot.hasRouteView else { return map }
-
-        let metresPerDegree = 111_320.0
-        let originLat = snapshot.routeViewOriginLatitudeDeg
-        let originLon = snapshot.routeViewOriginLongitudeDeg
-        let cosLat = cos(originLat * .pi / 180)
-        func offset(latitude: Double, longitude: Double) -> CGPoint {
-            CGPoint(
-                x: (longitude - originLon) * metresPerDegree * cosLat,
-                y: (latitude - originLat) * metresPerDegree
-            )
-        }
-
-        let routeOffsets = snapshot.routeViewPoints.map {
-            offset(latitude: $0.latitudeDeg, longitude: $0.longitudeDeg)
-        }
-        let window = model.surroundingMap.latestWindow
-        var reach = routeOffsets.reduce(0.0) { max($0, hypot($1.x, $1.y)) }
-        if let window {
-            // Never zoom past the fetched window: the streets are only real
-            // inside its radius.
-            reach = max(reach, Double(window.radiusM) * 0.55)
-        }
-        guard reach > 1 else { return map }
-        // 0.42 keeps the whole window inside the ring instead of clipping it.
-        let scale = 0.42 / reach
-        func normalise(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: 0.5 + point.x * scale, y: 0.5 - point.y * scale)
-        }
-
-        map.route = routeOffsets.map(normalise)
-        // The route window is GCJ-02, like everything the handlebar draws, so
-        // the saved (WGS84) home is converted once before it is projected.
-        if let saved = model.homeStore.place?.location {
-            let home = ChinaCoordinateTransform.wgs84ToGCJ02(saved)
-            let point = offset(latitude: home.latitudeDeg, longitude: home.longitudeDeg)
-            map.home = CGPoint(x: point.x * scale / 0.40, y: -point.y * scale / 0.40)
-        }
-        if let window {
-            map.roads = window.roads.map { road in
-                road.points.map {
-                    normalise(offset(
-                        latitude: Double($0.latitudeE6) / 1_000_000,
-                        longitude: Double($0.longitudeE6) / 1_000_000
-                    ))
-                }
-            }
-            map.buildings = window.buildings.map { building in
-                building.points.map {
-                    normalise(offset(
-                        latitude: Double($0.latitudeE6) / 1_000_000,
-                        longitude: Double($0.longitudeE6) / 1_000_000
-                    ))
-                }
-            }
-            map.areas = window.areas.map { area in
-                MotoRadarArea(kind: area.areaClass, points: area.points.map {
-                    normalise(offset(
-                        latitude: Double($0.latitudeE6) / 1_000_000,
-                        longitude: Double($0.longitudeE6) / 1_000_000
-                    ))
-                })
-            }
-        }
-        return map
-    }
 
     private var remainingDistanceValue: String {
         guard hasNavigationEstimate else { return "—" }
@@ -899,6 +821,85 @@ struct ContentView: View {
         case "部分路段缓行": return palette.route
         case "路况顺畅": return palette.ok
         default: return palette.inkMuted
+        }
+    }
+}
+
+/// The ride's map: the route window the handlebar draws, on the same real
+/// ground, heading-up like the disc and as a rectangle on the phone.
+private struct RideLiveMap: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var store: SurroundingMapStore
+    @ObservedObject var homeStore: HomeLocationStore
+
+    /// The round screen shows about ±400 m; the phone's rectangle is smaller
+    /// than the disc, so it shows a little less.
+    private static let halfSpanM = 300.0
+
+    var body: some View {
+        let snapshot = model.navigation
+        MotoLiveMap(
+            scene: store.phoneScene,
+            center: snapshot.hasRouteView
+                ? MotoMapPoint(latitudeDeg: snapshot.routeViewOriginLatitudeDeg,
+                               longitudeDeg: snapshot.routeViewOriginLongitudeDeg)
+                : nil,
+            headingDeg: snapshot.headingDeg.isFinite ? snapshot.headingDeg : 0,
+            halfSpanM: Self.halfSpanM,
+            route: snapshot.routeViewPoints.map {
+                MotoMapPoint(latitudeDeg: $0.latitudeDeg, longitudeDeg: $0.longitudeDeg)
+            },
+            home: home,
+            progress: snapshot.totalDistanceM > 0
+                ? min(max(snapshot.routeProgressM / snapshot.totalDistanceM, 0), 1)
+                : nil,
+            showBuildings: model.showBuildings
+        )
+        .accessibilityIdentifier("ride-live-map")
+    }
+
+    /// The route window is GCJ-02, like everything the handlebar draws, so the
+    /// saved (WGS84) home is converted once.
+    private var home: MotoMapPoint? {
+        guard let saved = homeStore.place?.location else { return nil }
+        let point = ChinaCoordinateTransform.wgs84ToGCJ02(saved)
+        return MotoMapPoint(latitudeDeg: point.latitudeDeg, longitudeDeg: point.longitudeDeg)
+    }
+}
+
+/// The handlebar's lean, as a glance under speed: one number and its side.
+/// It is there only while the round screen's samples are fresh (0.5 s), so a
+/// dropped link or a still board never leaves a stale angle on the phone.
+private struct RideLeanCell: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        // Samples arrive at 10 Hz; redraw at that rate to notice expiry too.
+        TimelineView(.periodic(from: .now, by: 0.1)) { context in
+            if let sample = model.currentAttitude(at: context.date) {
+                VStack(alignment: .leading, spacing: 0) {
+                    MotoRule().padding(.vertical, MotoMetrics.s2)
+                    MotoStatCell(
+                        label: "lean",
+                        value: "\(Int(abs(sample.leanDegrees).rounded()))°",
+                        unit: leanSideText(sample),
+                        token: .displayMD
+                    )
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("ride-lean-cell")
+            }
+        }
+    }
+
+    /// The side only once the rounded number is not zero, so "0°" never
+    /// carries an L or an R.
+    private func leanSideText(_ sample: AttitudeSample) -> String {
+        guard abs(sample.leanDegrees).rounded() >= 1 else { return "" }
+        switch sample.leanSide {
+        case .left: return "L"
+        case .right: return "R"
+        case .upright: return ""
         }
     }
 }

@@ -49,6 +49,11 @@ final class AppModel: ObservableObject {
     /// moves at most every two seconds.
     private(set) var raceLog = RaceLogFile.load()
     @Published private(set) var raceLogRevision = 0
+    /// Every navigation session on this phone (ADR 0002), newest first. Saved
+    /// when a ride ends, never while it runs: it changes once a ride.
+    @Published private(set) var rideLog = RideLogFile.load()
+    /// The ride being recorded, while a real (not demo) navigation runs.
+    private var rideRecorder: RideRecorder?
     private var raceLogPublishedAt = Date.distantPast
     private var raceLogSavedAt = Date.distantPast
     private var raceLogPersists = true
@@ -79,6 +84,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectedPlace: PlaceSearchResult?
     /// Latest phone fix, for the home radar's safehouse blip.
     @Published private(set) var riderPoint: WGS84Point?
+    /// The course of the newest idle fix, for the home map's rider arrow; nil
+    /// when parked or unknown.
+    @Published private(set) var riderCourseDeg: Double?
+    /// Location is already allowed. The home map shows real streets only then,
+    /// and offers the permission instead of drawing anything made up.
+    @Published private(set) var isLocationAllowed = false
     @Published private(set) var recentPlaces: [PlaceSearchResult] = []
     @Published private(set) var isSearchingPlaces = false
     @Published private(set) var placeSearchFailure: String?
@@ -108,6 +119,9 @@ final class AppModel: ObservableObject {
     /// Set once the central has been told to connect. A later ride does not
     /// reconnect a round screen the rider disconnected on purpose.
     private var bluetoothStarted = false
+    /// Core Location is running for the idle feed (no ride runtime owns it).
+    private var idleLocationRunning = false
+    private var isSceneActive = true
 
     private static let recentPlacesKey = "MotoGPS.RecentPlaces.v1"
     private static let wifiHotspotNameKey = "MotoGPS.WifiHotspotName.v1"
@@ -120,7 +134,16 @@ final class AppModel: ObservableObject {
         recentPlaces = Self.loadRecentPlaces()
 
         surroundingMap.onScene = { [weak self] scene in
-            self?.bluetooth.sendMapScene(scene)
+            // The round screen draws a scene only under a route; the home
+            // map's idle windows stay on the phone.
+            guard let self, self.runtime != nil else { return }
+            self.bluetooth.sendMapScene(scene)
+        }
+        isLocationAllowed = liveLocation.isAuthorized
+        liveLocation.onAuthorizationChange = { [weak self] in
+            guard let self else { return }
+            self.isLocationAllowed = self.liveLocation.isAuthorized
+            self.refreshIdleLocation()
         }
 
         bluetooth.onSnapshotChange = { [weak self] snapshot in
@@ -128,6 +151,7 @@ final class AppModel: ObservableObject {
             self.device = snapshot
             self.deviceSupportsWifi = self.bluetooth.deviceSupportsWifiHotspot
             self.deviceSupportsOta = self.bluetooth.deviceSupportsOta
+            self.refreshIdleLocation()
             if case .connected = snapshot.connection { return }
             self.wifiStatus = nil
             self.deviceFirmware = nil
@@ -146,11 +170,13 @@ final class AppModel: ObservableObject {
             let now = Date()
             self.attitude.receive(value, at: now)
             self.raceLog.record(value, at: now)
+            self.rideRecorder?.ingest(value)
             self.publishRaceLog(now: now)
         }
         bluetooth.onPerformanceRun = { [weak self] run in
             guard let self, let value = DevicePerformanceRun(run) else { return }
             if self.raceLog.record(value, at: Date()) { self.publishRaceLog(force: true) }
+            self.rideRecorder?.ingest(value)
         }
         bluetooth.onWifiStatus = { [weak self] status in
             self?.wifiStatus = WifiHotspotStatus(
@@ -281,6 +307,7 @@ final class AppModel: ObservableObject {
         searchLocation.resume()
         mediaController.start()
         if ESP32BLECentral.hasBluetoothDecision { connectDeviceIfNeeded() }
+        refreshIdleLocation()
 
         #if DEBUG
         // Command-line-only hook for a repeatable phone-to-round-screen smoke
@@ -515,6 +542,25 @@ final class AppModel: ObservableObject {
         attitude.sample(at: now)
     }
 
+    /// Ends the ride being recorded and keeps it, if it was one.
+    private func finishRide() {
+        guard let recorder = rideRecorder else { return }
+        rideRecorder = nil
+        guard let ride = recorder.finish(at: Date()) else { return }
+        rideLog.append(ride)
+        RideLogFile.save(rideLog)
+    }
+
+    func deleteRide(_ id: UUID) {
+        rideLog.remove(id: id)
+        RideLogFile.save(rideLog)
+    }
+
+    func clearRideLog() {
+        rideLog.clear()
+        RideLogFile.save(rideLog)
+    }
+
     func clearRaceLog() {
         raceLog.clear()
         publishRaceLog(force: true)
@@ -637,6 +683,7 @@ final class AppModel: ObservableObject {
         routePreviewTask = nil
         surroundingMap.reset()
         runtime?.stop()
+        stopIdleLocation()
         let runtime = SharedNavigationRuntime(
             locationSource: liveLocation,
             routeProvider: PreviewSelectedRouteProvider(
@@ -654,8 +701,11 @@ final class AppModel: ObservableObject {
             destinationPOIID: selectedPlace.id.isEmpty ? nil : selectedPlace.id
         )
         isNavigationActive = started
-        if !started {
+        if started {
+            rideRecorder = RideRecorder(startedAt: Date(), destinationName: selectedPlace.name)
+        } else {
             self.runtime = nil
+            refreshIdleLocation()
         }
     }
 
@@ -665,6 +715,7 @@ final class AppModel: ObservableObject {
         requestSearchLocationIfNeeded()
         surroundingMap.reset()
         runtime?.stop()
+        stopIdleLocation()
         let demoSession = DemoNavigationSession()
         let runtime = SharedNavigationRuntime(
             locationSource: DemoNavigationLocationSource(session: demoSession),
@@ -685,12 +736,15 @@ final class AppModel: ObservableObject {
         if !started {
             isDemoActive = false
             self.runtime = nil
+            refreshIdleLocation()
         }
     }
 
     func stopNavigation() {
         runtime?.stop()
         runtime = nil
+        finishRide()
+        refreshIdleLocation()
         isNavigationActive = false
         isDemoActive = false
         navigationFailure = nil
@@ -755,6 +809,55 @@ final class AppModel: ObservableObject {
     /// Asks for location the first time the search or the demo wants a
     /// position. A route asks through `refreshForRoutePlanning()` instead,
     /// because it also needs a sharper fix.
+    /// The app came to the front or left it. In the background the idle feed
+    /// only runs while a round screen is connected: that is a ride.
+    func setSceneActive(_ active: Bool) {
+        isSceneActive = active
+        refreshIdleLocation()
+    }
+
+    /// The home map's own ask, from its "show nearby streets" button: the
+    /// same in-context question the search asks.
+    func requestLocationForMap() {
+        requestSearchLocationIfNeeded()
+    }
+
+    /// With no ride runtime, the phone still feeds the handlebar's speed fusion
+    /// (the 0-100 clock times from it, route or not) and the home map. Only
+    /// with a permission the rider already gave: nothing here asks.
+    private func refreshIdleLocation() {
+        let connected: Bool
+        if case .connected = device.connection { connected = true } else { connected = false }
+        let wanted = asksForPermissions && runtime == nil && liveLocation.isAuthorized &&
+            (isSceneActive || connected)
+        guard wanted != idleLocationRunning else { return }
+        if wanted {
+            idleLocationRunning = liveLocation.startIfAuthorized(
+                onFix: { [weak self] fix in self?.acceptIdleFix(fix) },
+                onFailure: { _ in }
+            )
+        } else {
+            stopIdleLocation()
+        }
+    }
+
+    private func stopIdleLocation() {
+        guard idleLocationRunning else { return }
+        idleLocationRunning = false
+        liveLocation.stop()
+    }
+
+    private func acceptIdleFix(_ fix: NavigationFix) {
+        bluetooth.sendGnssFix(fix)
+        if riderPoint != fix.coordinate { riderPoint = fix.coordinate }
+        // A course only means something while moving.
+        let course = (fix.speedMps ?? 0) >= 1 ? fix.courseDeg : nil
+        if riderCourseDeg != course { riderCourseDeg = course }
+        updateAmbientNight(at: fix.coordinate)
+        let gcj = ChinaCoordinateTransform.wgs84ToGCJ02(fix.coordinate)
+        surroundingMap.update(latitudeDeg: gcj.latitudeDeg, longitudeDeg: gcj.longitudeDeg)
+    }
+
     private func requestSearchLocationIfNeeded() {
         guard asksForPermissions, searchLocationStatus == .notRequested else { return }
         searchLocation.prepare()
@@ -870,9 +973,11 @@ final class AppModel: ObservableObject {
     private func bind(_ runtime: SharedNavigationRuntime) {
         runtime.onFix = { [weak self] fix in
             self?.bluetooth.sendGnssFix(fix)
+            self?.rideRecorder?.ingest(fix)
         }
         runtime.onSnapshot = { [weak self] snapshot in
             self?.navigation = snapshot
+            if snapshot.stateName == "arrived" { self?.rideRecorder?.markArrived() }
             if snapshot.stateName == "navigating" || snapshot.stateName == "arrived" {
                 self?.navigationFailure = nil
             }
