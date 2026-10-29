@@ -14,6 +14,7 @@
 | Noto Sans SC Bold 字体 | `assets/fonts/NotoSansSC-Bold.otf`，取自 `notofonts/noto-cjk` 的 Sans SubsetOTF | SIL OFL 1.1；见 `LICENSES/NotoSansSC-OFL.txt` |
 | Anton 字体（Regular） | `assets/fonts/Anton-Regular.ttf`，取自 Google Fonts `ofl/anton` | SIL OFL 1.1；见 `LICENSES/Anton-OFL.txt` |
 | Montserrat 内置字体 | LVGL 的内置字体资源 | SIL OFL 1.1；见 `LICENSES/Montserrat-OFL.txt` |
+| ICU / CLDR 繁简转换数据 | `shared/nav_ui/src/moto_hant_hans_table.h`，由 `scripts/generate_hant_hans_table.swift` 从 macOS Foundation 所带 ICU 的 `Hant-Hans` 转换（CLDR `common/transforms/Simplified-Traditional.xml` 反向）生成，生成时版本见该文件头部 | Unicode License v3；见 `LICENSES/Unicode-3.0.txt` |
 | OpenStreetMap 数据 / 派生数据库 | `shared/offline_map/jinan-v1.sqlite`、其 SQL/manifest；`shared/demo_fixture` 中的路线/道路/建筑几何；生成 C++ / Swift 常量中的地图数据 | ODbL 1.0，© OpenStreetMap contributors |
 | Nodemailer | `website/server` 邮件服务依赖，锁定于 `package-lock.json`；[上游](https://nodemailer.com/) | MIT-0；许可证随依赖包提供 |
 
