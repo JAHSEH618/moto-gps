@@ -1,47 +1,86 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Band plate
+// MARK: - Counter plate
 
-/// The band plate. On the round screen the band is brand, not state: it never
-/// changes between day and night and it is never a warning colour. It appears
-/// here for the same reason — one filled surface that says "this is chosen",
-/// carrying ink rather than white.
-struct MotoBandFill: View {
+/// A counter plate: a square ink block carrying one numeral or one glyph in
+/// the paper colour, the way GTA parks cash and the round screen parks BEST.
+/// It indexes a section, numbers a sheet after its place in the menu, and
+/// marks the chosen route. On the band it inverts against the band instead,
+/// the way the cover's logo panel sits in its white gutter.
+struct MotoCounterPlate: View {
+    enum Mark {
+        case number(String)
+        case symbol(String)
+    }
+
+    enum Size { case section, header }
+
+    let mark: Mark
+    var size: Size = .section
+    var onBand = false
+
+    @Environment(\.motoPalette) private var palette
+    @Environment(\.motoType) private var type
+
     var body: some View {
-        Rectangle()
-            .fill(MotoPalette.band)
+        glyph
+            .foregroundStyle(onBand ? MotoPalette.band : palette.bg)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .padding(.horizontal, size == .header ? MotoMetrics.s3 : MotoMetrics.s2)
+            .frame(minWidth: side, minHeight: side)
+            .background(onBand ? MotoPalette.onBand : palette.ink)
+            // A plate is a fixed object, like the instrument's counters; it
+            // grows a little with the text and then holds.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .accessibilityHidden(true)
     }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch mark {
+        case .number(let value):
+            Text(value)
+                .font(type.display(size == .header ? .displayLG : .displayMD))
+                .tracking(MotoMetrics.displayTracking)
+                .monospacedDigit()
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size == .header ? .title : .title3, weight: .heavy))
+        }
+    }
+
+    private var side: CGFloat { size == .header ? 64 : MotoMetrics.minTapTarget }
 }
 
 // MARK: - Segment control
 
 /// Three-way poster selector. A stock `Picker` with `.segmented` styling brings
-/// its own rounded pill and system blue; this one is square, uses the band for
-/// the selection and keeps the labels at body size so Chinese stays readable.
+/// its own rounded pill and system blue; this one is square, fills the chosen
+/// cell with the accent (the colour of an active selection) and keeps the
+/// labels at body size so Chinese stays readable.
 struct MotoSegment<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
     var identifierPrefix: String
 
     @Environment(\.motoPalette) private var palette
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                 if index > 0 {
                     Rectangle()
-                        .fill(palette.line(contrast: contrast))
-                        .frame(width: MotoMetrics.hairline)
+                        .fill(palette.ink)
+                        .frame(width: MotoMetrics.hairline * 2)
                 }
                 segment(option)
             }
         }
         .overlay(
             Rectangle()
-                .strokeBorder(palette.line(contrast: contrast), lineWidth: MotoMetrics.hairline)
+                .strokeBorder(palette.ink, lineWidth: MotoMetrics.hairline * 2)
         )
     }
 
@@ -51,10 +90,13 @@ struct MotoSegment<Value: Hashable>: View {
             selection = option.value
         } label: {
             Text(option.title)
-                .font(.system(.body, weight: .semibold))
-                .foregroundStyle(isSelected ? MotoPalette.onBand : palette.ink)
+                .font(.system(.body, weight: isSelected ? .heavy : .semibold))
+                .foregroundStyle(isSelected ? palette.onAccent : palette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, MotoMetrics.s2)
                 .frame(maxWidth: .infinity, minHeight: 48)
-                .background(isSelected ? MotoPalette.band : palette.surface)
+                .background(isSelected ? palette.accent : palette.surface)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -70,16 +112,18 @@ struct MotoSegment<Value: Hashable>: View {
 struct MotoRow<Trailing: View>: View {
     let title: String
     var subtitle: String?
+    /// Text values sit on the title's baseline; a control (a switch) centres.
+    var alignment: VerticalAlignment = .firstTextBaseline
     @ViewBuilder var trailing: () -> Trailing
 
     @Environment(\.motoPalette) private var palette
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
+        HStack(alignment: alignment, spacing: MotoMetrics.s3) {
             VStack(alignment: .leading, spacing: MotoMetrics.s1) {
                 Text(title)
-                    .font(.system(.body))
+                    .font(.system(.body, weight: .semibold))
                     .foregroundStyle(palette.ink)
                 if let subtitle {
                     Text(subtitle)
@@ -96,20 +140,21 @@ struct MotoRow<Trailing: View>: View {
     }
 }
 
-/// Toggle row. The switch keeps the platform shape — HIG conformance beats a
-/// square knob the rider has never seen — but it is tinted with the band.
+/// Toggle row. The switch keeps the platform shape (HIG conformance beats a
+/// square knob the rider has never seen) and takes the theme's switch tint,
+/// so its white thumb is never set on a white track.
 struct MotoToggleRow: View {
     let title: String
     @Binding var isOn: Bool
     var identifier: String
 
-    @Environment(\.motoPalette) private var palette
+    @Environment(\.motoTheme) private var theme
 
     var body: some View {
-        MotoRow(title: title) {
+        MotoRow(title: title, alignment: .center) {
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(MotoPalette.band)
+                .tint(theme.switchTint)
                 .accessibilityIdentifier(identifier)
                 .accessibilityLabel(title)
         }
@@ -118,24 +163,160 @@ struct MotoToggleRow: View {
     }
 }
 
+// MARK: - Pause-menu rows
+
+private struct MotoRowPressedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True while a pause-menu row is held, so its content can flip to the
+    /// accent's own ink.
+    var motoRowPressed: Bool {
+        get { self[MotoRowPressedKey.self] }
+        set { self[MotoRowPressedKey.self] = newValue }
+    }
+}
+
+/// GTA's pause menu lights the item under the cursor with a solid bar. Held,
+/// a row does the same: it fills with the accent and its type turns to the
+/// accent's ink. A fill, never a scale; one light tick on the press.
+struct MotoMenuRowStyle: ButtonStyle {
+    @Environment(\.motoPalette) private var palette
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? palette.accent : Color.clear)
+            .environment(\.motoRowPressed, configuration.isPressed)
+            .contentShape(Rectangle())
+            .onChange(of: configuration.isPressed) { _, pressed in
+                guard pressed else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+    }
+}
+
+/// One pause-menu item: the index in the condensed face at panel size, the
+/// title heavy, one line of detail, and a trailing glyph. The row carries
+/// its own inset so the pressed bar runs past the text the way GTA's does;
+/// the list that holds it pulls it back out by the same inset.
+struct MotoMenuRow: View {
+    let number: String
+    let title: String
+    var detail: String?
+    var symbol: String?
+    var symbolTint: Color?
+    var selected = false
+
+    @Environment(\.motoPalette) private var palette
+    @Environment(\.motoType) private var type
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.motoRowPressed) private var pressed
+
+    /// The bar's overhang past the text column.
+    static let inset = MotoMetrics.s3
+
+    var body: some View {
+        HStack(spacing: MotoMetrics.s3) {
+            // Page ink, not the HUD pink: eight indices in the HUD colour
+            // would be eight readings competing with the one that matters.
+            Text(number)
+                .font(type.display(.displayMD))
+                .tracking(MotoMetrics.displayTracking)
+                .monospacedDigit()
+                .foregroundStyle(pressed ? palette.onAccent : (selected ? palette.accent : palette.ink))
+                .lineLimit(1)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                .frame(minWidth: 44, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
+                Text(title)
+                    .font(.system(.title3, weight: .heavy))
+                    .foregroundStyle(pressed ? palette.onAccent : palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.system(.subheadline))
+                        .foregroundStyle(pressed ? palette.onAccent : palette.inkMuted(contrast: contrast))
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                }
+            }
+            Spacer(minLength: 0)
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(.body, weight: .semibold))
+                    .foregroundStyle(pressed ? palette.onAccent : (symbolTint ?? palette.inkMuted))
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, Self.inset)
+        .padding(.vertical, MotoMetrics.s3)
+        .frame(minHeight: 72)
+    }
+}
+
 // MARK: - Sheet scaffold
 
-/// Poster sheet chrome: a full-bleed band (the cover gutter) carrying the title, then
-/// paper. The band is the same object as the instrument's rim — brand, not
-/// state — and it is why the sheet has no navigation bar and no large title.
+/// The band header shared by sheets and pushed pages: the cover's gutter run
+/// full bleed, a counter plate carrying the sheet's number in the menu (or a
+/// glyph for a sheet one level deeper), the title heavy beside it, and the
+/// actions on the band as boxed ink type. A 2pt accent rule closes it, the
+/// same rule that closes the home status band. No eyebrow above the title:
+/// the plate carries the order.
+private struct MotoPosterHeader<Leading: View, Actions: View>: View {
+    let plate: MotoCounterPlate.Mark?
+    let title: String
+    @ViewBuilder var leading: () -> Leading
+    @ViewBuilder var actions: () -> Actions
+
+    @Environment(\.motoPalette) private var palette
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MotoMetrics.s3) {
+            leading()
+            if let plate {
+                MotoCounterPlate(mark: plate, size: .header, onBand: true)
+            }
+            Text(title)
+                .font(.system(.largeTitle, weight: .heavy))
+                .foregroundStyle(MotoPalette.onBand)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+            actions()
+        }
+        .padding(.leading, MotoMetrics.s4)
+        .padding(.trailing, MotoMetrics.s3)
+        .padding(.top, MotoMetrics.s5)
+        .padding(.bottom, MotoMetrics.s4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The header is the sheet's title bar: it grows with the reader's
+        // size up to a point, then holds so the content keeps the screen.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .background(MotoPalette.band)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(palette.accent).frame(height: 2)
+        }
+    }
+}
+
+/// Poster sheet chrome: the band header, then paper. The band is the same
+/// object as the instrument's rim (brand, not state), which is why the sheet
+/// has no navigation bar and no large title, and why its corners are square.
 struct MotoPosterSheet<Actions: View, Content: View>: View {
-    let kicker: String
+    let plate: MotoCounterPlate.Mark?
     let title: String
     let sheetIdentifier: String
     @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
 
     @Environment(\.motoPalette) private var palette
-    @Environment(\.motoType) private var type
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            MotoPosterHeader(plate: plate, title: title, leading: { EmptyView() }, actions: actions)
             ScrollView {
                 VStack(spacing: MotoMetrics.s6) {
                     content()
@@ -146,37 +327,14 @@ struct MotoPosterSheet<Actions: View, Content: View>: View {
             }
         }
         .background(palette.bg)
+        .presentationCornerRadius(MotoMetrics.chipRadius)
         .accessibilityIdentifier(sheetIdentifier)
-    }
-
-    private var header: some View {
-        HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
-            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
-                Text(kicker)
-                    .font(type.mono(.micro))
-                    .tracking(MotoMetrics.microTracking)
-                    .foregroundStyle(MotoPalette.onBand.opacity(0.72))
-                Text(title)
-                    .font(.system(.largeTitle, weight: .heavy))
-                    .foregroundStyle(MotoPalette.onBand)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            Spacer(minLength: MotoMetrics.s2)
-            actions()
-                .padding(.bottom, MotoMetrics.s1)
-        }
-        .padding(.horizontal, MotoMetrics.s4)
-        .padding(.top, MotoMetrics.s5)
-        .padding(.bottom, MotoMetrics.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MotoPalette.band)
     }
 }
 
 extension MotoPosterSheet where Actions == MotoBandButton {
     init(
-        kicker: String,
+        plate: MotoCounterPlate.Mark?,
         title: String,
         sheetIdentifier: String,
         dismissTitle: String,
@@ -185,7 +343,7 @@ extension MotoPosterSheet where Actions == MotoBandButton {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(
-            kicker: kicker,
+            plate: plate,
             title: title,
             sheetIdentifier: sheetIdentifier,
             actions: { MotoBandButton(dismissTitle, identifier: dismissIdentifier, action: onDismiss) },
@@ -194,8 +352,8 @@ extension MotoPosterSheet where Actions == MotoBandButton {
     }
 }
 
-/// A header action. On the band, so it is ink type rather than a second plate:
-/// one filled surface per screen already.
+/// A header action: ink type on the band, boxed in a 2pt ink frame so it reads
+/// as a control and not as a caption. Never a second filled plate.
 struct MotoBandButton: View {
     let title: String
     let identifier: String
@@ -210,17 +368,15 @@ struct MotoBandButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(.subheadline, weight: .bold))
-                .foregroundStyle(MotoPalette.onBand)
-                .padding(.vertical, MotoMetrics.s2)
-                .contentShape(Rectangle())
+                .font(.system(.body, weight: .heavy))
         }
-        .buttonStyle(MotoBandPressStyle())
+        .buttonStyle(MotoBandPressStyle(boxed: true))
         .accessibilityIdentifier(identifier)
     }
 }
 
-/// Header text action, for a sheet that has two.
+/// The quieter header action beside a boxed one (Cancel next to Save): the
+/// same ink, no frame.
 struct MotoHeaderButton: View {
     let title: String
     let identifier: String
@@ -229,46 +385,72 @@ struct MotoHeaderButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(.subheadline, weight: .medium))
-                .foregroundStyle(MotoPalette.onBand.opacity(0.8))
-                .padding(.vertical, MotoMetrics.s2)
-                .contentShape(Rectangle())
+                .font(.system(.body, weight: .semibold))
         }
-        .buttonStyle(MotoBandPressStyle())
+        .buttonStyle(MotoBandPressStyle(boxed: false))
         .accessibilityIdentifier(identifier)
     }
 }
 
-/// Press feedback for the band's text actions. They sit on the cover gutter, so
-/// the tap shows as a squeeze and a dim — no new surface — plus one light tick.
+/// Press feedback for the band's actions. Held, the action inverts into a
+/// small ink plate with band-colour type, the menu's highlight in miniature;
+/// disabled, it drops to 40%. Every action keeps a 44pt target.
 struct MotoBandPressStyle: ButtonStyle {
+    var boxed: Bool
+
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.9 : 1)
-            .opacity(configuration.isPressed ? 0.5 : 1)
-            .animation(.spring(response: 0.15, dampingFraction: 0.55),
-                       value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, pressed in
+            .foregroundStyle(pressed ? MotoPalette.band : MotoPalette.onBand)
+            .lineLimit(1)
+            .padding(.horizontal, MotoMetrics.s3)
+            .frame(minWidth: MotoMetrics.minTapTarget, minHeight: MotoMetrics.minTapTarget)
+            .background(pressed ? MotoPalette.onBand : Color.clear)
+            .overlay(
+                Rectangle().strokeBorder(
+                    MotoPalette.onBand.opacity(boxed ? 1 : 0),
+                    lineWidth: MotoMetrics.hairline * 2
+                )
+            )
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Rectangle())
+            .onChange(of: pressed) { _, pressed in
                 guard pressed else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
     }
 }
 
-/// A pushed poster page: same band header, a back chevron instead of a dismiss.
+/// A pushed poster page: the same band header, with a back chevron at the
+/// leading edge in place of a dismiss.
 struct MotoPosterPage<Content: View>: View {
-    let kicker: String
+    let plate: MotoCounterPlate.Mark?
     let title: String
     let backIdentifier: String
     let onBack: () -> Void
     @ViewBuilder var content: () -> Content
 
     @Environment(\.motoPalette) private var palette
-    @Environment(\.motoType) private var type
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            MotoPosterHeader(
+                plate: plate,
+                title: title,
+                leading: {
+                    Button(action: onBack) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(.title3, weight: .heavy))
+                    }
+                    .buttonStyle(MotoBandPressStyle(boxed: false))
+                    .padding(.leading, -MotoMetrics.s3)
+                    .accessibilityLabel("返回")
+                    .accessibilityIdentifier(backIdentifier)
+                },
+                actions: { EmptyView() }
+            )
             ScrollView {
                 VStack(spacing: MotoMetrics.s6) {
                     content()
@@ -281,45 +463,31 @@ struct MotoPosterPage<Content: View>: View {
         .background(palette.bg)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .background(MotoEdgeSwipeBack().frame(width: 0, height: 0))
     }
+}
 
-    private var header: some View {
-        HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(.body, weight: .bold))
-                    .foregroundStyle(MotoPalette.onBand)
-                    .frame(width: 32, height: 32, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("返回")
-            .accessibilityIdentifier(backIdentifier)
-            .padding(.bottom, MotoMetrics.s1)
+/// Hiding the system back button also switches off the left-edge swipe that
+/// goes with it, and that swipe is muscle memory. A poster page draws its own
+/// chevron, so it hands the swipe back to the navigation controller: the
+/// recogniser gets a delegate that allows it whenever there is a page to pop.
+private struct MotoEdgeSwipeBack: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {}
 
-            VStack(alignment: .leading, spacing: MotoMetrics.s1) {
-                Text(kicker)
-                    .font(type.mono(.micro))
-                    .tracking(MotoMetrics.microTracking)
-                    .foregroundStyle(MotoPalette.onBand.opacity(0.72))
-                Text(title)
-                    .font(.system(.largeTitle, weight: .heavy))
-                    .foregroundStyle(MotoPalette.onBand)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            }
-            Spacer(minLength: 0)
+    final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            navigationController?.interactivePopGestureRecognizer?.delegate = self
         }
-        .padding(.horizontal, MotoMetrics.s4)
-        .padding(.top, MotoMetrics.s5)
-        .padding(.bottom, MotoMetrics.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MotoPalette.band)
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
     }
 }
 
 // MARK: - Prose
-
 
 /// Body copy on paper. Sentence case, real line spacing, never mono: the poster
 /// grammar puts monospace on caps labels and data, and prose in the reading face.
@@ -344,33 +512,31 @@ struct MotoProse: View {
 
 // MARK: - Sections
 
-/// Numbered section head. The index is a poster numeral, not decoration: it is
-/// how the pause menu reads, and it makes four groups of prose scannable without
-/// a tracked eyebrow above each one.
+/// Numbered section head. The index sits on an ink counter plate that stands
+/// on a 2pt ink rule, like a tab on a file: the number is order, and the
+/// plate makes four groups of prose scannable without an eyebrow above each.
 struct MotoSectionTitle: View {
     var index: String?
     let text: String
 
     @Environment(\.motoPalette) private var palette
-    @Environment(\.motoType) private var type
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MotoMetrics.s2) {
-            HStack(alignment: .firstTextBaseline, spacing: MotoMetrics.s3) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .bottom, spacing: MotoMetrics.s3) {
                 if let index {
-                    Text(index)
-                        .font(type.display(.displayMD))
-                        .tracking(MotoMetrics.displayTracking)
-                        .foregroundStyle(MotoPalette.band)
-                        .accessibilityHidden(true)
+                    MotoCounterPlate(mark: .number(index))
                 }
                 Text(text)
-                    .font(.system(.headline, weight: .bold))
+                    .font(.system(.title3, weight: .heavy))
                     .foregroundStyle(palette.ink)
+                    .padding(.bottom, MotoMetrics.s2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
             }
-            MotoRule()
+            Rectangle()
+                .fill(palette.ink)
+                .frame(height: MotoMetrics.hairline * 2)
         }
     }
 }
@@ -379,6 +545,7 @@ struct MotoSectionTitle: View {
 
 /// One enormous word per sheet. The instrument's rule is that nothing competes
 /// with the hero, so this is the only thing above `title` size on the screen.
+/// The line under it is a sentence, so it is set in the reading face.
 struct MotoHeroWord: View {
     let word: String
     var detail: String?
@@ -388,6 +555,7 @@ struct MotoHeroWord: View {
 
     @Environment(\.motoPalette) private var palette
     @Environment(\.motoType) private var type
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         VStack(alignment: .leading, spacing: MotoMetrics.s2) {
@@ -400,9 +568,10 @@ struct MotoHeroWord: View {
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
             if let detail {
                 Text(detail)
-                    .font(type.mono(.label))
-                    .tracking(MotoMetrics.labelTracking)
-                    .foregroundStyle(palette.inkMuted)
+                    .font(.system(.body, weight: .medium))
+                    .foregroundStyle(palette.inkMuted(contrast: contrast))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

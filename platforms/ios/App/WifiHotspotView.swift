@@ -18,7 +18,7 @@ struct WifiHotspotView: View {
 
     var body: some View {
         MotoPosterSheet(
-            kicker: "WIFI 04",
+            plate: .symbol("wifi"),
             title: "WiFi 热点",
             sheetIdentifier: "wifi-hotspot-sheet",
             actions: {
@@ -28,7 +28,6 @@ struct WifiHotspotView: View {
                     }
                     MotoBandButton("保存", identifier: "wifi-save-button", action: save)
                         .disabled(!canSave)
-                        .opacity(canSave ? 1 : 0.5)
                 }
             }
         ) {

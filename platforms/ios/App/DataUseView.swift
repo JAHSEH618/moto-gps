@@ -16,7 +16,7 @@ struct DataUseView: View {
 
     var body: some View {
         MotoPosterSheet(
-            kicker: "POLICY 04",
+            plate: .number("06"),
             title: "隐私与数据",
             sheetIdentifier: "privacy-data-sheet",
             dismissTitle: "完成",

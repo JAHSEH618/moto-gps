@@ -91,6 +91,14 @@ enum MotoThemeName: String, CaseIterable, Identifiable {
     /// GTA III's radar is flat: no scanlines in either theme.
     var radarTexture: RadarTexture { .none }
 
+    /// The "on" fill of a switch. Its thumb is always white, so the fill must
+    /// not be: the band is cream by night and white in Original, which made
+    /// an on switch read as an empty white pill. Pink is the colour of an
+    /// active selection; Original's accent is white too, so it uses its green.
+    var switchTint: Color {
+        self == .original ? palette.ok : palette.accent
+    }
+
     /// Body copy floor. Day never drops secondary text below `body` size.
     var minimumSecondaryTextSize: CGFloat {
         switch self {
@@ -253,7 +261,8 @@ extension Color {
 /// display numerals use the bundled condensed face relative to `.largeTitle`.
 /// See DESIGN.md → Typography.
 enum MotoText {
-    case displayXL   // 76 — remaining distance, speed
+    case displayHero // 112 — the ride's one number: distance left
+    case displayXL   // 76 — sheet hero word, best time
     case displayLG   // 56 — run timer, ETA
     case displayMD   // 34 — panel headline number
     case title       // 22 — screen title
@@ -296,6 +305,7 @@ struct MotoTypography {
 private extension MotoText {
     var displaySize: CGFloat? {
         switch self {
+        case .displayHero: return 112
         case .displayXL: return 76
         case .displayLG: return 56
         case .displayMD: return 34
@@ -316,7 +326,7 @@ private extension MotoText {
 
     var proseStyle: Font.TextStyle {
         switch self {
-        case .displayXL, .displayLG, .displayMD: return .largeTitle
+        case .displayHero, .displayXL, .displayLG, .displayMD: return .largeTitle
         case .title: return .title2
         case .body: return .body
         case .secondary: return .subheadline
@@ -356,6 +366,8 @@ enum MotoMetrics {
     static let displayTracking: CGFloat = -0.4
 
     static let statusBandHeight: CGFloat = 54
+    /// The cover's panel gutter: GTA III's white bars between box-art panels.
+    static let coverGutter: CGFloat = 5
     static let hairline: CGFloat = 1
     /// HIG minimum hit target. Any control smaller than this is a defect.
     static let minTapTarget: CGFloat = 44

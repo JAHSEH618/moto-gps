@@ -113,9 +113,10 @@ Display roles use the bundled condensed face laid on `.largeTitle` so they scale
 
 | Token | Default | Source | Use |
 |---|---|---|---|
-| `display-xl` | 76 | Barlow Condensed `relativeTo: .largeTitle` | remaining distance, speed |
-| `display-lg` | 56 | same | run timer, ETA |
-| `display-md` | 34 | same | panel headline numbers |
+| `display-hero` | 112 | Barlow Condensed `relativeTo: .largeTitle` | the ride's one number: distance left |
+| `display-xl` | 76 | same | sheet hero word, best 0-100 time |
+| `display-lg` | 56 | same | run timer, sheet-header plate |
+| `display-md` | 34 | same | panel headline numbers, menu indices, section plates |
 | `title` | 22 | `.title2` semibold | screen title |
 | `body` | 17 | `.body` | prose (HIG default iOS size) |
 | `secondary` | 15 | `.subheadline` | metadata |
@@ -129,8 +130,8 @@ Display tracking floor is `-0.02em`. Anything tighter is a defect. `Font.fixedSi
 - Spacing scale: `4 · 8 · 12 · 18 · 27 · 40 · 64`. Rhythm comes from jumping two steps, not from uniform gaps.
 - Radii: `0` (panels, sheets, buttons, bars), `2` (chips, inputs), `999` (dots and the live indicator only).
 - No shadows anywhere. Elevation is expressed by `surface` steps plus a 1px rule.
-- **Status band**: 54pt + safe area, 1px bottom rule, three cells (`LINK` / `FIX` / `ETA|CLOCK`), mono caps 10.
-- **Cover**: the home hero *is* GTA III's box art — framed panels inside 5pt `band` gutters, edge to edge: the radar panel, a fixed 132pt side strip holding the MOTO / GPS logo block (Anton, `on-slab` on `slab`) and the safehouse panel, then a wide panel for GO and 出发. The command bar sits under the cover on plain paper; no other screen carries texture. Pricedown (the GTA logo face) is not used: Typodermic's free licence excludes app and device embedding.
+- **Status band**: 54pt min + safe area on the `slab`, closed by a 2pt `accent` rule, three cells (`LINK` / `FIX` / `ETA|CLOCK`) in HUD caps, controls 44×44. It is a bar: it stops growing at `xxxLarge`, its cells and controls offer the large content viewer, and when the row would be wider than the screen it drops the clock first (the system status bar already shows the time). An overflowing band once widened the whole home page.
+- **Cover**: the home hero *is* GTA III's box art — framed panels inside 5pt `band` gutters, edge to edge: the radar panel (the circle takes whatever width the strip leaves: 204 on a 375pt phone, 269 on 440), a fixed 132pt side strip holding the MOTO / GPS logo block (Anton, `on-slab` on `slab`) and the safehouse panel, a wide panel with GO beside 出发, and the command bar as the last panel. Both columns share the taller one's height so the gutters line up. The whole first screen is the poster, and on a 375pt phone the field to type in is on it. The cover grows with Dynamic Type up to `accessibility1` and then holds; the command bar to `accessibility2`. No other screen carries texture. Pricedown (the GTA logo face) is not used: Typodermic's free licence excludes app and device embedding.
 - **Safehouse blip**: HUD-orange house (eaves and a door, the rider arrow's size; white in Original) on a black casing at home's real bearing — north-up, 1.5 km to the rim on the home radar; in the route projection on the ride radar; on the round screen from the route window or, with no route, from the latest map window's centre, above the waiting screen (Original: on its map strip, under a route only). A home past the rim keeps its bearing and rides the rim.
 
 ## Circle motif
@@ -139,7 +140,7 @@ The handlebar screen is round; the phone repeats it at three sizes.
 
 | Size | Where | Content |
 |---|---|---|
-| 248 | Home hero | poster street abstraction + sweep, `N` badge on the rim |
+| 204–269 | Home hero | poster street abstraction + sweep, `N` badge on the rim; sized to the cover panel |
 | 176 | Active ride | the real route window, streets and footprints around the rider |
 | 44 | Status band | connection state ring |
 
@@ -168,10 +169,10 @@ No texture inside the circle in either GTA theme — GTA III's radar is flat, an
 
 | Device | Rule |
 |---|---|
-| Wordmark | One huge condensed Latin word in `accent` at 88pt (`GO`), outlined in `slab` with a hard offset drop, Chinese verb at `.title2` beside it. Never a small title bar. |
-| Command bar | A solid `accent` block, 56pt tall, `.secondary` mono text and one magnifier. The only filled surface on a screen; no trailing chip, the whole bar is the control. |
-| Menu rows | Numbered pause-screen list: `01…05` in condensed 34pt, title at `.title3`, 1px rule under every row. Numbers are real order, not decoration. |
-| Section head | 14×3pt accent tick + 11pt mono caps. No sentence-case section titles. |
+| Wordmark | One huge condensed Latin word in `accent` at 112pt (`GO`), outlined in `slab` with a hard offset drop; the Chinese verb at `.largeTitle` heavy beside it and the claim (`SPOT · PLAN · RIDE`) under the verb, dropped rather than truncated when it cannot fit. Never a small title bar. |
+| Command bar | A solid `accent` block, 60pt, the cover's last panel: HUD caps prompt, one heavy magnifier, a 44pt clear button while typing. The only filled surface on a screen at rest; the whole bar is the control. |
+| Menu rows | Numbered pause-screen list (`MotoMenuRow`): `01…08` in the condensed face at 34pt in page ink (the HUD pink is for readings), title `.title3` heavy, one line of detail, 1px rule under every row. Held, the row fills with the `accent` bar and its type turns `onAccent`, the way GTA lights the item under the cursor; the bar overhangs the text by 12pt. Numbers are real order, and each sheet's header repeats its number. |
+| Section head (home) | The word in Anton at 30pt, run out to the margin by a 2pt `ink` rule. No accent tick, no eyebrow. |
 | Rules | 1px default, 2px after a block that ends a group. Never 0.5px, never shadowed. |
 | Map content | Radar draws blocks and streets in `ink` at 10–22%: a minimap silhouette, not a blank disc. |
 | Rider | A chunky arrow, not a dot. Heading is part of the readout. |
@@ -200,17 +201,19 @@ Source: `MickMelon/gta-sa-hud-react` (MIT code, proprietary fonts), `Geckomacabr
 
 | Component | Spec |
 |---|---|
-| Primary button | `accent` fill, `bg` text, radius 0, 52pt tall, caps 600, no shadow |
-| Secondary button | transparent, 1px `line`, `ink` text |
-| Command bar | 56pt, 1px `line`, radius 2, leading glyph, `SET DESTINATION` in mono caps, trailing ↵ badge |
-| List row | 1px `line` bottom rule, 64pt min, leading mono index, no chevron box |
+| Primary button | `accent` fill, `onAccent` text heavy, radius 0, 56pt tall, no shadow; held: a stop darker plus a 2pt `onAccent` inner rule; disabled: the whole plate at 40% |
+| Secondary button | transparent, 2pt `ink` outline (a 1px `line` frame on a panel read as one more text field), `ink` text bold; held: `surface-2`; disabled: 40% |
+| Command bar | see Poster devices: the cover's last panel |
+| Counter plate | `MotoCounterPlate`: a square `ink` block with one numeral (condensed face) or one SF Symbol in `bg`; 44pt for a section index or the chosen route, 64pt in a sheet header where it inverts against the band (`onBand` block, `band` glyph). Grows to `xxxLarge`, then holds |
+| List row | 1px `line` bottom rule, 64pt min, leading index, no chevron box; menu-shaped lists use the pause-menu row |
+| Switch | Platform shape, tinted with `MotoThemeName.switchTint`: `accent` in both GTA themes, `ok` in Original. The thumb is always white, so a cream or white track (the old band tint) made an on switch an empty pill |
 | Stat cell | label above, display numeral below, unit in lowercase mono at the numeral's baseline, 1px rule between cells |
-| Sheet | `.presentationCornerRadius(2)`, hard 1px top rule, `surface` background |
-| Segmented | 1px `line` container, selected cell = `accent` fill + `bg` text |
+| Sheet | `.presentationCornerRadius(2)`, the band header (see Poster sheet), `bg` paper |
+| Segmented | 2pt `ink` container and dividers, selected cell = `accent` fill + `onAccent` heavy text |
 | Empty state | glyph + one sentence of instruction; never a system illustration |
 | Loading | 1px progress rule that grows left→right; no spinners in content |
 
-Every interactive component ships: default · pressed · focused · disabled · loading · error · success. Pressed states use a `surface-2` fill, never a scale transform.
+Every interactive component ships: default · pressed · focused · disabled · loading · error · success. Pressed states change a fill (`surface-2`, the accent bar on menu rows, an `onBand` plate under a band action), never a scale transform. Disabled is the control at 40%, applied by its style, not by each caller.
 
 ## Motion
 
@@ -231,12 +234,14 @@ Applied, not aspirational. Each row is a check performed on the built screen.
 | HIG rule | Implementation |
 |---|---|
 | Minimum text 11pt (iOS) | `micro` = `.caption2` (11pt), `label` = `.caption`; nothing smaller anywhere |
-| Dynamic Type | every role uses a text style or `relativeTo:`; no `fixedSize:` |
-| No app-specific appearance switch | theme follows the device, falls back to system appearance |
+| Dynamic Type | every role uses a text style or `relativeTo:`; no `fixedSize:`. Poster objects grow and then hold: status band `xxxLarge`, counter plates `xxxLarge`, cover and display numerals `accessibility1`, sheet header `accessibility2`; prose and rows never cap. Checked at AX5 on a 375pt phone: nothing truncates a reading or leaves the screen |
+| One appearance choice | the theme sheet is the only switch and drives both surfaces (see Theme switch); the phone does not follow the system appearance |
 | Adapt to light/dark | Liberty Night + Liberty Day are the two appearances; both audited for contrast |
 | Increase Contrast | `line` → `ink @ 55%`, `inkMuted` → `ink` when `colorSchemeContrast == .increased` |
 | Never colour alone | every state also carries a glyph or word (`NO LINK`, `ABORTED`, `—`) |
-| Hit target ≥ 44pt | `MotoMetrics.minTapTarget`; status band 54pt, buttons 52pt |
+| Hit target ≥ 44pt | `MotoMetrics.minTapTarget`; status-band controls, band actions and the page chevron 44×44, menu rows 72pt, buttons 52–56pt |
+| Edge swipe back | poster pages hide the system back button for their own chevron, which also disables the edge swipe; `MotoPosterPage` hands the swipe back to the navigation controller |
+| Large content viewer | status-band cells and controls, which stop growing at `xxxLarge` |
 | Avoid light font weights | display 600/800, mono 500, prose 400 minimum |
 | Minimise typefaces | one custom family (display numerals) + SF + SF Mono; everything readable is system |
 | Respect safe areas | content inside `safeAreaInset`; map bleeds under the band, never under the home indicator |
@@ -251,10 +256,12 @@ Applied, not aspirational. Each row is a check performed on the built screen.
 | Custom display font | Instrument numerals are the product signature and match the condensed face on the handlebar. HIG permits custom fonts when sizing and accessibility are handled, which `relativeTo:` plus a Dynamic Type cap does. |
 | Branded palette instead of system colours | The two themes *are* the product; system colours would erase the day/night contract with the device. |
 | No shadows, no card radius, no Liquid Glass | Elevation by surface steps and 1px rules is a print-poster stance, and it avoids the ghost-card / glass-on-glass tells. |
+| Band header instead of a navigation bar | Sheets and pushed pages draw their title on the cover's gutter with a counter plate; actions keep platform wording (完成, 取消, 保存) and 44pt targets, and the edge swipe is restored by hand. |
+| Square sheet corners | `.presentationCornerRadius(2)`: a sheet is a poster panel sliding up, not a card. |
 
 ## Design skills: who decides what
 
-Four skills are in play. They overlap, so the split is explicit; when two disagree, the row order below decides.
+Seven skills are in play. They overlap, so the split is explicit; when two disagree, the row order below decides.
 
 | Domain | Owning skill | Losing skill |
 |---|---|---|
@@ -262,6 +269,9 @@ Four skills are in play. They overlap, so the split is explicit; when two disagr
 | Structural variety, pre-emit critique, anti-pattern catalogue | `hallmark` | — |
 | SwiftUI correctness: state ownership, motion-as-state, gestures, adaptive layout, E2E gates, Fidelity rubric | `design-swiftui-interfaces` | — |
 | iOS aesthetics audit: SF design axes, haptics, symbol effects, `numericText` | `ios-design-agent-skill` | — |
+| Review of the rendered app: safe areas, touch targets, Dynamic Type, states, permissions (UXKIN) | `ios-review` | loses to `impeccable` on art direction |
+| Building screens to platform convention, checked on small and large iPhones (UXKIN) | `ios-screens` | loses to `impeccable` on art direction |
+| Planning multi-step flows: onboarding, permissions, settings (UXKIN) | `ios-flows` | loses to `impeccable` on art direction |
 
 Known conflicts and rulings:
 
@@ -271,6 +281,7 @@ Known conflicts and rulings:
 | `ios-design-agent-skill`: rounded 12px cards + leading accent bars | Rejected — banned by `impeccable` (side-stripe) and `hallmark` (card stacking). Panels stay square with 1px rules. |
 | `design-swiftui-interfaces`: native materials, Liquid Glass | Rejected for the content layer; the poster stance wins. Kept for system surfaces (sheets, menus, alerts). |
 | Profile: standard vs expressive | **expressive**, because the brief asked for bold personality. Still one dominant motion idea per screen. |
+| `ios-review` / `ios-screens`: semantic system colours, stock controls, large titles | Palette and band header stay (see Deliberate deviations). What they enforce mechanically is kept: 44pt targets, Dynamic Type without truncation, the edge swipe, a visible switch state, every state reachable. The UXKIN MCP server is not connected; the skills run on their own. |
 
 Baseline static audit (`audit_swiftui_ui.py platforms/ios`): 30 MEDIUM, 0 HIGH/CRITICAL. The six that touch UI — hardcoded font sizes in the old `ContentView`, fixed frames, index-derived `ForEach` identity — are removed by the screen rewrite rather than patched.
 
@@ -370,19 +381,27 @@ run through the pixel tests.
 Every sheet that is not the map uses the same four moves. They are what make a
 phone screen read as the instrument rather than as a styled form.
 
-1. **Band header, full bleed.** A `#F34DAA` block at the top, carrying a mono
-   micro kicker (`DEVICE 01`, `POLICY 04`), the title at `.largeTitle` heavy in
-   `onBand`, and the dismiss as ink type on the band. No navigation bar, no
-   large-title collapse, no second plate in the header.
+1. **Band header, full bleed.** The `band` (the cover's gutter: cream by
+   night, black by day, white in Original) carrying a counter plate with the
+   sheet's number in the home menu (`01` device, `02` theme, `03` maps and its
+   pages, `05` gateway, `06` privacy, `08` race; a glyph for the second-level
+   WiFi and firmware sheets and the route page), the title at `.largeTitle`
+   heavy in `onBand`, and the actions as boxed ink type (`MotoBandButton`; the
+   quieter one beside it unboxed). A 2pt `accent` rule closes the band, the
+   same rule that closes the home status band. No navigation bar, no
+   large-title collapse, no eyebrow above the title: the plate carries the
+   order. Corners are square.
 2. **One hero word per sheet.** `OFFLINE` / `ONLINE`, in the display face at
-   76pt, with a mono detail line under it. Nothing else on the sheet is above
-   `headline` size, which is the instrument's rule applied to a phone.
-3. **Numbered sections.** `01 连接`, `02 圆屏显示`, with the index in the display
-   face at 34 in `band`, the label at `headline`, and a 1px rule under the pair.
-   The number is order, not decoration — the same grammar as the pause menu.
+   76pt, with one sentence under it in the reading face (a sentence in tracked
+   caps is a defect). Nothing else on the sheet is above `title3` size, which
+   is the instrument's rule applied to a phone.
+3. **Numbered sections.** `01 连接`, `02 地图`: the index on a 44pt `ink`
+   counter plate that stands on a 2pt `ink` rule like a tab on a file, the
+   label at `.title3` heavy beside it. The number is order, not decoration —
+   the same grammar as the pause menu.
 4. **Square panels, hairlines, no cards.** Rows are `MotoRow` inside one
-   `MotoPanel` per group; a switch keeps its platform shape and takes the band
-   as its tint.
+   `MotoPanel` per group; a switch keeps its platform shape, centred on its
+   row, and takes the theme's switch tint.
 
 Prose is set in the reading face (PingFang) at `.body` with 3pt line spacing —
 never in mono, never in a tracked caps label.
@@ -399,7 +418,10 @@ and shows today / 7 days / all (`MotoSegment`):
 | Lean | the deepest lean at `display-lg`, left and right on slabs | time per 5° bin, left mirrored against right, `route` (HUD orange), `abort` from 45°; the ±5° upright share as a line of text, because upright time would flatten every corner |
 | G | the largest combined G at `display-lg` | the friction circle's envelope over the scope (casing, then `accent`), and accelerating / braking / left / right maxima on slabs |
 
-Counters are ink slabs; the one state colour is `accent`. Every number is a
+Counters are ink plates with paper figures (the black slab vanished on the
+night paper); the label stacks above the figure rather than truncate, and a
+figure shrinks before it would ever read `4…`. The one state colour is
+`accent`, which also fills the chosen scope. Every number is a
 recorded one (`RaceLog` in `MotoNavigationCore`, `RaceLog.json` on the phone):
 an empty scope says so instead of drawing zeros, the 0-100 times are the
 round screen's (PerformanceRun, 0x19) and never re-timed on the phone, and
@@ -410,7 +432,8 @@ a bench counts too. Clearing the log asks first.
 
 - Do keep the frame loud and the data quiet. Don't texture a numeral.
 - Do let one number own the screen. Don't place three equally weighted stats in a row.
-- Do use `accent` for exactly one filled surface per screen (the command bar).
+- Do use `accent` for exactly one filled surface per screen at rest (the command bar, or a sheet's primary button). A held menu row lighting up is the only other.
+- Don't set a sentence in tracked caps; caps are for labels and units.
 - Do make one word enormous. A 76pt wordmark next to 11pt mono is the whole trick.
 - Do number the menu. It is how a pause screen reads.
 - Do use the mono caps label at 11–12pt with `+0.16em`. Don't use an all-caps tracked eyebrow above every section.
